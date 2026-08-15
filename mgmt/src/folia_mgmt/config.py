@@ -16,9 +16,24 @@ class Settings(BaseSettings):
     listen_host: str = "0.0.0.0"
     listen_port: int = 8443
 
-    # Where folia-nexa-node downloads jars/plugin manifests from. PLAN.md §9's
-    # example: https://artifacts.internal/folia/1.21.4/folia.jar
+    # Where folia-nexa-node downloads jars from. PLAN.md §9's example:
+    # https://artifacts.internal/folia/1.21.4/folia.jar. Plugin *manifests*
+    # (not the plugin jars themselves) come from this mgmt instance's own
+    # API instead — see public_url below and PLAN.md §14's plugin catalog.
     artifacts_base_url: str = "https://artifacts.internal"
+
+    # This mgmt instance's own network-reachable address, e.g.
+    # https://mgmt.internal:8443 — every world with plugins needs to reach
+    # GET /api/v1/worlds/{name}/plugins-manifest here (unauthenticated;
+    # see routers/worlds.py). Unset means worlds can't declare plugins —
+    # enforced at world-creation time, not silently ignored.
+    public_url: str | None = None
+
+    # Curated plugin catalog (PLAN.md §14). Bundled with the snap by
+    # default; $SNAP_COMMON/plugin-catalog-override.yaml lets an operator
+    # add/override entries (e.g. their own in-house plugins) without a new
+    # mgmt release — see plugin_catalog.py.
+    plugin_catalog_path: Path = Path(__file__).resolve().parent / "catalog.yaml"
 
     # Must match folia-nexa-node's FOLIA_NODE_HEALTH_PORT (node/snapcraft.yaml).
     node_health_port: int = 8123

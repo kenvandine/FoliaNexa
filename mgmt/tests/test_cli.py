@@ -234,3 +234,72 @@ def test_command_error_surfaces_server_detail(tmp_path, monkeypatch, mock_http):
     assert result.exit_code != 0
     assert "409" in result.output
     assert "already exists" in result.output
+
+
+def test_plugins_list_formats_rows(tmp_path, monkeypatch, mock_http):
+    _seed_login(tmp_path, monkeypatch)
+    mock_http(
+        lambda r: httpx.Response(
+            200,
+            json=[
+                {
+                    "id": "LuckPerms",
+                    "category": "permissions",
+                    "source": "external",
+                    "version": "5.5.76",
+                    "verified": True,
+                }
+            ],
+        )
+    )
+    result = runner.invoke(cli.app, ["plugins", "list"])
+    assert result.exit_code == 0, result.output
+    assert "LuckPerms" in result.output
+    assert "permissions" in result.output
+    assert "verified" in result.output
+
+
+def test_plugins_list_passes_category_filter(tmp_path, monkeypatch, mock_http):
+    _seed_login(tmp_path, monkeypatch)
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(200, json=[])
+
+    mock_http(handler)
+    result = runner.invoke(cli.app, ["plugins", "list", "--category", "permissions"])
+    assert result.exit_code == 0, result.output
+    assert captured["params"] == {"category": "permissions"}
+
+
+def test_plugins_show_prints_fields(tmp_path, monkeypatch, mock_http):
+    _seed_login(tmp_path, monkeypatch)
+    mock_http(
+        lambda r: httpx.Response(
+            200,
+            json={
+                "id": "LuckPerms",
+                "category": "permissions",
+                "source": "external",
+                "version": "5.5.76",
+                "download_url": "https://download.luckperms.net/1663/bukkit/loader/LuckPerms-Bukkit-5.5.76.jar",
+                "sha256": "0d6bcf05811c21a7ab823c38dc8e46bcf6e0fb70b8b871c7e3c719ac8e170cfd",
+                "homepage": None,
+                "verified": True,
+                "notes": None,
+            },
+        )
+    )
+    result = runner.invoke(cli.app, ["plugins", "show", "LuckPerms"])
+    assert result.exit_code == 0, result.output
+    assert "id: LuckPerms" in result.output
+    assert "verified: True" in result.output
+
+
+def test_plugins_show_unknown_id_surfaces_404(tmp_path, monkeypatch, mock_http):
+    _seed_login(tmp_path, monkeypatch)
+    mock_http(lambda r: httpx.Response(404, json={"detail": "no such plugin 'Nope' in the catalog"}))
+    result = runner.invoke(cli.app, ["plugins", "show", "Nope"])
+    assert result.exit_code != 0
+    assert "404" in result.output

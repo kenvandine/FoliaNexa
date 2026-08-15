@@ -123,6 +123,7 @@
   <nav>
     <button data-tab="worlds" onclick="showTab('worlds')">Worlds</button>
     <button data-tab="hosts" onclick="showTab('hosts')">Hosts</button>
+    <button data-tab="plugins" onclick="showTab('plugins')">Plugins</button>
     <button data-tab="access" onclick="showTab('access')">Access Requests</button>
     <button data-tab="users" onclick="showTab('users')">Users</button>
   </nav>
@@ -146,6 +147,12 @@
           <input id="w-cpu" type="number" min="1" placeholder="cpu cores" style="width:6.5rem" required>
           <input id="w-memory" type="number" min="1" placeholder="memory GB" style="width:7rem" required>
           <input id="w-labels" placeholder="labels (cpu_type=p-core, ...)" style="flex:1;min-width:12rem">
+          <div style="flex-basis:100%">
+            <div class="hint" style="margin-bottom:0.3rem">Plugins (from the catalog):</div>
+            <div id="w-plugins-picker" class="card" style="max-height:9rem;overflow-y:auto;padding:0.6rem 0.8rem">
+              <span class="hint">Loading catalog…</span>
+            </div>
+          </div>
           <button class="btn" type="submit">Create</button>
         </form>
         <div id="worlds-error" class="error"></div>
@@ -173,6 +180,17 @@
         <table>
           <thead><tr><th>Name</th><th>Status</th><th>CPU (used/cap)</th><th>Memory GB (used/cap)</th><th>Address</th><th></th></tr></thead>
           <tbody id="hosts-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="panel-plugins" class="panel">
+      <div class="card">
+        <h2>Curated plugin catalog</h2>
+        <p class="hint">Vetted external plugins (pinned versions) plus in-house plugins, bundled with mgmt and extendable via an operator override file. Select these by id in a world's plugin list — see PLAN.md §14.</p>
+        <table>
+          <thead><tr><th>Id</th><th>Category</th><th>Source</th><th>Version</th><th>Status</th><th>Homepage</th></tr></thead>
+          <tbody id="plugins-body"></tbody>
         </table>
       </div>
     </section>
@@ -219,6 +237,7 @@ const state = {
   token: localStorage.getItem('folia_token') || null,
   username: localStorage.getItem('folia_username') || null,
   role: localStorage.getItem('folia_role') || null,
+  catalog: [],
 };
 
 async function api(path, options) {
@@ -290,6 +309,7 @@ function enterApp() {
     const needsAdmin = btn.dataset.tab === 'users';
     btn.style.display = (needsAdmin && state.role !== 'admin') ? 'none' : '';
   });
+  loadCatalog();
   showTab('worlds');
 }
 
@@ -298,7 +318,7 @@ function showTab(name) {
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
   document.getElementById('panel-' + name).classList.add('active');
   document.querySelector('nav button[data-tab="' + name + '"]').classList.add('active');
-  const loaders = { worlds: loadWorlds, hosts: loadHosts, access: loadAccessRequests, users: loadUsers };
+  const loaders = { worlds: loadWorlds, hosts: loadHosts, plugins: loadCatalog, access: loadAccessRequests, users: loadUsers };
   loaders[name]();
 }
 
@@ -344,6 +364,7 @@ async function createWorld(event) {
       if (k && v) placement_labels[k] = v;
     });
   }
+  const plugins = Array.from(document.querySelectorAll('#w-plugins-picker input[type=checkbox]:checked')).map(cb => cb.value);
   try {
     await api('/worlds', {
       method: 'POST',
@@ -353,15 +374,57 @@ async function createWorld(event) {
         cpu_cores: parseInt(document.getElementById('w-cpu').value, 10),
         memory_gb: parseInt(document.getElementById('w-memory').value, 10),
         placement_labels,
+        plugins,
       }),
     });
     document.getElementById('w-name').value = '';
     document.getElementById('w-labels').value = '';
+    document.querySelectorAll('#w-plugins-picker input[type=checkbox]').forEach(cb => cb.checked = false);
     await loadWorlds();
   } catch (e) {
     errorEl.textContent = e.message;
   }
   return false;
+}
+
+async function loadCatalog() {
+  try {
+    state.catalog = await api('/plugins');
+  } catch (e) {
+    state.catalog = [];
+  }
+  renderPluginPicker();
+  renderPluginsTable();
+}
+
+function renderPluginPicker() {
+  const picker = document.getElementById('w-plugins-picker');
+  if (!picker) return;
+  if (!state.catalog.length) {
+    picker.innerHTML = '<span class="hint">No plugins in the catalog yet.</span>';
+    return;
+  }
+  picker.innerHTML = state.catalog.map(p => `
+    <label style="display:inline-flex;align-items:center;gap:0.3rem;margin:0.15rem 0.7rem 0.15rem 0;font-size:0.85rem">
+      <input type="checkbox" value="${escapeHtml(p.id)}">
+      ${escapeHtml(p.id)} <span class="hint">(${escapeHtml(p.category)})</span>
+    </label>
+  `).join('');
+}
+
+function renderPluginsTable() {
+  const body = document.getElementById('plugins-body');
+  if (!body) return;
+  body.innerHTML = state.catalog.map(p => `
+    <tr>
+      <td>${escapeHtml(p.id)}</td>
+      <td>${escapeHtml(p.category)}</td>
+      <td>${escapeHtml(p.source)}</td>
+      <td>${escapeHtml(p.version)}</td>
+      <td>${p.verified ? '<span class="pill running">verified</span>' : '<span class="pill pending">unverified</span>'}${p.download_url ? '' : ' <span class="hint">(no download url yet)</span>'}</td>
+      <td>${p.homepage ? `<a href="${escapeHtml(p.homepage)}" target="_blank" rel="noopener">link</a>` : '—'}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="6" class="hint">No plugins in the catalog yet.</td></tr>';
 }
 
 async function deleteWorld(name) {

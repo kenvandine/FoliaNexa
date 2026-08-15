@@ -19,7 +19,7 @@ host.
 | `db/` | `folia-nexa-db` — self-contained MariaDB snap for LuckPerms' shared backend | Bash, bundled MariaDB |
 | `tools/folia-host-join.sh` | Automates trusting an LXD host into the cluster | Bash |
 | `configs/worlds/*.sh` | Starter world declarations (CLI wrappers) | Bash |
-| `configs/plugins/manifests/*.json` | Per-world plugin manifests `folia-nexa-node` downloads from | JSON |
+| `mgmt/src/folia_mgmt/catalog.yaml` | Curated plugin catalog (PLAN.md §14A) — mgmt generates per-world manifests from this + a world's `plugins` list, no hand-authored manifest files | YAML |
 | `configs/luckperms/provision-mysql.sh` | Plain-LXD-container alternative to `db/` for operators who'd rather not add another snap | Bash |
 
 Each of `mgmt/`, `node/`, `proxy/`, `bot/`, `db/` is an independent,
@@ -43,7 +43,7 @@ unverified; only the build step is confirmed.
 ## Running the test suites
 
 ```bash
-# mgmt (Python) — 95 tests
+# mgmt (Python) — 123 tests
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
@@ -171,19 +171,31 @@ folia-nexa-mgmt worlds create world-overworld --type overworld --cpu 6 --memory 
 ```
 
 Or use the starter set in `configs/worlds/` — one survival world, two
-minigames, each with a real plugin loadout declared via `--plugin` (see
-`configs/worlds/create-all.sh` and the manifests in
-`configs/plugins/manifests/`). **Before running these**, replace the
-placeholder plugin URLs in those manifest JSON files with real download
-links and host them somewhere `folia-nexa-mgmt`'s `artifacts_base_url`
-setting points at (default `https://artifacts.internal`, overridable via
-`FOLIA_MGMT_ARTIFACTS_BASE_URL`) — `folia-nexa-node` won't start a world
-until it can actually fetch its jar/plugins from there. The minigame
-plugins listed (SkyWarsReloaded, BedWars1058) are common, well-known
-choices, not something verified Folia-compatible in this repo — check
-before relying on them; classic Bukkit-era minigame plugins often assume
-single-threaded world ticking that Folia's regionized scheduler doesn't
-guarantee.
+minigames, each with a real plugin loadout declared via `--plugin` (ids
+from `mgmt/src/folia_mgmt/catalog.yaml`, browsable with `folia-nexa-mgmt
+plugins list`; see `configs/worlds/create-all.sh`). **Before running
+these**, note two separate things need to be reachable:
+
+- The engine jar comes from `folia-nexa-mgmt`'s `artifacts_base_url`
+  setting (default `https://artifacts.internal`, overridable via
+  `FOLIA_MGMT_ARTIFACTS_BASE_URL`) — `folia-nexa-node` fetches
+  `{artifacts_base_url}/{engine}/{version}/{engine}.jar` from there.
+- Declaring any `--plugin` requires `FOLIA_MGMT_PUBLIC_URL` to be set to
+  this mgmt instance's own reachable address — worlds fetch their plugin
+  manifest from `{public_url}/api/v1/worlds/{name}/plugins-manifest`,
+  which mgmt generates live from the catalog (PLAN.md §14A). Several
+  catalog entries (e.g. `HuskClaims`, `ItemsAdder`) still have a
+  placeholder `download_url: null` — populate those (in
+  `catalog.yaml` or a `plugin-catalog-override.yaml` in mgmt's state
+  dir) with real download links before relying on them; a plugin with no
+  `download_url` is silently skipped in the generated manifest, not an
+  error.
+
+The minigame plugins listed (SkyWarsReloaded, BedWars1058) are common,
+well-known choices, not something verified Folia-compatible in this
+repo — check before relying on them; classic Bukkit-era minigame plugins
+often assume single-threaded world ticking that Folia's regionized
+scheduler doesn't guarantee.
 
 ```bash
 ./configs/worlds/create-all.sh
@@ -280,6 +292,16 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
 
 - Every mgmt API endpoint, the scheduler's placement/health-check/
   recovery/migration logic, the CLI, the dashboard.
+- The plugin catalog (`catalog.yaml` + override merge, `/api/v1/plugins`,
+  world-creation validation, `/plugins-manifest` generation, the CLI's
+  `plugins list`/`show`, and the dashboard's Plugins tab + world-creation
+  picker) — hit end-to-end with curl against a real running mgmt server
+  (login, list catalog, create a world with `plugins`, confirm the exact
+  JSON body the dashboard's picker sends is accepted). The catalog's own
+  data is a mix: `LuckPerms`, `Spark`, and `BlueMap` have real,
+  curl-verified download URLs and checksums; the rest are placeholders
+  (`download_url: null`) pending real vetting — `verified: false` in the
+  catalog flags which is which.
 - `folia-routes-sync`'s routing diff, JSON parsing, and access-gate logic
   — compiled and unit-tested against the real `velocity-api` jar.
 - `folia-nexa-bot`'s embed-building, auto-approve decision logic,

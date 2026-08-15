@@ -24,8 +24,10 @@ from folia_mgmt.models import User, UserRole
 app = typer.Typer(help="folia-nexa-mgmt: cluster orchestrator CLI")
 hosts_app = typer.Typer(help="Manage trusted LXD hosts")
 worlds_app = typer.Typer(help="Manage worlds")
+plugins_app = typer.Typer(help="Browse the curated plugin catalog")
 app.add_typer(hosts_app, name="hosts")
 app.add_typer(worlds_app, name="worlds")
+app.add_typer(plugins_app, name="plugins")
 
 _CLI_CONFIG_PATH = Path.home() / ".config" / "folia-nexa-mgmt" / "cli.json"
 
@@ -141,7 +143,7 @@ def worlds_create(
     memory: str = typer.Option(..., "--memory", help="e.g. '12' or '12GB'"),
     labels: list[str] = typer.Option([], "--labels", help="key=value, repeatable"),
     plugin: list[str] = typer.Option(
-        [], "--plugin", help="plugin name, repeatable — see configs/plugins/manifests/ for the manifest this implies"
+        [], "--plugin", help="plugin catalog id, repeatable — see 'folia-nexa-mgmt plugins list'"
     ),
     engine: str = typer.Option("folia", "--engine"),
     version: str = typer.Option("1.21.4", "--version"),
@@ -174,6 +176,26 @@ def worlds_list(mgmt_url: str | None = None) -> None:
         _fail_on_error(resp)
         for w in resp.json():
             typer.echo(f"{w['name']:<20} {w['type']:<12} {w['phase']:<14} host={w['host_name']}")
+
+
+@plugins_app.command("list")
+def plugins_list(category: str | None = None, mgmt_url: str | None = None) -> None:
+    with _client(mgmt_url) as client:
+        resp = client.get("/api/v1/plugins", params={"category": category} if category else None)
+        _fail_on_error(resp)
+        for p in resp.json():
+            verified = "verified" if p["verified"] else "unverified"
+            typer.echo(f"{p['id']:<20} {p['category']:<14} {p['source']:<10} {p['version']:<10} {verified}")
+
+
+@plugins_app.command("show")
+def plugins_show(plugin_id: str, mgmt_url: str | None = None) -> None:
+    with _client(mgmt_url) as client:
+        resp = client.get(f"/api/v1/plugins/{plugin_id}")
+        _fail_on_error(resp)
+        p = resp.json()
+    for key in ("id", "category", "source", "version", "download_url", "sha256", "homepage", "verified", "notes"):
+        typer.echo(f"{key}: {p.get(key)}")
 
 
 if __name__ == "__main__":

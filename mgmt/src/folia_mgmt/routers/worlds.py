@@ -10,10 +10,12 @@ from sqlmodel import Session, select
 
 from folia_mgmt.access_apply import UuidResolver, apply_ops, apply_whitelist
 from folia_mgmt.auth import require_operator, require_viewer
+from folia_mgmt.config import Settings
 from folia_mgmt.db import get_session
-from folia_mgmt.deps import get_health_check, get_lxd_client, get_uuid_resolver
+from folia_mgmt.deps import get_health_check, get_lxd_client, get_uuid_resolver, settings_dependency
 from folia_mgmt.lxd_client import LXDClient, LXDError
 from folia_mgmt.models import Host, HostStatus, World, WorldPhase, WorldType, utcnow
+from folia_mgmt.plugin_catalog import load_catalog
 from folia_mgmt.scheduler import HealthCheck, allocated_capacity, reconcile
 
 logger = logging.getLogger(__name__)
@@ -91,15 +93,37 @@ def _get_world_or_404(session: Session, name: str) -> World:
     return world
 
 
+def _validate_plugins(plugins: list[str], settings: Settings) -> None:
+    """Every plugin a world declares must be a real catalog entry — no
+    more free-typed names that only fail (silently, at the JVM, at boot)
+    if they don't match anything real. PLAN.md §14."""
+    if not plugins:
+        return
+    if not settings.public_url:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "cannot declare plugins: FOLIA_MGMT_PUBLIC_URL is not configured, "
+            "so worlds have no reachable URL to fetch their plugin manifest from",
+        )
+    catalog_ids = {entry.id for entry in load_catalog(settings)}
+    unknown = [p for p in plugins if p not in catalog_ids]
+    if unknown:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"unknown plugin(s), not in the catalog: {', '.join(unknown)}"
+        )
+
+
 @router.post("", response_model=WorldResponse, dependencies=[Depends(require_operator)])
 def create_world(
     body: CreateWorldRequest,
     session: Session = Depends(get_session),
     lxd_client: LXDClient = Depends(get_lxd_client),
     health_check: HealthCheck = Depends(get_health_check),
+    settings: Settings = Depends(settings_dependency),
 ) -> WorldResponse:
     if session.exec(select(World).where(World.name == body.name)).first():
         raise HTTPException(status.HTTP_409_CONFLICT, f"world '{body.name}' already exists")
+    _validate_plugins(body.plugins, settings)
 
     world = World(
         name=body.name,
@@ -289,3 +313,35 @@ def put_world_access(
                 apply_whitelist(session, lxd_client, host, world)
 
     return {"whitelist_enabled": world.whitelist_enabled, "ops": world.ops}
+
+
+@router.get("/{name}/plugins-manifest")
+def get_plugins_manifest(
+    name: str, session: Session = Depends(get_session), settings: Settings = Depends(settings_dependency)
+) -> list[dict]:
+    """What folia-smp-node actually fetches to stage a world's plugins
+    (PLAN.md §9, §14) — generated live from world.plugins + the catalog,
+    replacing the old hand-authored-manifest-file approach entirely.
+
+    Deliberately unauthenticated: node has no mgmt credential of any kind
+    by design (PLAN.md §9 — its own instance config is its registration,
+    no outbound auth to mgmt), and this only ever exposes plugin names
+    and their already-public download URLs — nothing sensitive. Matches
+    node's existing unauthenticated GET of the jar/manifest from an
+    external artifacts host; this just replaces that host for manifests.
+    """
+    world = _get_world_or_404(session, name)
+    catalog = {entry.id: entry for entry in load_catalog(settings)}
+
+    manifest = []
+    for plugin_id in world.plugins:
+        entry = catalog.get(plugin_id)
+        if entry is None or entry.download_url is None:
+            logger.warning(
+                "world '%s' declares plugin '%s' with no resolvable download_url in the catalog, skipping",
+                name,
+                plugin_id,
+            )
+            continue
+        manifest.append({"name": entry.id, "url": entry.download_url})
+    return manifest

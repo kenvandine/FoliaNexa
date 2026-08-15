@@ -1,0 +1,217 @@
+# Curated plugin catalog. PLAN.md §14 — see plugin_catalog.py's module
+# docstring for how this is loaded/merged with operator overrides.
+#
+# `id` is what world.plugins entries reference (matches the `--plugin`
+# values already used in configs/worlds/*.sh) — treat it as a stable key,
+# not just a display label.
+#
+# `verified: true` entries were fetched and sha256'd for real during
+# development (dates noted below); `verified: false` entries are
+# placeholders using download_url: null — they need a real URL resolved
+# before a world that declares them can actually stage its plugins.
+
+- id: LuckPerms
+  category: permissions
+  source: external
+  version: "5.5.76"
+  download_url: "https://download.luckperms.net/1663/bukkit/loader/LuckPerms-Bukkit-5.5.76.jar"
+  sha256: "0d6bcf05811c21a7ab823c38dc8e46bcf6e0fb70b8b871c7e3c719ac8e170cfd"
+  homepage: "https://luckperms.net"
+  verified: true
+  notes: >
+    Verified 2026-08-15 via LuckPerms' live metadata API
+    (metadata.luckperms.net/data/downloads) — that endpoint always
+    resolves to the current build, so re-check the version/sha256
+    before assuming this stays pinned over time.
+
+- id: Spark
+  category: diagnostics
+  source: external
+  version: "latest"
+  download_url: "https://sparkapi.lucko.me/download/bukkit"
+  sha256: "5fb98558bf3e8cdf0a4558665b97af632fd35762a75b7f4bda3deeb30cca685c"
+  homepage: "https://spark.lucko.me"
+  verified: true
+  notes: >
+    Verified 2026-08-15. This is a rolling "latest" URL, not a pinned
+    build — the sha256 reflects what was downloaded that day and WILL
+    drift as upstream ships new builds. If you need a truly pinned
+    version, mirror the jar yourself and point download_url at that
+    instead.
+
+- id: BlueMap
+  category: web-map
+  source: external
+  version: "5.23"
+  download_url: "https://github.com/BlueMap-Minecraft/BlueMap/releases/download/v5.23/bluemap-5.23-paper.jar"
+  sha256: null
+  homepage: "https://bluemap.bluecolored.de"
+  verified: true
+  notes: >
+    URL verified live 2026-08-15 via GitHub releases (a real, pinned
+    tag — v5.23). sha256 not yet computed; do that before relying on
+    integrity checking for this one.
+
+- id: HuskClaims
+  category: claims
+  source: external
+  version: "1.5.10"
+  download_url: null
+  sha256: null
+  homepage: "https://github.com/WiIIiam278/HuskClaims"
+  verified: false
+  notes: >
+    Release 1.5.10 exists on GitHub but publishes no release binary
+    asset there — likely distributed via Modrinth/Hangar/Polymart
+    instead. Resolve a real download_url before using this entry.
+
+- id: Vault-Unlocked
+  category: economy
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://github.com/MilkBowl/VaultUnlocked"
+  verified: false
+  notes: "Placeholder — repo/release lookup didn't resolve during a quick check. Verify before use."
+
+- id: AxAuctions
+  category: economy
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: null
+  verified: false
+  notes: "Placeholder, not independently verified."
+
+- id: AuraSkills
+  category: rpg
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://www.auraskills.com"
+  verified: false
+  notes: "Placeholder, not independently verified."
+
+- id: ItemsAdder
+  category: custom-content
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://www.spigotmc.org/resources/itemsadder.73355/"
+  verified: false
+  notes: "Premium/paid plugin on SpigotMC — license-gated download, won't ever be a plain public URL. Placeholder only."
+
+- id: MythicMobs
+  category: custom-content
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://www.mythicmobs.net"
+  verified: false
+  notes: "Placeholder, not independently verified."
+
+- id: HuskHomes
+  category: navigation
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://github.com/WiIIiam278/HuskHomes2"
+  verified: false
+  notes: "Placeholder — same distribution caveat as HuskClaims (likely Modrinth/Hangar, not a GitHub release asset)."
+
+- id: HuskPortals
+  category: navigation
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://github.com/WiIIiam278/HuskPortals"
+  verified: false
+  notes: "Placeholder, not independently verified."
+
+- id: SimpleVoiceChat
+  category: social
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://modrepo.de/minecraft/plugin/svc"
+  verified: false
+  notes: "Placeholder, not independently verified."
+
+- id: FancyNpcs
+  category: vanity
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://github.com/Oheers/FancyNpcs"
+  verified: false
+  notes: "Placeholder, not independently verified."
+
+- id: FancyHolograms
+  category: vanity
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://github.com/FancyMcPlugins/FancyHolograms"
+  verified: false
+  notes: "Placeholder, not independently verified."
+
+- id: DiscordSRV
+  category: chat-bridge
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://github.com/DiscordSRV/DiscordSRV"
+  verified: false
+  notes: "Placeholder, not independently verified."
+
+- id: SkyWarsReloaded
+  category: minigame
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: null
+  verified: false
+  notes: >
+    Placeholder. Verify Folia compatibility for whatever version you
+    pin — classic Bukkit-era minigame plugins commonly assume
+    single-threaded world ticking that Folia's regionized scheduler
+    doesn't guarantee (see configs/worlds/create-minigame-skywars.sh).
+
+- id: BedWars1058
+  category: minigame
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: null
+  verified: false
+  notes: "Placeholder — same Folia-compatibility caveat as SkyWarsReloaded."
+
+# Example in-house entry: demonstrates a catalog entry pointing at a
+# separate repository's releases rather than a third-party plugin host.
+# folianexa-plugins doesn't exist yet — replace with your real in-house
+# plugin repo, or delete this entry entirely.
+- id: FoliaNexa-Welcome
+  category: in-house
+  source: in-house
+  version: "0.1.0"
+  download_url: "https://github.com/kenvandine/folianexa-plugins/releases/download/v0.1.0/folianexa-welcome-0.1.0.jar"
+  sha256: null
+  homepage: "https://github.com/kenvandine/folianexa-plugins"
+  verified: false
+  notes: >
+    Example entry only — that repo and release don't exist. Shows the
+    pattern for in-house plugins developed in a separate repo: the
+    catalog just needs a real download_url, wherever it's hosted.

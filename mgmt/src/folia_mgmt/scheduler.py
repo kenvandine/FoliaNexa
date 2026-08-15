@@ -72,7 +72,17 @@ def select_host(session: Session, world: World) -> Host | None:
 
 def _node_config(world: World, settings: Settings) -> dict[str, str]:
     """`user.folia.*` instance config — this is what folia-nexa-node reads
-    off the devlxd socket to learn its assignment. PLAN.md §9."""
+    off the devlxd socket to learn its assignment. PLAN.md §9.
+
+    jar-url still comes from an external artifacts host (the engine jar
+    is real binary weight mgmt shouldn't be in the business of serving).
+    plugins-manifest-url comes from mgmt's own API instead — it's
+    generated live from the plugin catalog (PLAN.md §14), so there's no
+    hand-authored manifest file to keep in sync with a world's plugins
+    list anymore. World creation already validated plugins against the
+    catalog and that public_url is set (routers/worlds.py), so this can
+    assume both are fine by the time a world reaches placement.
+    """
     base = settings.artifacts_base_url.rstrip("/")
     config = {
         "user.folia.world-name": world.name,
@@ -81,8 +91,10 @@ def _node_config(world: World, settings: Settings) -> dict[str, str]:
         "user.folia.jar-version": world.version,
         "user.folia.jar-url": f"{base}/{world.engine}/{world.version}/{world.engine}.jar",
     }
-    if world.plugins:
-        config["user.folia.plugins-manifest-url"] = f"{base}/{world.engine}/manifests/{world.name}.json"
+    if world.plugins and settings.public_url:
+        config["user.folia.plugins-manifest-url"] = (
+            f"{settings.public_url.rstrip('/')}/api/v1/worlds/{world.name}/plugins-manifest"
+        )
     return config
 
 

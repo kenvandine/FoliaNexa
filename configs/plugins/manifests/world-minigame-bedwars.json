@@ -1,7 +1,0 @@
-[
-  {"name": "LuckPerms", "url": "https://your-plugin-host.example/folia/plugins/LuckPerms.jar"},
-  {"name": "BedWars1058", "url": "https://your-plugin-host.example/folia/plugins/BedWars1058.jar"},
-  {"name": "Vault-Unlocked", "url": "https://your-plugin-host.example/folia/plugins/Vault-Unlocked.jar"},
-  {"name": "FancyHolograms", "url": "https://your-plugin-host.example/folia/plugins/FancyHolograms.jar"},
-  {"name": "Spark", "url": "https://your-plugin-host.example/folia/plugins/Spark.jar"}
-]

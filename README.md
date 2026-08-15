@@ -21,7 +21,7 @@ Where k8s would actually win: running on someone else's cloud cluster, or wantin
 
 | Component | Snap | What it does |
 | --- | --- | --- |
-| [`mgmt/`](mgmt/) | `folia-nexa-mgmt` | Orchestrator: REST API, scheduler, web dashboard, CLI. Trusts LXD hosts, places worlds on them, keeps them healthy. |
+| [`mgmt/`](mgmt/) | `folia-nexa-mgmt` | Orchestrator: REST API, scheduler, web dashboard, CLI. Trusts LXD hosts, places worlds on them, keeps them healthy, and serves a curated plugin catalog (repo-tracked, operator-extensible) worlds pick from. |
 | [`node/`](node/) | `folia-nexa-node` | Runs inside every world's container. Reads its assignment off the container's own LXD config, stages the jar/plugins, runs the JVM, reports health. |
 | [`proxy/`](proxy/) | `folia-nexa-proxy` (+ `folia-routes-sync` plugin) | The public entry point. Keeps its backend list in sync with mgmt's live routing table and optionally gates login against Discord-approved players — no restart to add or remove a world. |
 | [`bot/`](bot/) | `folia-nexa-bot` | Discord bot: `/status`, `/request-access`, `/leaderboard`. |
@@ -59,10 +59,12 @@ Full design rationale, data model, and API reference live in **[PLAN.md](PLAN.md
 ./configs/worlds/create-all.sh
 ```
 
+**Picking plugins for a world?** [`mgmt/src/folia_mgmt/catalog.yaml`](mgmt/src/folia_mgmt/catalog.yaml) is the curated catalog — vetted external plugins pinned to known-good versions, plus room for your own in-house plugins (possibly from a separate repo; the catalog just needs a `download_url`). Browse it with `folia-nexa-mgmt plugins list`, the dashboard's "Plugins" tab, or the world-creation form's plugin picker; extend or override entries without a new mgmt release via a `plugin-catalog-override.yaml` in mgmt's state dir. See PLAN.md §14A.
+
 **Just want to run the test suites?**
 
 ```bash
-# mgmt (Python, 95 tests)
+# mgmt (Python, 123 tests)
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]" && .venv/bin/pytest -q
 
 # node (Python, 15 tests)
@@ -77,7 +79,7 @@ cd proxy && ./gradlew test
 
 ## Status
 
-149 automated tests passing across four components (95 mgmt, 15 node, 15 bot, 24 proxy). All five snaps build successfully with real `snapcraft` (that build pass caught and fixed two real bugs — see CLAUDE.md). Every mgmt API endpoint, the scheduler, the CLI, and the dashboard have been exercised against a real running server, not just a test client; `folia-nexa-db`'s entrypoint script was run end-to-end against real MariaDB binaries. Full breakdown of what's verified against real tooling versus what's written against a documented contract but not yet exercised live (installing/running the snaps, a registered Discord application) is in [CLAUDE.md](CLAUDE.md#whats-real-vs-whats-documented-but-unverified).
+177 automated tests passing across four components (123 mgmt, 15 node, 15 bot, 24 proxy). All five snaps build successfully with real `snapcraft` (that build pass caught and fixed two real bugs — see CLAUDE.md). Every mgmt API endpoint, the scheduler, the CLI, and the dashboard have been exercised against a real running server, not just a test client; `folia-nexa-db`'s entrypoint script was run end-to-end against real MariaDB binaries. Full breakdown of what's verified against real tooling versus what's written against a documented contract but not yet exercised live (installing/running the snaps, a registered Discord application) is in [CLAUDE.md](CLAUDE.md#whats-real-vs-whats-documented-but-unverified).
 
 This is under active development — expect gaps, and check `PLAN.md`'s inline status notes before assuming a described feature is fully wired up.
 

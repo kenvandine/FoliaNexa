@@ -4,7 +4,13 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 from folia_mgmt.config import Settings
 from folia_mgmt.models import AccessRequest, AccessRequestStatus, Host, HostStatus, World, WorldPhase, WorldType
-from folia_mgmt.scheduler import check_running_worlds, recover_crashed_worlds, select_host, sync_whitelisted_worlds
+from folia_mgmt.scheduler import (
+    _node_config,
+    check_running_worlds,
+    recover_crashed_worlds,
+    select_host,
+    sync_whitelisted_worlds,
+)
 
 
 def _session():
@@ -239,3 +245,28 @@ def test_sync_whitelisted_worlds_skips_non_whitelisted_and_non_running():
     sync_whitelisted_worlds(session, lxd)
 
     assert lxd.pushed == {}
+
+
+def test_node_config_omits_manifest_url_without_plugins():
+    world = World(name="w", type=WorldType.lobby, cpu_cores=1, memory_gb=1)
+    settings = Settings(public_url="https://mgmt.example:8443")
+    config = _node_config(world, settings)
+    assert "user.folia.plugins-manifest-url" not in config
+    assert config["user.folia.jar-url"] == f"{settings.artifacts_base_url}/{world.engine}/{world.version}/{world.engine}.jar"
+
+
+def test_node_config_omits_manifest_url_without_public_url():
+    world = World(name="w", type=WorldType.overworld, cpu_cores=4, memory_gb=8, plugins=["LuckPerms"])
+    settings = Settings(public_url=None)
+    config = _node_config(world, settings)
+    assert "user.folia.plugins-manifest-url" not in config
+
+
+def test_node_config_sets_manifest_url_when_plugins_and_public_url_present():
+    world = World(name="world-overworld", type=WorldType.overworld, cpu_cores=4, memory_gb=8, plugins=["LuckPerms", "Spark"])
+    settings = Settings(public_url="https://mgmt.example:8443/")
+    config = _node_config(world, settings)
+    assert (
+        config["user.folia.plugins-manifest-url"]
+        == "https://mgmt.example:8443/api/v1/worlds/world-overworld/plugins-manifest"
+    )

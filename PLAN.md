@@ -473,6 +473,16 @@ All plugins must target Folia's `RegionScheduler` and `GlobalRegionScheduler` to
 | **Diagnostics** | `Spark` (Folia build) | Live profiling of individual region tick rates, memory leaks, and CPU load. |
 | **Web Map** | `BlueMap` | Interactive asynchronous 3D isometric world map rendered in the browser. |
 
+### 14A. Catalog Implementation
+
+The matrix above is a design reference; the thing mgmt and worlds actually use is `mgmt/src/folia_mgmt/catalog.yaml`, a flat list of entries (`id`, `category`, `source: external|in-house`, `version`, `download_url`, `sha256`, `homepage`, `verified`, `notes`) checked into this repo and bundled with the `folia-nexa-mgmt` snap. It's just an index — `download_url` can point at a vetted external plugin's own release artifact (GitHub releases, a project's own CDN) or at an in-house plugin published from a separate repository; the catalog doesn't host or build anything itself.
+
+- **Extending without a new mgmt release**: an operator can add or override entries by dropping a `plugin-catalog-override.yaml` (same schema, a list of entries) in mgmt's state dir (`$SNAP_COMMON` under the snap). Entries there are merged over the bundled ones by `id` — useful for pinning a different version, filling in a `download_url` for one of the placeholder entries, or adding a private in-house plugin. See `plugin_catalog.py`.
+- **API**: `GET /api/v1/plugins` (list, optional `?category=`) and `GET /api/v1/plugins/{id}` (auth: any logged-in role) expose the merged catalog. `POST /api/v1/worlds` validates every id in a world's `plugins` list against the catalog and 400s on anything unknown — no more plugin names that only fail at the JVM, at boot, long after world creation. `GET /api/v1/worlds/{name}/plugins-manifest` is deliberately unauthenticated (consistent with node's zero-credential design, §9) and generates a world's manifest live from `world.plugins` + the catalog, skipping (with a log warning, not a 500) any entry whose `download_url` is still a placeholder.
+- **CLI**: `folia-nexa-mgmt plugins list [--category]` and `plugins show <id>` browse the catalog; `worlds create --plugin <id>` (repeatable) takes catalog ids.
+- **Dashboard**: the "Plugins" tab lists the catalog (id, category, source, version, verified/unverified, homepage); the "Declare a world" form has a checkbox picker populated from the same catalog instead of free text.
+- Declaring any plugins requires `FOLIA_MGMT_PUBLIC_URL` to be set (the address the world's `plugins-manifest-url` points back at) — enforced at world-creation time.
+
 ---
 
 ## 15. Sample MythicMobs & ItemsAdder Configurations

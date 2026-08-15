@@ -111,6 +111,7 @@ def fake_uuid_resolver():
 @pytest.fixture
 def app(tmp_path, monkeypatch, fake_lxd, fake_health_check, fake_uuid_resolver):
     monkeypatch.setenv("FOLIA_MGMT_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("FOLIA_MGMT_PUBLIC_URL", "https://mgmt.example:8443")
     # Import after the env var is set so any module-level Settings() reads
     # (there shouldn't be any, but this keeps the fixture order foolproof).
     from folia_mgmt.main import create_app
