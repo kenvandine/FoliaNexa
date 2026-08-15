@@ -16,23 +16,27 @@ host.
 | `node/` | `folia-smp-node` — in-container world runner/health agent | Python 3.12+, pytest |
 | `proxy/` | `folia-routes-sync` — Velocity plugin (routing sync + access gate) | Java 21, Gradle |
 | `bot/` | `folia-discord-bridge` — Discord bot (`/status`, `/request-access`, `/leaderboard`) | Python 3.12+, pytest |
+| `db/` | `folia-db` — self-contained MariaDB snap for LuckPerms' shared backend | Bash, bundled MariaDB |
 | `tools/folia-host-join.sh` | Automates trusting an LXD host into the cluster | Bash |
 | `configs/worlds/*.sh` | Starter world declarations (CLI wrappers) | Bash |
 | `configs/plugins/manifests/*.json` | Per-world plugin manifests `folia-smp-node` downloads from | JSON |
-| `configs/luckperms/provision-mysql.sh` | Stands up the shared MySQL/MariaDB instance LuckPerms configs get synced to | Bash |
+| `configs/luckperms/provision-mysql.sh` | Plain-LXD-container alternative to `db/` for operators who'd rather not add another snap | Bash |
 
-Each of `mgmt/`, `node/`, `proxy/`, `bot/` is an independent,
+Each of `mgmt/`, `node/`, `proxy/`, `bot/`, `db/` is an independent,
 independently testable component with its own `snapcraft.yaml`. None of
-the four `snapcraft.yaml` files have been build-tested with actual
+the five `snapcraft.yaml` files have been build-tested with actual
 `snapcraft` — they're written against its documented plugin behavior
-(`python` plugin for mgmt/node/bot, `gradle` + `nil` for proxy) but
-unverified end-to-end. Validate that before depending on it in
-production.
+(`python` plugin for mgmt/node/bot, `gradle`/`nil` for proxy, `nil` +
+staged `mariadb-server` for db) but unverified end-to-end as an actual
+snap build. `db/bin/run-folia-db.sh` itself, unlike the other four
+snaps' entrypoints, *has* been run for real against the actual MariaDB
+binaries (extracted from the `.deb`s, outside snap confinement) — see
+its own comments for what that did and didn't prove.
 
 ## Running the test suites
 
 ```bash
-# mgmt (Python) — 88 tests
+# mgmt (Python) — 95 tests
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
@@ -40,7 +44,7 @@ cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 cd node && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
-# bot (Python) — 19 tests, no live Discord connection needed
+# bot (Python) — 15 tests, no live Discord connection needed
 cd bot && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
@@ -180,20 +184,36 @@ guarantee.
 ### Phase 6 — shared MySQL for LuckPerms (optional)
 
 Only needed if any declared world includes `LuckPerms` in its plugin
-list (the survival starter config in `configs/worlds/` does). Run once,
-directly on a trusted LXD host — not through mgmt's scheduler, since
-folia-smp-node only runs Folia/Paper JVMs, not a database server (see
-`mgmt/src/folia_mgmt/luckperms.py`'s module docstring):
+list (the survival starter config in `configs/worlds/` does). Not
+through mgmt's scheduler either way — folia-smp-node only runs
+Folia/Paper JVMs, not a database server (see
+`mgmt/src/folia_mgmt/luckperms.py`'s module docstring). Two options:
+
+**`folia-db`** (recommended — self-contained, bundles MariaDB itself):
+
+```bash
+cd db && snapcraft   # unverified as an actual snap build, see repo map note above
+sudo snap install ./folia-db_11.8_amd64.snap --dangerous
+sudo snap start folia-db.daemon
+sudo snap run folia-db.show-credentials   # prints the FOLIA_MGMT_LUCKPERMS_MYSQL_* vars
+```
+
+First start bootstraps a dedicated database/user with a generated
+password automatically — nothing else to run.
+
+**`configs/luckperms/provision-mysql.sh`** (alternative, if you'd rather
+not add another snap — a plain LXD container with MariaDB installed via
+apt):
 
 ```bash
 ./configs/luckperms/provision-mysql.sh
 ```
 
-It prints the `FOLIA_MGMT_LUCKPERMS_MYSQL_*` environment variables to
-set on the mgmt host. Once set, every running world with `LuckPerms` in
-its plugin list gets its `config.yml` kept in sync automatically —
-existing worlds pick it up on their next restart (LuckPerms reads its
-storage backend at plugin load time, not live).
+Either way, set the printed `FOLIA_MGMT_LUCKPERMS_MYSQL_*` variables on
+the mgmt host. Once set, every running world with `LuckPerms` in its
+plugin list gets its `config.yml` kept in sync automatically — existing
+worlds pick it up on their next restart (LuckPerms reads its storage
+backend at plugin load time, not live).
 
 ### Phase 7 — build and install `velocity-proxy`
 
@@ -263,6 +283,15 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   against a live LXD daemon in this environment.
 - `luckperms.py`'s config.yml rendering and the reconcile-loop sync logic
   that decides which worlds get it pushed.
+- `db/bin/run-folia-db.sh` — actually run end-to-end (`mariadb-install-db`
+  init, `mariadbd` startup, database/user bootstrap, a real client
+  connection with the generated credentials, confirming root has no
+  wildcard/remote grant) against the real MariaDB binaries extracted from
+  Ubuntu's `.deb` packages. This caught two real path bugs (`mariadb-
+  install-db` living under `usr/bin/`, not `usr/sbin/`; needing an
+  explicit `--basedir` under a non-`/usr` prefix like a snap's `$SNAP`)
+  before they'd have surfaced as a broken first boot. Not run inside
+  actual snap confinement, though — see below.
 
 Written against documented API contracts but **not** exercised against
 live infrastructure:
@@ -276,8 +305,12 @@ live infrastructure:
 - `configs/luckperms/provision-mysql.sh` and the LuckPerms config.yml
   format itself (verify plugin config keys against whatever LuckPerms
   version you actually deploy — they can drift between major versions).
-- All four `snapcraft.yaml` files — no `snapcraft` binary was available
-  to build with.
+- All five `snapcraft.yaml` files as actual snap builds — no `snapcraft`
+  binary was available. `db/`'s specifically: strict confinement could
+  plausibly restrict something `mariadbd` wants (raw sockets, certain
+  filesystem operations) that running the binary directly, unconfined,
+  wouldn't have caught — confinement-related failures are the main risk
+  left unverified for this one.
 
 If you're picking up this project to actually run it: those are the
 places to validate first, roughly in that order.

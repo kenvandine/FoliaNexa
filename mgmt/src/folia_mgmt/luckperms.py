@@ -5,12 +5,15 @@ This does **not** stand up the MySQL/MariaDB instance itself —
 folia-smp-node only knows how to run a Folia/Paper JVM (see
 node/src/folia_node/agent.py), not arbitrary services, so scheduling a
 database server as a `type: infra` world isn't something the current
-node agent can do. The operator provisions that instance separately
-(see configs/luckperms/provision-mysql.sh for a starting point) and
-points mgmt at it via the `luckperms_mysql_*` settings; what mgmt
-automates is every world's plugin config staying in sync with it, so
-groups/permissions/tracks stay consistent across worlds without hand-
-editing each one.
+node agent can do. The operator provisions that instance separately —
+`folia-db` (`db/`) is a self-contained snap for exactly this (bundles
+MariaDB, bootstraps a dedicated database/user on first start; see its
+snapcraft.yaml), or `configs/luckperms/provision-mysql.sh` for a plain
+LXD container if you'd rather not add another snap — and points mgmt at
+whichever via the `luckperms_mysql_*` settings; what mgmt automates is
+every world's plugin config staying in sync with it, so groups/
+permissions/tracks stay consistent across worlds without hand-editing
+each one.
 
 One real limitation, not hidden: LuckPerms reads its storage backend
 from config.yml at plugin load time, not on a live reload, so a world
