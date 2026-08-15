@@ -1,0 +1,15 @@
+name: __PLUGIN_NAME__
+version: '__VERSION__'
+main: __MAIN_CLASS__
+api-version: '__API_VERSION_MAJOR_MINOR__'
+load: POSTWORLD
+
+commands:
+  __COMMAND_NAME__:
+    description: __COMMAND_DESCRIPTION__
+    usage: /__COMMAND_NAME__ [reload]
+
+permissions:
+  __PLUGIN_ID_LOWER__.reload:
+    description: Reload the config
+    default: op

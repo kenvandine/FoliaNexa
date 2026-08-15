@@ -63,7 +63,7 @@ Full design rationale, data model, and API reference live in **[PLAN.md](PLAN.md
 
 **Picking plugins for a world?** [`mgmt/src/folia_mgmt/catalog.yaml`](mgmt/src/folia_mgmt/catalog.yaml) is the curated catalog — vetted external plugins pinned to known-good versions, plus room for your own in-house plugins (possibly from a separate repo; the catalog just needs a `download_url`). Browse it with `folia-nexa-mgmt plugins list`, the dashboard's "Plugins" tab, or the world-creation form's plugin picker; extend or override entries without a new mgmt release via a `plugin-catalog-override.yaml` in mgmt's state dir. See PLAN.md §14A.
 
-**Building a new in-house plugin from scratch?** [`docs/plugin-dev/`](docs/plugin-dev/) is a three-part how-to series for exactly that — Ubuntu dev environment setup, Folia-safe plugin architecture (the region-scheduler APIs that replace the legacy Bukkit scheduler), and how to get a finished plugin into the catalog above.
+**Building a new in-house plugin from scratch?** [`docs/plugin-dev/`](docs/plugin-dev/) is a three-part how-to series for exactly that — Ubuntu dev environment setup, Folia-safe plugin architecture (the region-scheduler APIs that replace the legacy Bukkit scheduler), and how to get a finished plugin into the catalog above. For actually writing one with Claude Code, the [`folia-plugin-scaffold`](.claude/skills/folia-plugin-scaffold/) skill automates this — scaffolds a real, buildable plugin project from a feature description, or from a Modrinth mod/plugin link (with an explicit no-code-copying, disclose-your-inspiration policy — it writes an original Folia-native implementation, not a code port).
 
 **Just want to run the test suites?**
 

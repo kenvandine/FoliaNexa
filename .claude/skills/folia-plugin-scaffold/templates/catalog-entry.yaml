@@ -1,0 +1,10 @@
+- id: __PLUGIN_ID__
+  category: __CATEGORY__
+  source: in-house
+  version: "__VERSION__"
+  download_url: __DOWNLOAD_URL__
+  sha256: __SHA256__
+  homepage: "__HOMEPAGE__"
+  verified: __VERIFIED__
+  notes: >
+    __NOTES__

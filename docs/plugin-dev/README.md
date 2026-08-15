@@ -25,3 +25,10 @@ see [`../game-master-howto.md`](../game-master-howto.md) instead. For
 the catalog's own design — how entries are structured, merged with
 operator overrides, and turned into a world's plugin manifest — see
 `PLAN.md` §14A and §14B.
+
+**Using Claude Code to actually write one?** The
+[`folia-plugin-scaffold`](../../.claude/skills/folia-plugin-scaffold/)
+skill automates this whole series — scaffolds a real, building plugin
+project (the Gradle/`plugin.yml`/Folia-scheduler skeleton this series
+describes), either from a feature description or from a Modrinth
+mod/plugin link, and walks through to a catalog entry per part 3.
