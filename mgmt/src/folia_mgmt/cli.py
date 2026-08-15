@@ -140,6 +140,11 @@ def worlds_create(
     cpu: int = typer.Option(..., "--cpu"),
     memory: str = typer.Option(..., "--memory", help="e.g. '12' or '12GB'"),
     labels: list[str] = typer.Option([], "--labels", help="key=value, repeatable"),
+    plugin: list[str] = typer.Option(
+        [], "--plugin", help="plugin name, repeatable — see configs/plugins/manifests/ for the manifest this implies"
+    ),
+    engine: str = typer.Option("folia", "--engine"),
+    version: str = typer.Option("1.21.4", "--version"),
     mgmt_url: str | None = None,
 ) -> None:
     memory_gb = _parse_memory_gb(memory)
@@ -150,6 +155,9 @@ def worlds_create(
             json={
                 "name": name,
                 "type": type,
+                "engine": engine,
+                "version": version,
+                "plugins": plugin,
                 "cpu_cores": cpu,
                 "memory_gb": memory_gb,
                 "placement_labels": placement_labels,

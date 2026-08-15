@@ -1,0 +1,15 @@
+[
+  {"name": "LuckPerms", "url": "https://your-plugin-host.example/folia/plugins/LuckPerms.jar"},
+  {"name": "HuskClaims", "url": "https://your-plugin-host.example/folia/plugins/HuskClaims.jar"},
+  {"name": "Vault-Unlocked", "url": "https://your-plugin-host.example/folia/plugins/Vault-Unlocked.jar"},
+  {"name": "AxAuctions", "url": "https://your-plugin-host.example/folia/plugins/AxAuctions.jar"},
+  {"name": "AuraSkills", "url": "https://your-plugin-host.example/folia/plugins/AuraSkills.jar"},
+  {"name": "ItemsAdder", "url": "https://your-plugin-host.example/folia/plugins/ItemsAdder.jar"},
+  {"name": "MythicMobs", "url": "https://your-plugin-host.example/folia/plugins/MythicMobs.jar"},
+  {"name": "HuskHomes", "url": "https://your-plugin-host.example/folia/plugins/HuskHomes.jar"},
+  {"name": "HuskPortals", "url": "https://your-plugin-host.example/folia/plugins/HuskPortals.jar"},
+  {"name": "SimpleVoiceChat", "url": "https://your-plugin-host.example/folia/plugins/SimpleVoiceChat.jar"},
+  {"name": "Spark", "url": "https://your-plugin-host.example/folia/plugins/Spark.jar"},
+  {"name": "BlueMap", "url": "https://your-plugin-host.example/folia/plugins/BlueMap.jar"},
+  {"name": "DiscordSRV", "url": "https://your-plugin-host.example/folia/plugins/DiscordSRV.jar"}
+]
