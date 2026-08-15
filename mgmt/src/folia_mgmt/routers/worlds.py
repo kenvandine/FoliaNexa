@@ -13,8 +13,8 @@ from folia_mgmt.auth import require_operator, require_viewer
 from folia_mgmt.db import get_session
 from folia_mgmt.deps import get_health_check, get_lxd_client, get_uuid_resolver
 from folia_mgmt.lxd_client import LXDClient, LXDError
-from folia_mgmt.models import Host, World, WorldPhase, WorldType, utcnow
-from folia_mgmt.scheduler import HealthCheck, reconcile
+from folia_mgmt.models import Host, HostStatus, World, WorldPhase, WorldType, utcnow
+from folia_mgmt.scheduler import HealthCheck, allocated_capacity, reconcile
 
 logger = logging.getLogger(__name__)
 
@@ -188,12 +188,64 @@ def restore_world(
     return {"restored": snapshot_name}
 
 
-@router.post("/{name}/migrate", dependencies=[Depends(require_operator)])
-def migrate_world(name: str, target_host: str, session: Session = Depends(get_session)) -> None:
-    # See PLAN.md §13 — snapshot -> lxc copy to target host -> cut over.
-    # LXDClient.copy_snapshot is not implemented yet (untested against a
-    # live multi-host LXD setup); fail loudly instead of pretending to work.
-    raise HTTPException(status.HTTP_501_NOT_IMPLEMENTED, "cross-host migration not implemented yet — see PLAN.md §13")
+@router.post("/{name}/migrate", response_model=WorldResponse, dependencies=[Depends(require_operator)])
+def migrate_world(
+    name: str,
+    target_host: str,
+    session: Session = Depends(get_session),
+    lxd_client: LXDClient = Depends(get_lxd_client),
+) -> WorldResponse:
+    """Stop -> export -> import -> start on the target, then cut mgmt's
+    state over and delete the source container. PLAN.md §13. A brief
+    outage is expected — this isn't a live migration (see
+    LXDClient.migrate_container's docstring for why)."""
+    world, source_host = _host_and_world(session, name)
+
+    target = session.exec(select(Host).where(Host.name == target_host)).first()
+    if target is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"no such host '{target_host}'")
+    if target.name == source_host.name:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"world '{name}' is already on '{target_host}'")
+    if target.status != HostStatus.online:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"target host '{target_host}' is not online")
+
+    used_cpu, used_mem = allocated_capacity(session, target.name)
+    if (
+        target.capacity_cpu_cores - used_cpu < world.cpu_cores
+        or target.capacity_memory_gb - used_mem < world.memory_gb
+    ):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"target host '{target_host}' doesn't have capacity for world '{name}'"
+        )
+
+    try:
+        lxd_client.migrate_container(source_host, world.container_name, target)
+    except LXDError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, f"migration failed, world stays on '{source_host.name}': {exc}") from exc
+
+    # Cutover: same container name, new host. phase=provisioning so the
+    # next reconcile pass re-polls for the (new) address before flipping
+    # back to running, same as any fresh placement.
+    world.host_name = target.name
+    world.sticky_host = target.name
+    world.phase = WorldPhase.provisioning
+    world.address = None
+    world.updated_at = utcnow()
+    session.add(world)
+    session.commit()
+    session.refresh(world)
+
+    try:
+        lxd_client.delete_container(source_host, world.container_name)
+    except LXDError:
+        logger.exception(
+            "migrated world '%s' to '%s' but failed to delete the old container on '%s' — clean up manually",
+            name,
+            target.name,
+            source_host.name,
+        )
+
+    return _to_response(world)
 
 
 class AccessUpdateRequest(BaseModel):

@@ -126,19 +126,6 @@ def test_snapshot_running_world(client, admin_token, operator_token, fake_lxd):
     assert ("node-a", "world-overworld", "pre-plugin-test") in fake_lxd.snapshots
 
 
-def test_migrate_not_implemented(client, admin_token, operator_token):
-    _enroll_host(client, admin_token)
-    client.post(
-        "/api/v1/worlds",
-        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
-        headers=auth_header(operator_token),
-    )
-    resp = client.post(
-        "/api/v1/worlds/world-overworld/migrate",
-        params={"target_host": "node-b"},
-        headers=auth_header(operator_token),
-    )
-    assert resp.status_code == 501
 
 
 def test_world_access_update(client, admin_token, operator_token):

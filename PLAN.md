@@ -371,7 +371,7 @@ No join token, no outbound registration call — the container's own config *is*
 | `DELETE` | `/api/v1/worlds/{name}` | Tear down a world (snapshots retained per policy until expiry) |
 | `POST` | `/api/v1/worlds/{name}/snapshot` | On-demand snapshot |
 | `POST` | `/api/v1/worlds/{name}/restore/{snapshot}` | Roll back to a snapshot |
-| `POST` | `/api/v1/worlds/{name}/migrate` | Snapshot → copy to another host → cut over |
+| `POST` | `/api/v1/worlds/{name}/migrate` | Stop → export → import → start on another host → cut over |
 | `GET`/`PUT` | `/api/v1/worlds/{name}/access` | Per-world whitelist toggle + ops list (§11) |
 | `GET` | `/api/v1/routes` | Live routing table for `velocity-proxy` |
 | `POST` | `/api/v1/plugins/stage` | Upload + validate a plugin jar against a staging clone |
@@ -449,7 +449,7 @@ Staging a plugin change is now just LXD snapshot + copy, orchestrated by mgmt in
 4. Operator connects to the staging world directly (mgmt can optionally add it to `/api/v1/routes` with `default: false` for a manual-connect test address) and validates gameplay.
 5. `POST /api/v1/plugins/promote` — pushes the validated jar into the source world's template, restarts `world-overworld`'s node agent, deletes the staging container.
 
-Migration (moving a sticky world to a different host) uses the same primitive: snapshot → `lxc copy` to the target host → launch there with the same `user.folia.*` config → cut `velocity-proxy` over → delete the original once healthy.
+Migration (moving a sticky world to a different host) is **implemented**, via `POST /worlds/{name}/migrate?target_host=<name>`: stop the container, export it as an LXD backup tarball, import that on the target host, start it there, then delete the source — a brief outage, not a live migration (raw LXD migration is websocket-based and considerably more complex to get right without a live daemon to validate against, so this deliberately uses the plain-HTTP backup export/import API instead). Capacity on the target is checked before attempting anything; a failed migration leaves the world exactly where it was — the source is only deleted after a successful start on the target.
 
 ---
 

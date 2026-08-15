@@ -24,6 +24,8 @@ class FakeLXDClient:
         self._next_ip = 10
         self.fail_launch_for: set[str] = set()
         self.pushed_files: dict[tuple[str, str, str], bytes] = {}  # (host_name, container, path) -> content
+        self.migrations: list[tuple[str, str, str]] = []  # (source_host, container, target_host)
+        self.fail_migrate_for: set[str] = set()
 
     def redeem_trust_token(self, address: str, project: str, trust_token: str):
         if trust_token == "bad-token":
@@ -62,6 +64,11 @@ class FakeLXDClient:
 
     def push_file(self, host, name, path, content, *, mode="0644"):
         self.pushed_files[(host.name, name, path)] = content
+
+    def migrate_container(self, source_host, source_name, target_host):
+        if source_name in self.fail_migrate_for:
+            raise LXDError(f"simulated migration failure for {source_name}")
+        self.migrations.append((source_host.name, source_name, target_host.name))
 
 
 @pytest.fixture

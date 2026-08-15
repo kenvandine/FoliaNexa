@@ -32,7 +32,7 @@ MINECRAFT_PORT = 25565
 HealthCheck = Callable[[World, Settings], bool]
 
 
-def _allocated(session: Session, host_name: str) -> tuple[int, int]:
+def allocated_capacity(session: Session, host_name: str) -> tuple[int, int]:
     placed = session.exec(
         select(World).where(
             World.host_name == host_name,
@@ -56,7 +56,7 @@ def select_host(session: Session, world: World) -> Host | None:
     for host in session.exec(select(Host).where(Host.status == HostStatus.online)).all():
         if not _labels_match(host, world):
             continue
-        used_cpu, used_mem = _allocated(session, host.name)
+        used_cpu, used_mem = allocated_capacity(session, host.name)
         free_cpu = host.capacity_cpu_cores - used_cpu
         free_mem = host.capacity_memory_gb - used_mem
         if free_cpu < world.cpu_cores or free_mem < world.memory_gb:

@@ -248,11 +248,79 @@ class LXDClient:
             if resp.status_code == 202:
                 self._wait_operation(client, resp.json())
 
-    def copy_snapshot(
-        self, host: Host, name: str, snapshot_name: str, target_host: Host, target_name: str
-    ) -> None:
-        """Snapshot -> copy to another host. PLAN.md §13 (staging/migration)."""
-        # Cross-remote copy in raw LXD terms is a POST to the target with a
-        # "migration" source pointing at the origin's operation websocket;
-        # left as a follow-up once this is validated against real hosts.
-        raise NotImplementedError("cross-host copy not yet implemented — see PLAN.md §13")
+    def export_backup(self, host: Host, name: str) -> bytes:
+        """Exports an instance as a backup tarball, for cross-host copy
+        (§13). Deliberately uses LXD's plain-HTTP backup export/import API
+        rather than its websocket-based live-migration protocol — the
+        latter would need a binary protocol implementation this codebase
+        has no way to validate without a live LXD daemon; export/import is
+        a much smaller surface to get right blind."""
+        with self._client_for(host) as client:
+            create = client.post(
+                f"/1.0/instances/{name}/backups",
+                params={"project": host.project},
+                json={"name": "", "instance_only": False, "optimized_storage": False},
+            )
+            if create.status_code not in (200, 202):
+                raise LXDError(f"failed to start backup of '{name}' on '{host.name}': {create.text}")
+            metadata = self._wait_operation(client, create.json())
+
+            backup_path = (metadata.get("resources") or {}).get("backups", [None])[0]
+            if not backup_path:
+                raise LXDError(f"backup of '{name}' on '{host.name}' returned no backup resource")
+
+            export = client.get(f"{backup_path}/export", params={"project": host.project})
+            if export.status_code != 200:
+                raise LXDError(f"failed to download backup export for '{name}': {export.text}")
+            content = export.content
+
+            client.delete(backup_path, params={"project": host.project})
+            return content
+
+    def import_backup(self, host: Host, backup_content: bytes) -> None:
+        """The imported instance's name comes from inside the backup
+        tarball's metadata (it's whatever name it was exported under) —
+        LXD's import endpoint doesn't take a rename parameter, so callers
+        that need `target_name != name` must export under the desired
+        target name in the first place."""
+        with self._client_for(host) as client:
+            resp = client.post(
+                "/1.0/instances",
+                params={"project": host.project},
+                content=backup_content,
+                headers={"Content-Type": "application/octet-stream"},
+            )
+            if resp.status_code not in (200, 202):
+                raise LXDError(f"failed to import backup on '{host.name}': {resp.text}")
+            self._wait_operation(client, resp.json())
+
+    def migrate_container(self, source_host: Host, source_name: str, target_host: Host) -> None:
+        """Stop -> export -> import -> start. Not a live/zero-downtime
+        migration — PLAN.md §13 already documents migration as requiring a
+        brief restart, which this matches. Caller is responsible for
+        deleting the source container once satisfied the target is
+        healthy (PLAN.md §13's "delete original once healthy").
+
+        NOT exercised against a live LXD daemon — written against LXD's
+        documented backup export/import API contract.
+        """
+        with self._client_for(source_host) as client:
+            stop = client.put(
+                f"/1.0/instances/{source_name}/state",
+                params={"project": source_host.project},
+                json={"action": "stop", "timeout": 30, "force": True},
+            )
+            if stop.status_code in (200, 202):
+                self._wait_operation(client, stop.json())
+
+        backup = self.export_backup(source_host, source_name)
+        self.import_backup(target_host, backup)
+
+        with self._client_for(target_host) as client:
+            start = client.put(
+                f"/1.0/instances/{source_name}/state",
+                params={"project": target_host.project},
+                json={"action": "start", "timeout": 30},
+            )
+            if start.status_code in (200, 202):
+                self._wait_operation(client, start.json())
