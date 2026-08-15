@@ -69,9 +69,30 @@ async def test_create_access_request_sends_expected_body(mock_http):
         "discord_user_id": "123",
         "discord_username": "somebody#0",
         "minecraft_username": "Steve",
+        "minecraft_uuid": None,
         "auto_approve": True,
     }
     assert result == {"status": "pending"}
+
+
+async def test_create_access_request_sends_bedrock_uuid_when_given(mock_http):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"status": "pending"})
+
+    mock_http(handler)
+    client = MgmtClient("https://mgmt.example:8443", "tok-abc")
+    await client.create_access_request(
+        discord_user_id="123",
+        discord_username="somebody#0",
+        minecraft_username="SomeBedrockGamertag",
+        minecraft_uuid="00000000-0000-0000-0009-0009000000f4",
+        auto_approve=False,
+    )
+
+    assert captured["body"]["minecraft_uuid"] == "00000000-0000-0000-0009-0009000000f4"
 
 
 async def test_base_url_trailing_slash_is_stripped(mock_http):

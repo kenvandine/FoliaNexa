@@ -3,7 +3,9 @@
 # reverse-proxies two of them to folia-nexa-mgmt at home, over the
 # WireGuard tunnel set up by setup-wireguard.sh. Minecraft traffic itself
 # (:25565) is raw TCP, not HTTP — it never goes through Caddy; the
-# relocated folia-nexa-proxy binds that port directly on the VPS.
+# relocated folia-nexa-proxy binds that port directly on the VPS. Same
+# story for Bedrock (:19132/udp, RakNet, PLAN.md §7B) — also raw, also
+# bound directly by folia-nexa-proxy, Caddy has no role in it either.
 #
 # Fill in the placeholders below (or override via environment variables of
 # the same name — Caddy expands {$VAR:default} at load time) before

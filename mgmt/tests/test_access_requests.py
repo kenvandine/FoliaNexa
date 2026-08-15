@@ -145,6 +145,30 @@ def test_create_access_request_upserts_by_discord_user_id(client, operator_token
     assert len(all_requests) == 1
 
 
+def test_create_access_request_uses_supplied_bedrock_uuid_without_mojang_lookup(client, operator_token, monkeypatch):
+    called = []
+
+    def tracking_resolver(name):
+        called.append(name)
+        return "should-not-be-used"
+
+    monkeypatch.setattr("folia_mgmt.routers.access_requests.resolve_minecraft_uuid", tracking_resolver)
+
+    resp = client.post(
+        "/api/v1/access-requests",
+        json={
+            "discord_user_id": "1",
+            "discord_username": "bob",
+            "minecraft_username": "SomeBedrockGamertag",
+            "minecraft_uuid": "00000000-0000-0000-0009-0009000000f4",
+        },
+        headers=auth_header(operator_token),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["minecraft_uuid"] == "00000000-0000-0000-0009-0009000000f4"
+    assert called == []
+
+
 def test_create_access_request_does_not_reapprove_already_denied(client, operator_token, monkeypatch):
     _fake_resolver(monkeypatch, {"Steve": "069a79f444e94726a5befca90e38aaf9"})
     create = client.post(

@@ -252,9 +252,9 @@ shape — see `docs/vps-edge-deployment.md` for the operator walkthrough and
 
 **What moves to the VPS:** `folia-nexa-proxy` itself (it was always meant
 to be "the single public-facing port" — this just gives it a real public
-box), Caddy (TLS termination + reverse proxy), and the static player
-portal (`portal/`). **What stays home:** `folia-nexa-mgmt`, the LXD hosts,
-every world. mgmt is reachable from the VPS only over the WireGuard
+box, and now a second protocol too, see §7B), Caddy (TLS termination +
+reverse proxy), and the static player portal (`portal/`). **What stays
+home:** `folia-nexa-mgmt`, the LXD hosts, every world. mgmt is reachable from the VPS only over the WireGuard
 tunnel, with `AllowedIPs`/firewall rules scoped to just what the relocated
 proxy and Caddy actually need — the LXD hosts' own remote API stays off
 that path entirely, unchanged from §3's rule that it must never be
@@ -292,6 +292,84 @@ Next.js/Astro; there's no WebSocket live-push layer — "recently active"
 on the portal's home page is a client-side approximation from stats
 report recency, clearly labeled as such rather than claimed as exact
 real-time presence.
+
+---
+
+## 7B. Bedrock Client Support (GeyserMC + Floodgate)
+
+Bedrock (console/mobile/Windows 10) players speak a different protocol
+family entirely (RakNet over UDP, not Java Edition's TCP protocol), so
+the cluster's single public-facing proxy is exactly where to terminate
+it — same rationale as §7A's "the proxy was always meant to be the single
+public-facing port," extended to a second protocol on the same box
+instead of a second box.
+
+**What changed:** `folia-nexa-proxy`'s snap now bundles two more Velocity
+plugins alongside `folia-routes-sync` — Geyser-Velocity (Bedrock↔Java
+protocol translation) and floodgate-velocity (lets Bedrock/Xbox accounts
+that don't own Java Minecraft join at all, assigning them a deterministic
+UUID derived from their Xbox XUID). Both are ordinary Velocity plugin
+jars, fetched at snap-build time by a new `geyser-plugins` part in
+`proxy/snapcraft.yaml` — no changes to `FoliaRoutesSyncPlugin` or any
+backend world were needed, since Velocity already forwards whatever
+connection Geyser hands it through the existing backend server list
+(§7's routing) exactly like any Java client. Bedrock clients connect to
+the proxy host's `:19132/udp` (Geyser's default; changeable by editing
+its auto-generated `config.yml` under `$SNAP_COMMON/proxy/plugins/
+Geyser-Velocity/` after first start — same "seed once, never overwrite"
+pattern `run-velocity.sh` already applies to `velocity.toml`).
+
+Unlike `velocity-runtime`'s pinned Velocity version, the `geyser-plugins`
+part deliberately tracks GeyserMC's `latest` build rather than pinning
+one: Velocity is pinned for backend-protocol stability, but an old,
+pinned Geyser build breaks newly-released Bedrock client versions
+outright, and Mojang ships those on its own schedule this project has no
+control over.
+
+**Per-world Bedrock-awareness (optional):** the proxy-level integration
+alone is sufficient for Bedrock players to join and play. If a specific
+world should also *recognize* a player joined via Bedrock (correct
+skin/identity on that world specifically, or a plugin using the Floodgate
+API), install the `Floodgate` catalog entry
+(`mgmt/src/folia_mgmt/catalog.yaml`) on it via `--plugin Floodgate`. This
+needs one manual, one-time step this project doesn't automate: after the
+proxy has started once (so its own bundled Floodgate has generated a
+keypair), copy `$SNAP_COMMON/proxy/plugins/floodgate/key.pem` from the
+proxy host to that world's `plugins/floodgate/key.pem` and restart the
+world. There's no proxy→world file-push channel today the way
+`luckperms.py` pushes LuckPerms' `config.yml` to worlds mgmt-side — that
+would be the natural next step if this needs automating later, but it's
+out of scope for now (a single manual copy, done once per world that
+opts in, not a recurring operational burden).
+
+**Access gate + Bedrock:** Floodgate UUIDs are syntactically ordinary
+RFC-4122 UUIDs, so `FOLIA_ACCESS_GATE_ENABLED`'s approved-UUID gate
+(§11C) needed no changes on the proxy side — `ApprovedPlayers.java`
+already parses any well-formed UUID, and `AccessRequest.minecraft_uuid`
+(`mgmt/src/folia_mgmt/models.py`) is an unvalidated plain string column.
+The one real gap was upstream of that: the Discord bot's
+`/request-access` command only ever resolved a Java username through the
+Mojang API (`mgmt/src/folia_mgmt/discord.py::resolve_minecraft_uuid`),
+with no way to register a Bedrock player's Floodgate UUID at all. Fixed
+by adding an optional `minecraft_uuid` parameter to `/request-access`
+(`bot/src/folia_bot/bot.py`) and `POST /api/v1/access-requests`
+(`routers/access_requests.py`) — when supplied, mgmt stores it directly
+and skips the Mojang lookup. A Bedrock player finds their own Floodgate
+UUID via Floodgate's in-game `/uuid` command after any Geyser-fronted
+join. The web OAuth flow (`GET /auth/discord/callback`) still has no
+equivalent — it carries the username through Discord's `state` redirect
+param with no room for a second field — and would need frontend changes
+to support directly; left as a documented follow-up, not implemented.
+
+**What's real vs. unverified:** the two GeyserMC download URLs the new
+snapcraft part uses, and the `Floodgate` catalog entry's own download
+URL, were fetched for real and their sha256 checked against GeyserMC's
+build-metadata API in the environment this was added in. Not verified:
+the full `snapcraft` build of the updated `proxy/` snap (no
+`snapcraft`/`snapd` available in that environment), and — like the rest
+of §7A — an actual Bedrock/console/mobile client joining for real (no
+such client was reachable to test against). See `CLAUDE.md`'s own
+"what's real" section for the same breakdown.
 
 ---
 

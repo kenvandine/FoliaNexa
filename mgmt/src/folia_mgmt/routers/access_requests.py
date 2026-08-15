@@ -107,6 +107,7 @@ class CreateAccessRequest(BaseModel):
     discord_user_id: str
     discord_username: str
     minecraft_username: str
+    minecraft_uuid: str | None = None
     auto_approve: bool = False
 
 
@@ -126,14 +127,19 @@ def create_access_request(
     upsert-by-discord-user-id behavior; `auto_approve` is trusted from the
     caller since reaching this endpoint at all already requires an
     operator-role token (the bot decided auto-approval locally from the
-    inviting member's roles — see folia_bot.access.decide_auto_approve)."""
+    inviting member's roles — see folia_bot.access.decide_auto_approve).
+
+    `minecraft_uuid`, if supplied, is stored as-is instead of resolving
+    `minecraft_username` through Mojang — the path for Bedrock players
+    (PLAN.md §7B), whose Floodgate-assigned UUID the Mojang API has no
+    way to look up from a gamertag."""
     existing = session.exec(
         select(AccessRequest).where(AccessRequest.discord_user_id == body.discord_user_id)
     ).first()
     request = existing or AccessRequest(discord_user_id=body.discord_user_id, discord_username=body.discord_username)
     request.discord_username = body.discord_username
     request.minecraft_username = body.minecraft_username
-    request.minecraft_uuid = resolve_minecraft_uuid(body.minecraft_username)
+    request.minecraft_uuid = body.minecraft_uuid or resolve_minecraft_uuid(body.minecraft_username)
 
     auto_approved = False
     if request.status == AccessRequestStatus.pending and body.auto_approve:

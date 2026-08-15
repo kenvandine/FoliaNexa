@@ -44,7 +44,12 @@ that a review wouldn't have: `proxy/snapcraft.yaml` was pointed at
 `api.papermc.io/v2`, which PaperMC has since sunset in favor of
 `fill.papermc.io/v3` (different host, different response shape); and
 `bot/snapcraft.yaml`'s `summary` field exceeded snap metadata's 78-
-character limit. Both fixed. `db/bin/run-folia-nexa-db.sh` was additionally
+character limit. Both fixed. (`proxy/snapcraft.yaml`'s later Bedrock/
+GeyserMC addition — the `geyser-plugins` part, PLAN.md §7B — was
+**not** re-verified against a real `snapcraft` build; no `snapcraft`/
+`snapd` was available in the environment that change was made in. Its
+two download URLs were fetched and sha256-checked directly instead —
+see that part's comments.) `db/bin/run-folia-nexa-db.sh` was additionally
 run end-to-end against the real MariaDB binaries (outside snap
 confinement, extracted from the `.deb`s directly) — see its own comments
 for what that did and didn't prove. None of the five have been
@@ -251,7 +256,7 @@ backend at plugin load time, not live).
 ### Phase 7 — build and install `folia-nexa-proxy`
 
 ```bash
-cd proxy && snapcraft   # confirmed to build, same as the others
+cd proxy && snapcraft   # confirmed to build, same as the others (see note below on the Bedrock addition)
 sudo snap install ./folia-nexa-proxy_3.5.1_amd64.snap --dangerous
 ```
 
@@ -259,6 +264,18 @@ It needs `FOLIA_MGMT_URL` and `FOLIA_MGMT_API_TOKEN` (an mgmt API token —
 viewer role is enough) in `$SNAP_COMMON/proxy/config.env` before
 starting; see `FoliaRoutesSyncPlugin`'s javadoc for the full env var
 list, including the opt-in `FOLIA_ACCESS_GATE_ENABLED`.
+
+The snap now also bundles Geyser-Velocity + floodgate-velocity, so
+Bedrock (console/mobile/Win10) clients can join the same proxy on
+`:19132/udp` with zero extra config beyond opening that port (see
+"Bootstrapping" note in PLAN.md §7B, and Phase 9 below for the VPS-edge
+firewall rule). This is new since the original snap build was last
+confirmed against real `snapcraft` — the two GeyserMC download URLs the
+new `geyser-plugins` part uses were fetched and sha256-verified for real,
+but the full `snapcraft` build itself wasn't re-run with this addition
+(no `snapcraft`/`snapd` available in the environment this was added in);
+treat "confirmed to build" above as applying to everything except that
+one new part until someone actually runs it.
 
 There's no CLI command for user/token management yet (only `hosts` and
 `worlds` have one — see `mgmt/src/folia_mgmt/cli.py`), so create the
@@ -432,6 +449,14 @@ live infrastructure:
   without real VPS + home hardware. The `FoliaNexaStats` plugin that
   feeds the player hub also doesn't exist yet as a real, released
   plugin — see `mgmt/src/folia_mgmt/catalog.yaml`'s entry for it.
+- Bedrock client support (PLAN.md §7B): a real Bedrock/console/mobile
+  client actually joining through Geyser-Velocity, and the full
+  `snapcraft` build of `proxy/`'s new `geyser-plugins` part — neither a
+  Bedrock client nor `snapcraft`/`snapd` was available in the
+  environment this was added in. What *was* verified directly: both
+  GeyserMC download URLs the new part uses resolve to real jars whose
+  sha256 matches GeyserMC's own build-metadata API, and the optional
+  `Floodgate` catalog entry's `download_url`/`sha256` the same way.
 
 If you're picking up this project to actually run it: those are the
 places to validate first, roughly in that order.

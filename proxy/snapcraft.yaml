@@ -5,7 +5,9 @@ description: |
   Velocity Next-Gen proxy, packaged with the folia-routes-sync plugin
   (this directory's Gradle project) that keeps the backend server list in
   sync with folia-nexa-mgmt's GET /api/v1/routes — worlds can come and go
-  without a proxy restart. See PLAN.md §7, §8C.
+  without a proxy restart. See PLAN.md §7, §8C. Also bundles Geyser-
+  Velocity + floodgate-velocity so Bedrock (console/mobile/Win10) clients
+  can join through the same proxy — see PLAN.md §7B.
 base: core24
 confinement: strict
 grade: stable
@@ -64,8 +66,12 @@ parts:
       cd "$PROXY_DIR"
 
       # First run: seed the working directory from the snap's read-only
-      # payload. Never overwrite an operator-edited velocity.toml/plugin
-      # set on subsequent runs.
+      # payload ($SNAP/plugins/*.jar — folia-routes-sync plus the bundled
+      # Geyser-Velocity/floodgate-velocity jars from the geyser-plugins
+      # part below). Never overwrite an operator-edited velocity.toml/
+      # plugin set on subsequent runs — this also means an operator who
+      # doesn't want Bedrock support can just delete those two jars from
+      # $PROXY_DIR/plugins/ once, post-install, and it'll stick.
       [ -f velocity.jar ] || cp "$SNAP/velocity.jar" velocity.jar
       for jar in "$SNAP"/plugins/*.jar; do
         [ -f "plugins/$(basename "$jar")" ] || cp "$jar" "plugins/"
@@ -80,3 +86,26 @@ parts:
       exec java -Xms1G -Xmx2G -XX:+UseG1GC -jar velocity.jar
       EOF
       chmod +x $CRAFT_PART_INSTALL/bin/run-velocity.sh
+
+  # Geyser-Velocity (Bedrock<->Java protocol translation) + floodgate-
+  # velocity (lets unlinked/non-premium Bedrock/Xbox accounts join) —
+  # both run as ordinary Velocity plugins, so bundling their jars here is
+  # all that's needed; run-velocity.sh's existing seed loop above (in
+  # velocity-runtime) picks up anything dropped into
+  # $CRAFT_PART_INSTALL/plugins across every part, including this one, no
+  # further wiring required. PLAN.md §7B.
+  #
+  # Deliberately pinned to "latest" rather than a fixed build number, the
+  # opposite choice from velocity-runtime's pinned Velocity version:
+  # Velocity itself is pinned for backend-protocol stability, but Geyser
+  # tracks newly-released Bedrock client versions continuously and an
+  # old, pinned Geyser build breaks newer Bedrock clients outright.
+  geyser-plugins:
+    plugin: nil
+    override-build: |
+      set -e
+      mkdir -p $CRAFT_PART_INSTALL/plugins
+      curl -sf -o $CRAFT_PART_INSTALL/plugins/Geyser-Velocity.jar \
+        https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/velocity
+      curl -sf -o $CRAFT_PART_INSTALL/plugins/floodgate-velocity.jar \
+        https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/velocity
