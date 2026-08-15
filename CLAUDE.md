@@ -17,6 +17,7 @@ host.
 | `proxy/` | `folia-routes-sync` — Velocity plugin (routing sync + access gate) | Java 21, Gradle |
 | `bot/` | `folia-nexa-bot` — Discord bot (`/status`, `/request-access`, `/leaderboard`) | Python 3.12+, pytest |
 | `db/` | `folia-nexa-db` — self-contained MariaDB snap for LuckPerms' shared backend | Bash, bundled MariaDB |
+| `campus-lobby/` | `CampusLobby` — in-house Paper plugin, procedurally builds an NC State Wolfpack-themed lobby scene (Belltower, Brickyard plaza, wolf statue, more) | Java 21, Gradle |
 | `tools/folia-host-join.sh` | Automates trusting an LXD host into the cluster | Bash |
 | `configs/worlds/*.sh` | Starter world declarations (CLI wrappers) | Bash |
 | `mgmt/src/folia_mgmt/catalog.yaml` | Curated plugin catalog (PLAN.md §14A) — mgmt generates per-world manifests from this + a world's `plugins` list, no hand-authored manifest files | YAML |

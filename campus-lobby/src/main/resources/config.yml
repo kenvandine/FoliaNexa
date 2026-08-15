@@ -1,0 +1,45 @@
+# CampusLobby configuration.
+# Edit, then run "/campuslobby reload" — no restart needed. Changing
+# scene values doesn't retroactively rebuild already-placed blocks; run
+# "/campuslobby build" again after a reload to re-place the scene.
+
+scene:
+  # Plaza (the "Brickyard") half-width in blocks. The plaza is a square
+  # centered on the build origin, (2 * plaza-radius + 1) blocks per side.
+  plaza-radius: 24
+
+  # Belltower height in blocks, measured from the plaza surface.
+  tower-height: 34
+
+  # Which landmarks to place. All default on; turn any off to keep the
+  # scene smaller/faster to place.
+  include:
+    belltower: true
+    wolf-statue: true
+    tunnel: true
+    union-facade: true
+    library-facade: true
+
+  # Wolfpack color palette. Values are org.bukkit.Material names — swap
+  # any of these (e.g. to wool instead of concrete) to taste.
+  colors:
+    primary-red: RED_CONCRETE
+    white: WHITE_CONCRETE
+    black: BLACK_CONCRETE
+    brick: BRICKS
+    brick-trim: CHISELED_BRICKS
+    glass: WHITE_STAINED_GLASS_PANE
+    roof: BLACKSTONE
+
+# Labels shown on the standing signs CampusLobby places near each
+# landmark. Purely cosmetic signage — CampusLobby does not handle
+# clicks or teleportation itself. Pair these labels with matching
+# entries in ServerSelector's own config.yml (catalog id
+# "ServerSelector") if you want the signs to sit next to its actual
+# selector NPCs/portals.
+signs:
+  belltower: "Memorial Belltower"
+  wolf-statue: "Howl at the Wolfpack statue"
+  tunnel: "Free Expression Tunnel"
+  union-facade: "Talley Student Union"
+  library-facade: "D. H. Hill Jr. Library"
