@@ -4,7 +4,7 @@ The whole point: a world's `plugins` list is IDs into this catalog, not
 free-typed strings that may or may not correspond to anything real.
 Declaring a world validates every plugin ID against it (routers/worlds.py),
 and `GET /worlds/{name}/plugins-manifest` generates the manifest
-folia-smp-node fetches directly from these entries — no more hand-authoring
+folia-nexa-node fetches directly from these entries — no more hand-authoring
 a separate manifest JSON file per world and hosting it somewhere.
 
 Two sources, merged:

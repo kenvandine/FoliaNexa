@@ -319,7 +319,7 @@ def put_world_access(
 def get_plugins_manifest(
     name: str, session: Session = Depends(get_session), settings: Settings = Depends(settings_dependency)
 ) -> list[dict]:
-    """What folia-smp-node actually fetches to stage a world's plugins
+    """What folia-nexa-node actually fetches to stage a world's plugins
     (PLAN.md §9, §14) — generated live from world.plugins + the catalog,
     replacing the old hand-authored-manifest-file approach entirely.
 
