@@ -1,0 +1,232 @@
+"""Thin wrapper over the LXD remote (HTTPS) API. PLAN.md §3, §4, §5.
+
+mgmt never touches a local LXD unix socket — every host, including one
+colocated on the same machine, is reached the same way: mTLS over HTTPS,
+with the peer's leaf certificate pinned by fingerprint at enrollment time
+(TOFU) rather than verified against a CA, since LXD hosts use self-signed
+certs by default.
+
+NOTE: this has been written against the documented LXD REST API contract
+(trust-token bootstrap via POST /1.0/certificates, instance CRUD under
+/1.0/instances, async operations under /1.0/operations) but has not been
+exercised against a live LXD daemon in this environment. Treat the exact
+request/response shapes as a first draft to validate against a real host.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import socket
+import ssl
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+from folia_mgmt.models import Host
+
+DEFAULT_PORT = 8443
+DEFAULT_TIMEOUT = 15.0
+
+
+class LXDError(RuntimeError):
+    pass
+
+
+def extract_ipv4(instance_state: dict[str, Any]) -> str | None:
+    """Pull the first global-scope IPv4 off an instance's /state response."""
+    network = instance_state.get("network") or {}
+    for iface_name, iface in network.items():
+        if iface_name == "lo":
+            continue
+        for addr in iface.get("addresses", []):
+            if addr.get("family") == "inet" and addr.get("scope") == "global":
+                return addr.get("address")
+    return None
+
+
+def fetch_server_cert_pem(address: str, timeout: float = 10.0) -> str:
+    """TLS-connects to an LXD host without verification, just to read its
+    leaf certificate — the first half of trust-on-first-use pinning."""
+    host, _, port_s = address.partition(":")
+    port = int(port_s) if port_s else DEFAULT_PORT
+    ctx = ssl._create_unverified_context()
+    with socket.create_connection((host, port), timeout=timeout) as sock:
+        with ctx.wrap_socket(sock, server_hostname=host) as tls:
+            der = tls.getpeercert(binary_form=True)
+    if der is None:
+        raise LXDError(f"no certificate presented by {address}")
+    return ssl.DER_cert_to_PEM_cert(der)
+
+
+def cert_fingerprint(pem: str) -> str:
+    der = ssl.PEM_cert_to_DER_cert(pem)
+    return hashlib.sha256(der).hexdigest()
+
+
+def _pinned_context(server_pem: str, client_cert: Path, client_key: Path) -> ssl.SSLContext:
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_REQUIRED
+    ctx.load_verify_locations(cadata=server_pem)
+    ctx.load_cert_chain(certfile=str(client_cert), keyfile=str(client_key))
+    return ctx
+
+
+class LXDClient:
+    def __init__(self, client_cert: Path, client_key: Path, timeout: float = DEFAULT_TIMEOUT):
+        self._client_cert = client_cert
+        self._client_key = client_key
+        self._timeout = timeout
+
+    # -- trust bootstrap -----------------------------------------------------
+
+    def redeem_trust_token(self, address: str, project: str, trust_token: str) -> tuple[str, str]:
+        """Consume a single-use LXD trust token, completing the mTLS handshake
+        from the client side. Returns (fingerprint, server_cert_pem).
+
+        Mirrors what `lxc remote add <name> <addr> --token <token>` does.
+        """
+        server_pem = fetch_server_cert_pem(address, timeout=self._timeout)
+        ctx = _pinned_context(server_pem, self._client_cert, self._client_key)
+
+        with httpx.Client(base_url=f"https://{address}", verify=ctx, timeout=self._timeout) as client:
+            resp = client.post(
+                "/1.0/certificates",
+                json={"type": "client", "trust_token": trust_token, "name": "folia-smp-mgmt"},
+            )
+            if resp.status_code not in (200, 201):
+                raise LXDError(
+                    f"trust token redemption failed against {address}: "
+                    f"HTTP {resp.status_code}: {resp.text}"
+                )
+
+        return cert_fingerprint(server_pem), server_pem
+
+    # -- per-host client -------------------------------------------------------
+
+    def _client_for(self, host: Host) -> httpx.Client:
+        if not host.server_cert_pem:
+            raise LXDError(f"host '{host.name}' has no pinned certificate — re-enroll it")
+        ctx = _pinned_context(host.server_cert_pem, self._client_cert, self._client_key)
+        return httpx.Client(base_url=f"https://{host.address}", verify=ctx, timeout=self._timeout)
+
+    def _wait_operation(self, client: httpx.Client, op_body: dict) -> dict:
+        op_url = op_body.get("operation")
+        if not op_url:
+            return op_body
+        resp = client.get(f"{op_url}/wait")
+        resp.raise_for_status()
+        result = resp.json()
+        metadata = result.get("metadata", {})
+        if metadata.get("status") == "Failure":
+            raise LXDError(f"LXD operation failed: {metadata.get('err')}")
+        return metadata
+
+    # -- instances ---------------------------------------------------------
+
+    def list_instances(self, host: Host) -> list[dict[str, Any]]:
+        with self._client_for(host) as client:
+            resp = client.get("/1.0/instances", params={"project": host.project, "recursion": 1})
+            resp.raise_for_status()
+            return resp.json().get("metadata", [])
+
+    def get_instance_state(self, host: Host, name: str) -> dict[str, Any]:
+        with self._client_for(host) as client:
+            resp = client.get(f"/1.0/instances/{name}/state", params={"project": host.project})
+            resp.raise_for_status()
+            return resp.json().get("metadata", {})
+
+    def launch_container(
+        self,
+        host: Host,
+        name: str,
+        image_alias: str,
+        *,
+        profiles: list[str] | None = None,
+        cpu_cores: int,
+        memory_gb: int,
+        config: dict[str, str] | None = None,
+        snapshot_schedule: str | None = None,
+        snapshot_expiry: str | None = None,
+    ) -> dict[str, Any]:
+        instance_config: dict[str, str] = {
+            "limits.cpu": str(cpu_cores),
+            "limits.memory": f"{memory_gb}GB",
+            **(config or {}),
+        }
+        if snapshot_schedule:
+            instance_config["snapshots.schedule"] = snapshot_schedule
+        if snapshot_expiry:
+            instance_config["snapshots.expiry"] = snapshot_expiry
+
+        body = {
+            "name": name,
+            "source": {"type": "image", "alias": image_alias},
+            "profiles": profiles or ["default"],
+            "config": instance_config,
+        }
+        with self._client_for(host) as client:
+            resp = client.post("/1.0/instances", params={"project": host.project}, json=body)
+            if resp.status_code not in (200, 201, 202):
+                raise LXDError(f"launch of '{name}' on '{host.name}' failed: {resp.text}")
+            metadata = self._wait_operation(client, resp.json())
+
+            start = client.put(
+                f"/1.0/instances/{name}/state",
+                params={"project": host.project},
+                json={"action": "start", "timeout": 30},
+            )
+            if start.status_code in (200, 202):
+                self._wait_operation(client, start.json())
+            return metadata
+
+    def delete_container(self, host: Host, name: str, *, stop_first: bool = True) -> None:
+        with self._client_for(host) as client:
+            if stop_first:
+                stop = client.put(
+                    f"/1.0/instances/{name}/state",
+                    params={"project": host.project},
+                    json={"action": "stop", "timeout": 30, "force": True},
+                )
+                if stop.status_code in (200, 202):
+                    self._wait_operation(client, stop.json())
+
+            resp = client.delete(f"/1.0/instances/{name}", params={"project": host.project})
+            if resp.status_code not in (200, 202, 404):
+                raise LXDError(f"delete of '{name}' on '{host.name}' failed: {resp.text}")
+            if resp.status_code == 202:
+                self._wait_operation(client, resp.json())
+
+    def snapshot_container(self, host: Host, name: str, snapshot_name: str) -> None:
+        with self._client_for(host) as client:
+            resp = client.post(
+                f"/1.0/instances/{name}/snapshots",
+                params={"project": host.project},
+                json={"name": snapshot_name},
+            )
+            if resp.status_code not in (200, 202):
+                raise LXDError(f"snapshot of '{name}' failed: {resp.text}")
+            if resp.status_code == 202:
+                self._wait_operation(client, resp.json())
+
+    def restore_snapshot(self, host: Host, name: str, snapshot_name: str) -> None:
+        with self._client_for(host) as client:
+            resp = client.put(
+                f"/1.0/instances/{name}",
+                params={"project": host.project},
+                json={"restore": snapshot_name},
+            )
+            if resp.status_code not in (200, 202):
+                raise LXDError(f"restore of '{name}' to '{snapshot_name}' failed: {resp.text}")
+            if resp.status_code == 202:
+                self._wait_operation(client, resp.json())
+
+    def copy_snapshot(
+        self, host: Host, name: str, snapshot_name: str, target_host: Host, target_name: str
+    ) -> None:
+        """Snapshot -> copy to another host. PLAN.md §13 (staging/migration)."""
+        # Cross-remote copy in raw LXD terms is a POST to the target with a
+        # "migration" source pointing at the origin's operation websocket;
+        # left as a follow-up once this is validated against real hosts.
+        raise NotImplementedError("cross-host copy not yet implemented — see PLAN.md §13")

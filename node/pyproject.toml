@@ -1,0 +1,26 @@
+[project]
+name = "folia-smp-node"
+version = "0.1.0"
+description = "In-container Folia/Paper world runner and health agent (see PLAN.md §9)"
+requires-python = ">=3.12"
+dependencies = [
+  "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+]
+
+[project.scripts]
+folia-smp-node = "folia_node.agent:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
