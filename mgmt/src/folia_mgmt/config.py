@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     # example: https://artifacts.internal/folia/1.21.4/folia.jar
     artifacts_base_url: str = "https://artifacts.internal"
 
+    # Must match folia-smp-node's FOLIA_NODE_HEALTH_PORT (node/snapcraft.yaml).
+    node_health_port: int = 8123
+    node_health_timeout_seconds: float = 3.0
+
     # LXD host trust / enrollment (PLAN.md §3, §4)
     join_token_ttl_seconds: int = 15 * 60
 

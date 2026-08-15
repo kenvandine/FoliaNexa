@@ -1,20 +1,18 @@
 """Placement + reconcile loop. PLAN.md §5.
 
-`reconcile()` is a plain function over a Session + LXDClient so it can be
-called directly from a request handler (best-effort immediate placement),
-from tests (with a faked LXDClient), or from the background loop started at
-app startup — one implementation, three callers.
-
-Health polling / crash-restart (the other half of §5's lifecycle) needs a
-way to reach each world's node agent (its /healthz) and isn't built yet —
-tracked as a follow-up once there's a live host to validate the address/
-networking story against.
+`reconcile()` is a plain function over a Session + LXDClient (+ a health
+check callable) so it can be called directly from a request handler
+(best-effort immediate placement), from tests (with fakes for both), or
+from the background loop started at app startup — one implementation,
+three callers.
 """
 
 from __future__ import annotations
 
 import logging
+from typing import Callable
 
+import httpx
 from sqlmodel import Session, select
 
 from folia_mgmt.config import Settings, get_settings
@@ -29,6 +27,8 @@ DEFAULT_IMAGE_ALIAS = "folia-node-base"
 # Every world's node agent listens on the standard Minecraft port; PLAN.md
 # doesn't (yet) support per-world port overrides.
 MINECRAFT_PORT = 25565
+
+HealthCheck = Callable[[World, Settings], bool]
 
 
 def _allocated(session: Session, host_name: str) -> tuple[int, int]:
@@ -159,12 +159,68 @@ def teardown_world(session: Session, lxd_client: LXDClient, world: World) -> Non
     session.commit()
 
 
-def reconcile(session: Session, lxd_client: LXDClient) -> None:
+def default_health_check(world: World, settings: Settings) -> bool:
+    """Polls folia-smp-node's /healthz (PLAN.md §9) directly by IP — mgmt
+    already has network reachability to every world it placed."""
+    if not world.address:
+        return False
+    host = world.address.split(":", 1)[0]
+    url = f"http://{host}:{settings.node_health_port}/healthz"
+    try:
+        resp = httpx.get(url, timeout=settings.node_health_timeout_seconds)
+        return resp.status_code == 200
+    except httpx.HTTPError:
+        return False
+
+
+def check_running_worlds(session: Session, settings: Settings, health_check: HealthCheck) -> None:
+    """PLAN.md §5: 'crashed: node agent's local health endpoint stops
+    responding ... mgmt restarts the container.'  This half detects it;
+    `recover_crashed_worlds` does the restart."""
+    for world in session.exec(select(World).where(World.phase == WorldPhase.running)).all():
+        if not health_check(world, settings):
+            logger.warning("world '%s' failed its health check, marking crashed", world.name)
+            world.phase = WorldPhase.crashed
+            session.add(world)
+            session.commit()
+
+
+def recover_crashed_worlds(session: Session, lxd_client: LXDClient) -> None:
+    for world in session.exec(select(World).where(World.phase == WorldPhase.crashed)).all():
+        host = session.exec(select(Host).where(Host.name == world.host_name)).first()
+        if host is None or not world.container_name:
+            continue
+        try:
+            lxd_client.restart_container(host, world.container_name)
+        except LXDError:
+            logger.exception("failed to restart crashed world '%s', will retry next tick", world.name)
+            continue
+        logger.info("restarted container for crashed world '%s'", world.name)
+        # Not a fresh reschedule — same host/container/data, just a
+        # restart. finalize_provisioning re-polls for an address and
+        # flips it back to running once the JVM is back up.
+        world.phase = WorldPhase.provisioning
+        session.add(world)
+        session.commit()
+
+
+def reconcile(
+    session: Session,
+    lxd_client: LXDClient,
+    settings: Settings | None = None,
+    health_check: HealthCheck | None = None,
+) -> None:
+    settings = settings or get_settings()
+    health_check = health_check or default_health_check
+
     for world in session.exec(select(World).where(World.phase == WorldPhase.pending)).all():
-        place_world(session, lxd_client, world)
+        place_world(session, lxd_client, world, settings)
 
     for world in session.exec(select(World).where(World.phase == WorldPhase.provisioning)).all():
         finalize_provisioning(session, lxd_client, world)
+
+    check_running_worlds(session, settings, health_check)
+    recover_crashed_worlds(session, lxd_client)
 
     for world in session.exec(select(World).where(World.phase == WorldPhase.draining)).all():
         teardown_world(session, lxd_client, world)

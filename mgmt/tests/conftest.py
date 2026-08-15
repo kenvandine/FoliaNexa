@@ -6,7 +6,7 @@ from sqlmodel import Session
 
 from folia_mgmt.auth import hash_password
 from folia_mgmt.db import get_engine, init_db
-from folia_mgmt.deps import get_lxd_client
+from folia_mgmt.deps import get_health_check, get_lxd_client
 from folia_mgmt.lxd_client import LXDError
 from folia_mgmt.models import User, UserRole
 
@@ -18,6 +18,7 @@ class FakeLXDClient:
     def __init__(self):
         self.launched: list[tuple[str, str]] = []  # (host_name, container_name)
         self.deleted: list[tuple[str, str]] = []
+        self.restarted: list[tuple[str, str]] = []
         self.snapshots: list[tuple[str, str, str]] = []
         self.restores: list[tuple[str, str, str]] = []
         self._next_ip = 10
@@ -49,6 +50,9 @@ class FakeLXDClient:
     def delete_container(self, host, name, *, stop_first=True):
         self.deleted.append((host.name, name))
 
+    def restart_container(self, host, name):
+        self.restarted.append((host.name, name))
+
     def snapshot_container(self, host, name, snapshot_name):
         self.snapshots.append((host.name, name, snapshot_name))
 
@@ -61,8 +65,26 @@ def fake_lxd():
     return FakeLXDClient()
 
 
+class FakeHealthCheck:
+    """Defaults every world to healthy — tests that want to exercise crash
+    detection mark specific world names unhealthy via `.unhealthy.add(name)`."""
+
+    def __init__(self):
+        self.unhealthy: set[str] = set()
+        self.calls: list[str] = []
+
+    def __call__(self, world, settings) -> bool:
+        self.calls.append(world.name)
+        return world.name not in self.unhealthy
+
+
 @pytest.fixture
-def app(tmp_path, monkeypatch, fake_lxd):
+def fake_health_check():
+    return FakeHealthCheck()
+
+
+@pytest.fixture
+def app(tmp_path, monkeypatch, fake_lxd, fake_health_check):
     monkeypatch.setenv("FOLIA_MGMT_STATE_DIR", str(tmp_path / "state"))
     # Import after the env var is set so any module-level Settings() reads
     # (there shouldn't be any, but this keeps the fixture order foolproof).
@@ -70,6 +92,7 @@ def app(tmp_path, monkeypatch, fake_lxd):
 
     application = create_app()
     application.dependency_overrides[get_lxd_client] = lambda: fake_lxd
+    application.dependency_overrides[get_health_check] = lambda: fake_health_check
 
     settings_state_dir = tmp_path / "state"
     settings_state_dir.mkdir(parents=True, exist_ok=True)

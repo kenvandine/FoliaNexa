@@ -1,0 +1,494 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>folia-smp-mgmt</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #161922;
+    --border: #2a2f3a;
+    --text: #e6e8eb;
+    --muted: #8b93a1;
+    --accent: #4f8cff;
+    --danger: #e5534b;
+    --ok: #3fb950;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.75rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 { font-size: 1rem; margin: 0; font-weight: 600; }
+  header .who { color: var(--muted); font-size: 0.85rem; }
+  nav {
+    display: flex;
+    gap: 0.25rem;
+    padding: 0.5rem 1.25rem 0;
+    border-bottom: 1px solid var(--border);
+  }
+  nav button {
+    background: none;
+    border: none;
+    color: var(--muted);
+    padding: 0.5rem 0.9rem;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    font-size: 0.9rem;
+  }
+  nav button.active { color: var(--text); border-bottom-color: var(--accent); }
+  main { padding: 1.25rem; max-width: 1100px; margin: 0 auto; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  table { width: 100%; border-collapse: collapse; margin-top: 0.75rem; }
+  th, td { text-align: left; padding: 0.45rem 0.6rem; border-bottom: 1px solid var(--border); font-size: 0.88rem; }
+  th { color: var(--muted); font-weight: 500; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+  }
+  .card h2 { margin: 0 0 0.75rem; font-size: 0.95rem; }
+  form.inline { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; }
+  input, select {
+    background: #0b0d12;
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 0.4rem 0.55rem;
+    border-radius: 5px;
+    font-size: 0.85rem;
+  }
+  button.btn {
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    padding: 0.42rem 0.85rem;
+    border-radius: 5px;
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+  button.btn.danger { background: var(--danger); }
+  button.btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .pill {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    border: 1px solid var(--border);
+  }
+  .pill.running, .pill.online { color: var(--ok); border-color: var(--ok); }
+  .pill.crashed { color: var(--danger); border-color: var(--danger); }
+  .pill.pending, .pill.provisioning, .pill.draining { color: var(--muted); }
+  #login-screen {
+    max-width: 320px;
+    margin: 15vh auto;
+  }
+  #login-screen input { width: 100%; margin-bottom: 0.6rem; }
+  #login-screen button { width: 100%; }
+  .error { color: var(--danger); font-size: 0.85rem; margin-top: 0.5rem; }
+  .hint { color: var(--muted); font-size: 0.8rem; margin-top: 0.4rem; }
+  .row-actions button { margin-right: 0.35rem; }
+  code { background: #0b0d12; padding: 0.1rem 0.35rem; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<div id="login-screen" class="card">
+  <h2>folia-smp-mgmt</h2>
+  <input id="login-username" placeholder="username" autocomplete="username">
+  <input id="login-password" placeholder="password" type="password" autocomplete="current-password">
+  <button class="btn" onclick="doLogin()">Log in</button>
+  <div id="login-error" class="error"></div>
+</div>
+
+<div id="app" style="display:none">
+  <header>
+    <h1>folia-smp-mgmt</h1>
+    <div class="who">
+      <span id="who-username"></span> (<span id="who-role"></span>)
+      &nbsp;<button class="btn ghost" onclick="logout()">Log out</button>
+    </div>
+  </header>
+  <nav>
+    <button data-tab="worlds" onclick="showTab('worlds')">Worlds</button>
+    <button data-tab="hosts" onclick="showTab('hosts')">Hosts</button>
+    <button data-tab="access" onclick="showTab('access')">Access Requests</button>
+    <button data-tab="users" onclick="showTab('users')">Users</button>
+  </nav>
+  <main>
+
+    <section id="panel-worlds" class="panel">
+      <div class="card">
+        <h2>Declare a world</h2>
+        <form class="inline" onsubmit="return createWorld(event)">
+          <input id="w-name" placeholder="world-nether" required>
+          <select id="w-type">
+            <option>overworld</option>
+            <option>nether</option>
+            <option>end</option>
+            <option>lobby</option>
+            <option>minigame</option>
+            <option>proxy</option>
+            <option>staging</option>
+            <option>infra</option>
+          </select>
+          <input id="w-cpu" type="number" min="1" placeholder="cpu cores" style="width:6.5rem" required>
+          <input id="w-memory" type="number" min="1" placeholder="memory GB" style="width:7rem" required>
+          <input id="w-labels" placeholder="labels (cpu_type=p-core, ...)" style="flex:1;min-width:12rem">
+          <button class="btn" type="submit">Create</button>
+        </form>
+        <div id="worlds-error" class="error"></div>
+      </div>
+
+      <div class="card">
+        <h2>Worlds</h2>
+        <table>
+          <thead><tr><th>Name</th><th>Type</th><th>Phase</th><th>Host</th><th>Address</th><th>Access</th><th></th></tr></thead>
+          <tbody id="worlds-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="panel-hosts" class="panel">
+      <div class="card">
+        <h2>Add a host</h2>
+        <p class="hint">Issues a short-lived join token, then run <code>folia-host-join.sh</code> on the target host with it.</p>
+        <button class="btn" onclick="createJoinToken()">Generate join token</button>
+        <div id="join-token-out" class="hint"></div>
+      </div>
+
+      <div class="card">
+        <h2>Hosts</h2>
+        <table>
+          <thead><tr><th>Name</th><th>Status</th><th>CPU (used/cap)</th><th>Memory GB (used/cap)</th><th>Address</th><th></th></tr></thead>
+          <tbody id="hosts-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="panel-access" class="panel">
+      <div class="card">
+        <h2>Pending Discord access requests</h2>
+        <table>
+          <thead><tr><th>Discord user</th><th>Minecraft user</th><th>Status</th><th></th></tr></thead>
+          <tbody id="access-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="panel-users" class="panel">
+      <div class="card">
+        <h2>Create operator account</h2>
+        <form class="inline" onsubmit="return createUser(event)">
+          <input id="u-username" placeholder="username" required>
+          <input id="u-password" placeholder="password" type="password" required>
+          <select id="u-role">
+            <option>viewer</option>
+            <option>operator</option>
+            <option>admin</option>
+          </select>
+          <button class="btn" type="submit">Create</button>
+        </form>
+        <div id="users-error" class="error"></div>
+      </div>
+      <div class="card">
+        <h2>Users</h2>
+        <table>
+          <thead><tr><th>Username</th><th>Role</th></tr></thead>
+          <tbody id="users-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+const state = {
+  token: localStorage.getItem('folia_token') || null,
+  username: localStorage.getItem('folia_username') || null,
+  role: localStorage.getItem('folia_role') || null,
+};
+
+async function api(path, options) {
+  options = options || {};
+  options.headers = Object.assign({}, options.headers, {
+    'Authorization': 'Bearer ' + state.token,
+  });
+  if (options.body && !(options.body instanceof FormData)) {
+    options.headers['Content-Type'] = 'application/json';
+  }
+  const resp = await fetch('/api/v1' + path, options);
+  if (resp.status === 401) {
+    logout();
+    throw new Error('session expired');
+  }
+  const text = await resp.text();
+  let data = null;
+  try { data = text ? JSON.parse(text) : null; } catch (e) { data = text; }
+  if (!resp.ok) {
+    const detail = (data && data.detail) ? data.detail : resp.statusText;
+    throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail));
+  }
+  return data;
+}
+
+async function doLogin() {
+  const username = document.getElementById('login-username').value;
+  const password = document.getElementById('login-password').value;
+  const errorEl = document.getElementById('login-error');
+  errorEl.textContent = '';
+  try {
+    const resp = await fetch('/api/v1/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || 'login failed');
+    }
+    const body = await resp.json();
+    state.token = body.token;
+    state.username = username;
+    state.role = body.role;
+    localStorage.setItem('folia_token', state.token);
+    localStorage.setItem('folia_username', state.username);
+    localStorage.setItem('folia_role', state.role);
+    enterApp();
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+}
+
+function logout() {
+  state.token = null;
+  localStorage.removeItem('folia_token');
+  localStorage.removeItem('folia_username');
+  localStorage.removeItem('folia_role');
+  document.getElementById('app').style.display = 'none';
+  document.getElementById('login-screen').style.display = 'block';
+}
+
+function enterApp() {
+  document.getElementById('login-screen').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  document.getElementById('who-username').textContent = state.username;
+  document.getElementById('who-role').textContent = state.role;
+  document.querySelectorAll('nav button').forEach(btn => {
+    const needsAdmin = btn.dataset.tab === 'users';
+    btn.style.display = (needsAdmin && state.role !== 'admin') ? 'none' : '';
+  });
+  showTab('worlds');
+}
+
+function showTab(name) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  document.querySelector('nav button[data-tab="' + name + '"]').classList.add('active');
+  const loaders = { worlds: loadWorlds, hosts: loadHosts, access: loadAccessRequests, users: loadUsers };
+  loaders[name]();
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+}
+
+async function loadWorlds() {
+  const errorEl = document.getElementById('worlds-error');
+  errorEl.textContent = '';
+  try {
+    const worlds = await api('/worlds');
+    const body = document.getElementById('worlds-body');
+    body.innerHTML = worlds.map(w => `
+      <tr>
+        <td>${escapeHtml(w.name)}</td>
+        <td>${escapeHtml(w.type)}</td>
+        <td><span class="pill ${escapeHtml(w.phase)}">${escapeHtml(w.phase)}</span></td>
+        <td>${escapeHtml(w.host_name || '—')}</td>
+        <td>${escapeHtml(w.address || '—')}</td>
+        <td>${w.whitelist_enabled ? 'whitelist on' : 'open'}${w.ops.length ? ', ' + w.ops.length + ' op(s)' : ''}</td>
+        <td class="row-actions">
+          <button class="btn ghost" onclick="snapshotWorld('${escapeHtml(w.name)}')">Snapshot</button>
+          <button class="btn ghost" onclick="toggleWhitelist('${escapeHtml(w.name)}', ${w.whitelist_enabled})">${w.whitelist_enabled ? 'Disable' : 'Enable'} whitelist</button>
+          <button class="btn danger" onclick="deleteWorld('${escapeHtml(w.name)}')">Delete</button>
+        </td>
+      </tr>
+    `).join('') || '<tr><td colspan="7" class="hint">No worlds declared yet.</td></tr>';
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+}
+
+async function createWorld(event) {
+  event.preventDefault();
+  const errorEl = document.getElementById('worlds-error');
+  errorEl.textContent = '';
+  const labelsRaw = document.getElementById('w-labels').value.trim();
+  const placement_labels = {};
+  if (labelsRaw) {
+    labelsRaw.split(',').forEach(pair => {
+      const [k, v] = pair.split('=').map(s => s.trim());
+      if (k && v) placement_labels[k] = v;
+    });
+  }
+  try {
+    await api('/worlds', {
+      method: 'POST',
+      body: JSON.stringify({
+        name: document.getElementById('w-name').value,
+        type: document.getElementById('w-type').value,
+        cpu_cores: parseInt(document.getElementById('w-cpu').value, 10),
+        memory_gb: parseInt(document.getElementById('w-memory').value, 10),
+        placement_labels,
+      }),
+    });
+    document.getElementById('w-name').value = '';
+    document.getElementById('w-labels').value = '';
+    await loadWorlds();
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+  return false;
+}
+
+async function deleteWorld(name) {
+  if (!confirm('Delete world "' + name + '"? This tears down its container.')) return;
+  try {
+    await api('/worlds/' + encodeURIComponent(name), { method: 'DELETE' });
+    await loadWorlds();
+  } catch (e) {
+    document.getElementById('worlds-error').textContent = e.message;
+  }
+}
+
+async function snapshotWorld(name) {
+  try {
+    await api('/worlds/' + encodeURIComponent(name) + '/snapshot', { method: 'POST' });
+    alert('Snapshot taken for ' + name);
+  } catch (e) {
+    document.getElementById('worlds-error').textContent = e.message;
+  }
+}
+
+async function toggleWhitelist(name, currentlyEnabled) {
+  try {
+    await api('/worlds/' + encodeURIComponent(name) + '/access', {
+      method: 'PUT',
+      body: JSON.stringify({ whitelist_enabled: !currentlyEnabled }),
+    });
+    await loadWorlds();
+  } catch (e) {
+    document.getElementById('worlds-error').textContent = e.message;
+  }
+}
+
+async function loadHosts() {
+  const hosts = await api('/hosts');
+  const body = document.getElementById('hosts-body');
+  body.innerHTML = hosts.map(h => `
+    <tr>
+      <td>${escapeHtml(h.name)}</td>
+      <td><span class="pill ${escapeHtml(h.status)}">${escapeHtml(h.status)}</span></td>
+      <td>${h.allocated_cpu_cores} / ${h.capacity_cpu_cores}</td>
+      <td>${h.allocated_memory_gb} / ${h.capacity_memory_gb}</td>
+      <td>${escapeHtml(h.address)}</td>
+      <td class="row-actions">
+        <button class="btn ghost" onclick="drainHost('${escapeHtml(h.name)}')">Drain</button>
+      </td>
+    </tr>
+  `).join('') || '<tr><td colspan="6" class="hint">No hosts trusted yet.</td></tr>';
+}
+
+async function drainHost(name) {
+  await api('/hosts/' + encodeURIComponent(name) + '/drain', { method: 'POST' });
+  await loadHosts();
+}
+
+async function createJoinToken() {
+  const out = document.getElementById('join-token-out');
+  try {
+    const body = await api('/hosts/join-token', { method: 'POST' });
+    out.innerHTML = `Token (expires in ${body.expires_in_seconds}s): <code>${escapeHtml(body.token)}</code><br>` +
+      `Run on the target host: <code>sudo ./tools/folia-host-join.sh --mgmt-url ${escapeHtml(location.origin)} --join-token ${escapeHtml(body.token)} --address &lt;host-ip&gt;</code>`;
+  } catch (e) {
+    out.textContent = e.message;
+  }
+}
+
+async function loadAccessRequests() {
+  const requests = await api('/access-requests?status_filter=pending');
+  const body = document.getElementById('access-body');
+  body.innerHTML = requests.map(r => `
+    <tr>
+      <td>${escapeHtml(r.discord_username)}</td>
+      <td>${escapeHtml(r.minecraft_username || '—')}</td>
+      <td>${escapeHtml(r.status)}</td>
+      <td class="row-actions">
+        <button class="btn" onclick="decideAccessRequest(${r.id}, 'approve')">Approve</button>
+        <button class="btn danger" onclick="decideAccessRequest(${r.id}, 'deny')">Deny</button>
+      </td>
+    </tr>
+  `).join('') || '<tr><td colspan="4" class="hint">No pending requests.</td></tr>';
+}
+
+async function decideAccessRequest(id, action) {
+  const options = { method: 'POST' };
+  if (action === 'deny') options.body = JSON.stringify({});
+  await api('/access-requests/' + id + '/' + action, options);
+  await loadAccessRequests();
+}
+
+async function loadUsers() {
+  const errorEl = document.getElementById('users-error');
+  errorEl.textContent = '';
+  try {
+    const users = await api('/users');
+    document.getElementById('users-body').innerHTML = users.map(u => `
+      <tr><td>${escapeHtml(u.username)}</td><td>${escapeHtml(u.role)}</td></tr>
+    `).join('') || '<tr><td colspan="2" class="hint">No users.</td></tr>';
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+}
+
+async function createUser(event) {
+  event.preventDefault();
+  const errorEl = document.getElementById('users-error');
+  errorEl.textContent = '';
+  try {
+    await api('/users', {
+      method: 'POST',
+      body: JSON.stringify({
+        username: document.getElementById('u-username').value,
+        password: document.getElementById('u-password').value,
+        role: document.getElementById('u-role').value,
+      }),
+    });
+    document.getElementById('u-username').value = '';
+    document.getElementById('u-password').value = '';
+    await loadUsers();
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+  return false;
+}
+
+if (state.token) {
+  enterApp();
+}
+</script>
+</body>
+</html>

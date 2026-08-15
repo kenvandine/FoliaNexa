@@ -3,8 +3,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session
 
 from folia_mgmt.certs import ensure_client_identity
@@ -60,6 +62,12 @@ def create_app() -> FastAPI:
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    # Mounted last so /api/v1/* and /healthz above always match first —
+    # Starlette tries routes in registration order, and this mount's
+    # catch-all would otherwise shadow them.
+    static_dir = Path(__file__).parent / "static"
+    app.mount("/", StaticFiles(directory=static_dir, html=True), name="dashboard")
 
     return app
 

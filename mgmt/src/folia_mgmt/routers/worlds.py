@@ -10,10 +10,10 @@ from sqlmodel import Session, select
 
 from folia_mgmt.auth import require_operator, require_viewer
 from folia_mgmt.db import get_session
-from folia_mgmt.deps import get_lxd_client
+from folia_mgmt.deps import get_health_check, get_lxd_client
 from folia_mgmt.lxd_client import LXDClient, LXDError
 from folia_mgmt.models import Host, World, WorldPhase, WorldType, utcnow
-from folia_mgmt.scheduler import reconcile
+from folia_mgmt.scheduler import HealthCheck, reconcile
 
 logger = logging.getLogger(__name__)
 
@@ -69,15 +69,16 @@ def _to_response(world: World) -> WorldResponse:
     )
 
 
-def _reconcile_best_effort(session: Session, lxd_client: LXDClient) -> None:
+def _reconcile_best_effort(session: Session, lxd_client: LXDClient, health_check: HealthCheck) -> None:
     """Immediate placement/teardown attempt using the request's own DI-
-    provided session and LXD client, so behavior (and test overrides) match
-    exactly what the periodic loop in main.py does. A slow/unreachable host
-    delays the response by however long that one host's HTTP call takes
-    (bounded by LXDClient's request timeout) rather than hanging
-    indefinitely; the periodic loop retries regardless if this fails."""
+    provided session, LXD client, and health checker, so behavior (and test
+    overrides) match exactly what the periodic loop in main.py does. A
+    slow/unreachable host delays the response by however long that one
+    host's HTTP call takes (bounded by LXDClient's request timeout) rather
+    than hanging indefinitely; the periodic loop retries regardless if this
+    fails."""
     try:
-        reconcile(session, lxd_client)
+        reconcile(session, lxd_client, health_check=health_check)
     except Exception:
         logger.exception("immediate reconcile after world create/delete failed; periodic loop will retry")
 
@@ -94,6 +95,7 @@ def create_world(
     body: CreateWorldRequest,
     session: Session = Depends(get_session),
     lxd_client: LXDClient = Depends(get_lxd_client),
+    health_check: HealthCheck = Depends(get_health_check),
 ) -> WorldResponse:
     if session.exec(select(World).where(World.name == body.name)).first():
         raise HTTPException(status.HTTP_409_CONFLICT, f"world '{body.name}' already exists")
@@ -115,7 +117,7 @@ def create_world(
     session.commit()
     session.refresh(world)
 
-    _reconcile_best_effort(session, lxd_client)
+    _reconcile_best_effort(session, lxd_client, health_check)
     session.refresh(world)
     return _to_response(world)
 
@@ -130,6 +132,7 @@ def delete_world(
     name: str,
     session: Session = Depends(get_session),
     lxd_client: LXDClient = Depends(get_lxd_client),
+    health_check: HealthCheck = Depends(get_health_check),
 ) -> WorldResponse:
     world = _get_world_or_404(session, name)
     world.phase = WorldPhase.draining
@@ -138,7 +141,7 @@ def delete_world(
     session.commit()
     session.refresh(world)
 
-    _reconcile_best_effort(session, lxd_client)
+    _reconcile_best_effort(session, lxd_client, health_check)
     session.refresh(world)
     return _to_response(world)
 

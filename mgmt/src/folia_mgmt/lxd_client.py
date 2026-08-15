@@ -181,6 +181,18 @@ class LXDClient:
                 self._wait_operation(client, start.json())
             return metadata
 
+    def restart_container(self, host: Host, name: str) -> None:
+        with self._client_for(host) as client:
+            resp = client.put(
+                f"/1.0/instances/{name}/state",
+                params={"project": host.project},
+                json={"action": "restart", "timeout": 30, "force": True},
+            )
+            if resp.status_code not in (200, 202):
+                raise LXDError(f"restart of '{name}' on '{host.name}' failed: {resp.text}")
+            if resp.status_code == 202:
+                self._wait_operation(client, resp.json())
+
     def delete_container(self, host: Host, name: str, *, stop_first: bool = True) -> None:
         with self._client_for(host) as client:
             if stop_first:
