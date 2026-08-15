@@ -103,6 +103,51 @@ def discord_callback(
     return _to_response(request, auto_approved=auto_approved)
 
 
+class CreateAccessRequest(BaseModel):
+    discord_user_id: str
+    discord_username: str
+    minecraft_username: str
+    auto_approve: bool = False
+
+
+@router.post(
+    "/access-requests",
+    response_model=AccessRequestResponse,
+    dependencies=[Depends(require_operator)],
+)
+def create_access_request(
+    body: CreateAccessRequest,
+    user: User = Depends(require_operator),
+    session: Session = Depends(get_session),
+) -> AccessRequestResponse:
+    """The in-Discord counterpart to `GET /auth/discord/callback` — used by
+    folia-discord-bridge's `/request-access` command (PLAN.md §16) for
+    players who'd rather not leave Discord for the web OAuth flow. Same
+    upsert-by-discord-user-id behavior; `auto_approve` is trusted from the
+    caller since reaching this endpoint at all already requires an
+    operator-role token (the bot decided auto-approval locally from the
+    inviting member's roles — see folia_bot.access.decide_auto_approve)."""
+    existing = session.exec(
+        select(AccessRequest).where(AccessRequest.discord_user_id == body.discord_user_id)
+    ).first()
+    request = existing or AccessRequest(discord_user_id=body.discord_user_id, discord_username=body.discord_username)
+    request.discord_username = body.discord_username
+    request.minecraft_username = body.minecraft_username
+    request.minecraft_uuid = resolve_minecraft_uuid(body.minecraft_username)
+
+    auto_approved = False
+    if request.status == AccessRequestStatus.pending and body.auto_approve:
+        request.status = AccessRequestStatus.approved
+        request.decided_at = utcnow()
+        request.decided_by = user.id
+        auto_approved = True
+
+    session.add(request)
+    session.commit()
+    session.refresh(request)
+    return _to_response(request, auto_approved=auto_approved)
+
+
 class ApprovedUuidsResponse(BaseModel):
     uuids: list[str]
 

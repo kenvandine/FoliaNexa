@@ -1,0 +1,24 @@
+name: folia-discord-bridge
+version: '0.1'
+summary: Discord bot for a folia-smp-mgmt cluster — status, access requests, leaderboards
+description: |
+  /status, /request-access, and /leaderboard slash commands backed by
+  folia-smp-mgmt's REST API. See PLAN.md §16. Not exercised against a
+  live Discord gateway connection during development — see the module
+  docstring in folia_bot/bot.py.
+base: core24
+confinement: strict
+grade: stable
+
+apps:
+  daemon:
+    command: bin/folia-discord-bridge
+    daemon: simple
+    restart-condition: on-failure
+    restart-delay: 5s
+    plugs: [network]
+
+parts:
+  bot:
+    plugin: python
+    source: .

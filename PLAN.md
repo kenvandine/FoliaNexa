@@ -421,6 +421,7 @@ API surface:
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/v1/auth/discord/callback` | OAuth2 redirect target; creates/updates the access request |
+| `POST` | `/api/v1/access-requests` | Create/upsert a request (operator token — used by folia-discord-bridge's `/request-access`, §16) |
 | `GET` | `/api/v1/access-requests` | List requests, filterable by status (operator/admin) |
 | `GET` | `/api/v1/access-requests/approved-uuids` | Polled by the proxy's access gate (viewer-role token) |
 | `POST` | `/api/v1/access-requests/{id}/approve` | Approve → picked up by the gate's next poll |
@@ -598,14 +599,17 @@ Unaffected by the orchestration refactor above — still an asynchronous telemet
 3. **Leaderboard Tracking:** Top `AuraSkills` power levels, richest merchant rankings from `AxAuctions`/`Vault-Unlocked`, and blocks mined.
 4. **Player Profile Cards (`/player/[uuid]`):** 3D skin renders, GitHub-style 365-day playtime heatmaps, and public settlement badges from `HuskClaims`.
 
-### Discord Bot (`discord-bridge`)
+### Discord Bot (`folia-discord-bridge`, `bot/`)
 
-A `type: infra` world, scheduled like any other, holding the long-lived bot token (separate credential from the OAuth app in §11C — the bot needs guild presence to post, the OAuth flow doesn't). Reads the same telemetry store as the portal above rather than querying live worlds directly:
+**Implemented**, as a Python package (`discord.py` for the gateway/heartbeat/reconnect protocol — deliberately not hand-rolled; see the module docstring in `bot/src/folia_bot/bot.py` for why) with three slash commands, all backed by mgmt's REST API rather than any direct DB/LXD access:
 
-- `/leaderboard [category]` slash command + a pinned embed refreshed on a timer, both backed by the same PostgreSQL/ClickHouse queries as the portal's leaderboard tracking (§ Core Features #3) — one source of truth, two presentations.
-- Join/quit and death announcements relayed via `DiscordSRV` (§14) from the proxy/worlds into a Discord channel.
-- Server status embed (players online per world, TPS) pulled from `GET /api/v1/worlds`.
-- Optional `/request-access <mc-username>` slash command as an in-Discord alternative entry point into the same access-request pipeline from §11C, for players who'd rather not leave Discord to click "Sign in with Discord" on the web.
+- `/status` — embed of currently declared worlds and their phase/host, from `GET /api/v1/worlds`. Player counts and TPS aren't in that response (nothing in this codebase measures them yet), so the embed says so rather than fabricating numbers.
+- `/request-access <minecraft_username>` — the in-Discord counterpart to §11C's web OAuth flow, via a new `POST /api/v1/access-requests` endpoint (operator-role token). Auto-approves locally from the inviting member's Discord roles (`FOLIA_BOT_AUTO_APPROVE_ROLE_ID`) without a round trip to Discord's API, since the bot already has that information from the interaction.
+- `/leaderboard` — an explicit stub. Real leaderboards need the PostgreSQL/ClickHouse analytics store described in the portal section above, which hasn't been built; the command says so rather than being silently missing or showing fake numbers.
+
+Join/quit/death announcements are `DiscordSRV`'s job (§14), not this bot's — that plugin relays directly from the proxy/worlds into a Discord channel independently.
+
+Like the rest of this project's Discord/LXD-touching code, the bot itself has not been exercised against a live gateway connection or a registered Discord application — `discord.Client`/`CommandTree` construction and command registration were verified to build correctly against the real `discord.py` API, and everything in `embeds.py`/`access.py`/`mgmt_client.py` (the actual bot-specific logic) is unit-tested, but nobody has watched it come online in an actual Discord server.
 
 ---
 

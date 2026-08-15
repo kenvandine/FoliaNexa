@@ -1,11 +1,12 @@
 # folia-server
 
 Multi-world Folia/Paper SMP cluster: `folia-smp-mgmt` (orchestrator),
-`folia-smp-node` (in-container world agent), and `velocity-proxy` (edge,
-with the `folia-routes-sync` plugin). Full architecture and design
-rationale live in **`PLAN.md`** — read that first for *why* things are
-shaped this way. This file is the *how*: how to run the test suites, and
-how to bootstrap the whole stack on a fresh host.
+`folia-smp-node` (in-container world agent), `velocity-proxy` (edge, with
+the `folia-routes-sync` plugin), and `folia-discord-bridge` (Discord bot).
+Full architecture and design rationale live in **`PLAN.md`** — read that
+first for *why* things are shaped this way. This file is the *how*: how
+to run the test suites, and how to bootstrap the whole stack on a fresh
+host.
 
 ## Repo map
 
@@ -14,26 +15,32 @@ how to bootstrap the whole stack on a fresh host.
 | `mgmt/` | `folia-smp-mgmt` — FastAPI control plane, scheduler, dashboard, CLI | Python 3.12+, pytest |
 | `node/` | `folia-smp-node` — in-container world runner/health agent | Python 3.12+, pytest |
 | `proxy/` | `folia-routes-sync` — Velocity plugin (routing sync + access gate) | Java 21, Gradle |
+| `bot/` | `folia-discord-bridge` — Discord bot (`/status`, `/request-access`, `/leaderboard`) | Python 3.12+, pytest |
 | `tools/folia-host-join.sh` | Automates trusting an LXD host into the cluster | Bash |
 | `configs/worlds/*.sh` | Starter world declarations (CLI wrappers) | Bash |
 | `configs/plugins/manifests/*.json` | Per-world plugin manifests `folia-smp-node` downloads from | JSON |
 
-Each of `mgmt/`, `node/`, `proxy/` is an independent, independently
-testable component with its own `snapcraft.yaml`. None of the three
-`snapcraft.yaml` files have been build-tested with actual `snapcraft` —
-they're written against its documented plugin behavior (`python` plugin
-for mgmt/node, `gradle` + `nil` for proxy) but unverified end-to-end.
-Validate that before depending on it in production.
+Each of `mgmt/`, `node/`, `proxy/`, `bot/` is an independent,
+independently testable component with its own `snapcraft.yaml`. None of
+the four `snapcraft.yaml` files have been build-tested with actual
+`snapcraft` — they're written against its documented plugin behavior
+(`python` plugin for mgmt/node/bot, `gradle` + `nil` for proxy) but
+unverified end-to-end. Validate that before depending on it in
+production.
 
 ## Running the test suites
 
 ```bash
-# mgmt (Python) — 58 tests
+# mgmt (Python) — 88 tests
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
 # node (Python) — 15 tests
 cd node && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+.venv/bin/pytest -q
+
+# bot (Python) — 19 tests, no live Discord connection needed
+cd bot && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
 # proxy (Java) — 24 tests, real Gradle + real velocity-api jar
@@ -199,16 +206,39 @@ curl -X POST https://<mgmt-host>:8443/api/v1/users/velocity-proxy/api-token \
 sudo snap start velocity-proxy.daemon
 ```
 
+### Phase 7 — build and install `folia-discord-bridge` (optional)
+
+```bash
+cd bot && snapcraft   # unverified, same caveat as the others
+sudo snap install ./folia-discord-bridge_0.1_amd64.snap --dangerous
+```
+
+Needs `DISCORD_BOT_TOKEN`, `FOLIA_MGMT_URL`, and `FOLIA_MGMT_API_TOKEN`
+(operator role — it creates access requests on other users' behalf, more
+than a read-only action) as environment. `DISCORD_GUILD_ID` and
+`FOLIA_BOT_AUTO_APPROVE_ROLE_ID` are optional — see the module docstring
+in `bot/src/folia_bot/bot.py`. Requires a registered Discord application
+with a bot user and the `applications.commands` scope invited to your
+server, none of which this repo can set up for you.
+
+```bash
+sudo snap start folia-discord-bridge.daemon
+```
+
 ## What's real vs. what's documented-but-unverified
 
 Verified with real tooling in this repo's development (real HTTP
 servers, real Gradle+Velocity API compilation, real running mgmt server
-hit with curl/the CLI):
+hit with curl/the CLI, real discord.py client/command-tree construction):
 
 - Every mgmt API endpoint, the scheduler's placement/health-check/
-  recovery logic, the CLI, the dashboard.
+  recovery/migration logic, the CLI, the dashboard.
 - `folia-routes-sync`'s routing diff, JSON parsing, and access-gate logic
   — compiled and unit-tested against the real `velocity-api` jar.
+- `folia-discord-bridge`'s embed-building, auto-approve decision logic,
+  and mgmt API client — unit-tested; `discord.Client`/`CommandTree`
+  construction and command registration verified to build correctly
+  against the real `discord.py` API.
 - `folia-host-join.sh`'s LXD-prep steps (project creation, trust token
   generation) — bash-syntax-checked and logically reviewed, not run
   against a live LXD daemon in this environment.
@@ -216,13 +246,14 @@ hit with curl/the CLI):
 Written against documented API contracts but **not** exercised against
 live infrastructure:
 
-- Every `LXDClient` method (mTLS bootstrap, instance CRUD, file push) —
-  no LXD daemon was available to test against.
-- The Discord OAuth2 flow and Mojang UUID resolution — no registered
-  Discord application was available to test against.
-- All three `snapcraft.yaml` files — no `snapcraft` binary was available
+- Every `LXDClient` method (mTLS bootstrap, instance CRUD, file push,
+  backup export/import for migration) — no LXD daemon was available to
+  test against.
+- The Discord OAuth2 flow, Mojang UUID resolution, and the bot's actual
+  gateway connection — no registered Discord application was available
+  to test against.
+- All four `snapcraft.yaml` files — no `snapcraft` binary was available
   to build with.
-- Cross-host world migration is an explicit `501` stub, not attempted.
 
 If you're picking up this project to actually run it: those are the
 places to validate first, roughly in that order.

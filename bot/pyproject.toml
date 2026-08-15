@@ -1,0 +1,29 @@
+[project]
+name = "folia-discord-bridge"
+version = "0.1.0"
+description = "Discord bot: /status, /request-access, /leaderboard (see PLAN.md §16)"
+requires-python = ">=3.12"
+dependencies = [
+  "discord.py>=2.4",
+  "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+]
+
+[project.scripts]
+folia-discord-bridge = "folia_bot.bot:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

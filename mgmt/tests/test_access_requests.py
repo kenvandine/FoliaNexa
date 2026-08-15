@@ -77,3 +77,90 @@ def test_approved_uuids_only_includes_approved_with_uuid(client, viewer_token, a
 def test_approved_uuids_accessible_by_viewer_role(client, viewer_token):
     resp = client.get("/api/v1/access-requests/approved-uuids", headers=auth_header(viewer_token))
     assert resp.status_code == 200
+
+
+def _fake_resolver(monkeypatch, mapping: dict[str, str | None]) -> None:
+    monkeypatch.setattr(
+        "folia_mgmt.routers.access_requests.resolve_minecraft_uuid",
+        lambda name: mapping.get(name),
+    )
+
+
+def test_create_access_request_requires_operator(client, viewer_token):
+    resp = client.post(
+        "/api/v1/access-requests",
+        json={"discord_user_id": "1", "discord_username": "bob", "minecraft_username": "Steve"},
+        headers=auth_header(viewer_token),
+    )
+    assert resp.status_code == 403
+
+
+def test_create_access_request_lands_pending_by_default(client, operator_token, monkeypatch):
+    _fake_resolver(monkeypatch, {"Steve": "069a79f444e94726a5befca90e38aaf9"})
+    resp = client.post(
+        "/api/v1/access-requests",
+        json={"discord_user_id": "1", "discord_username": "bob", "minecraft_username": "Steve"},
+        headers=auth_header(operator_token),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "pending"
+    assert body["minecraft_uuid"] == "069a79f444e94726a5befca90e38aaf9"
+    assert body["auto_approved"] is False
+
+
+def test_create_access_request_auto_approve_true(client, operator_token, monkeypatch):
+    _fake_resolver(monkeypatch, {"Steve": "069a79f444e94726a5befca90e38aaf9"})
+    resp = client.post(
+        "/api/v1/access-requests",
+        json={"discord_user_id": "1", "discord_username": "bob", "minecraft_username": "Steve", "auto_approve": True},
+        headers=auth_header(operator_token),
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["status"] == "approved"
+    assert body["auto_approved"] is True
+
+    # and it shows up where the proxy's access gate looks
+    uuids = client.get("/api/v1/access-requests/approved-uuids", headers=auth_header(operator_token)).json()
+    assert uuids["uuids"] == ["069a79f444e94726a5befca90e38aaf9"]
+
+
+def test_create_access_request_upserts_by_discord_user_id(client, operator_token, monkeypatch):
+    _fake_resolver(monkeypatch, {"Steve": "069a79f444e94726a5befca90e38aaf9", "SteveAlt": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"})
+    first = client.post(
+        "/api/v1/access-requests",
+        json={"discord_user_id": "1", "discord_username": "bob", "minecraft_username": "Steve"},
+        headers=auth_header(operator_token),
+    )
+    second = client.post(
+        "/api/v1/access-requests",
+        json={"discord_user_id": "1", "discord_username": "bob", "minecraft_username": "SteveAlt"},
+        headers=auth_header(operator_token),
+    )
+    assert first.json()["id"] == second.json()["id"]
+    assert second.json()["minecraft_username"] == "SteveAlt"
+
+    all_requests = client.get("/api/v1/access-requests", headers=auth_header(operator_token)).json()
+    assert len(all_requests) == 1
+
+
+def test_create_access_request_does_not_reapprove_already_denied(client, operator_token, monkeypatch):
+    _fake_resolver(monkeypatch, {"Steve": "069a79f444e94726a5befca90e38aaf9"})
+    create = client.post(
+        "/api/v1/access-requests",
+        json={"discord_user_id": "1", "discord_username": "bob", "minecraft_username": "Steve"},
+        headers=auth_header(operator_token),
+    )
+    request_id = create.json()["id"]
+    client.post(f"/api/v1/access-requests/{request_id}/deny", json={}, headers=auth_header(operator_token))
+
+    resp = client.post(
+        "/api/v1/access-requests",
+        json={"discord_user_id": "1", "discord_username": "bob", "minecraft_username": "Steve", "auto_approve": True},
+        headers=auth_header(operator_token),
+    )
+    # auto_approve only fires from `pending` — a denied request needs an
+    # explicit human re-approval, not another bot round trip to flip it
+    assert resp.json()["status"] == "denied"
+    assert resp.json()["auto_approved"] is False
