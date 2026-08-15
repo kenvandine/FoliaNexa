@@ -79,7 +79,7 @@ def test_put_access_does_not_push_when_world_not_placed(client, operator_token, 
     assert fake_lxd.pushed_files == {}
 
 
-def test_put_access_skips_push_when_ops_not_in_request_body(client, admin_token, operator_token, fake_lxd):
+def test_put_access_skips_ops_push_when_ops_not_in_request_body(client, admin_token, operator_token, fake_lxd):
     _enroll_host(client, admin_token)
     client.post(
         "/api/v1/worlds",
@@ -93,4 +93,59 @@ def test_put_access_skips_push_when_ops_not_in_request_body(client, admin_token,
         headers=auth_header(operator_token),
     )
     assert resp.status_code == 200
-    assert fake_lxd.pushed_files == {}
+
+    ops_key = ("node-a", "world-overworld", f"{NODE_WORLD_DIR}/ops.json")
+    whitelist_key = ("node-a", "world-overworld", f"{NODE_WORLD_DIR}/whitelist.json")
+    assert ops_key not in fake_lxd.pushed_files
+    # whitelist_enabled *was* in the body, so its push does happen — see
+    # test_put_access_pushes_whitelist_json_mirroring_approved_requests
+    assert whitelist_key in fake_lxd.pushed_files
+
+
+def test_put_access_pushes_whitelist_json_mirroring_approved_requests(
+    client, admin_token, operator_token, fake_lxd, app
+):
+    from sqlmodel import Session
+
+    from folia_mgmt.db import get_engine
+    from folia_mgmt.models import AccessRequest, AccessRequestStatus
+
+    engine = get_engine(app.state.test_settings)
+    with Session(engine) as session:
+        session.add(
+            AccessRequest(
+                discord_user_id="1",
+                discord_username="somebody",
+                minecraft_username="Steve",
+                minecraft_uuid="069a79f444e94726a5befca90e38aaf9",
+                status=AccessRequestStatus.approved,
+            )
+        )
+        session.add(
+            AccessRequest(
+                discord_user_id="2",
+                discord_username="pending-person",
+                minecraft_username="NotApprovedYet",
+                minecraft_uuid="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                status=AccessRequestStatus.pending,
+            )
+        )
+        session.commit()
+
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+
+    resp = client.put(
+        "/api/v1/worlds/world-overworld/access",
+        json={"whitelist_enabled": True},
+        headers=auth_header(operator_token),
+    )
+    assert resp.status_code == 200
+
+    key = ("node-a", "world-overworld", f"{NODE_WORLD_DIR}/whitelist.json")
+    entries = json.loads(fake_lxd.pushed_files[key])
+    assert entries == [{"uuid": "069a79f444e94726a5befca90e38aaf9", "name": "Steve"}]

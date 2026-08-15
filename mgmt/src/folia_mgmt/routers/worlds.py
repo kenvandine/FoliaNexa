@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from folia_mgmt.access_apply import UuidResolver, apply_ops
+from folia_mgmt.access_apply import UuidResolver, apply_ops, apply_whitelist
 from folia_mgmt.auth import require_operator, require_viewer
 from folia_mgmt.db import get_session
 from folia_mgmt.deps import get_health_check, get_lxd_client, get_uuid_resolver
@@ -215,10 +215,9 @@ def put_world_access(
     lxd_client: LXDClient = Depends(get_lxd_client),
     uuid_resolver: UuidResolver = Depends(get_uuid_resolver),
 ) -> dict:
-    # whitelist_enabled updates desired state only — see access_apply.py's
-    # module docstring for why applying it live needs a product decision
-    # this codebase hasn't made yet. `ops` is applied to the live
-    # container immediately below when the world is placed.
+    # whitelist_enabled=true mirrors the network-wide Discord-approved set
+    # (§11C) rather than a separate per-world guest list — see
+    # access_apply.py's module docstring for the full reasoning.
     world = _get_world_or_404(session, name)
     if body.whitelist_enabled is not None:
         world.whitelist_enabled = body.whitelist_enabled
@@ -229,9 +228,12 @@ def put_world_access(
     session.commit()
     session.refresh(world)
 
-    if body.ops is not None and world.host_name and world.container_name:
+    if (body.ops is not None or body.whitelist_enabled is not None) and world.host_name and world.container_name:
         host = session.exec(select(Host).where(Host.name == world.host_name)).first()
         if host is not None:
-            apply_ops(lxd_client, host, world, uuid_resolver)
+            if body.ops is not None:
+                apply_ops(lxd_client, host, world, uuid_resolver)
+            if body.whitelist_enabled is not None:
+                apply_whitelist(session, lxd_client, host, world)
 
     return {"whitelist_enabled": world.whitelist_enabled, "ops": world.ops}

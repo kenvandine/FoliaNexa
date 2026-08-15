@@ -15,6 +15,7 @@ from typing import Callable
 import httpx
 from sqlmodel import Session, select
 
+from folia_mgmt.access_apply import apply_whitelist
 from folia_mgmt.config import Settings, get_settings
 from folia_mgmt.lxd_client import LXDClient, LXDError, extract_ipv4
 from folia_mgmt.models import Host, HostStatus, World, WorldPhase
@@ -204,6 +205,21 @@ def recover_crashed_worlds(session: Session, lxd_client: LXDClient) -> None:
         session.commit()
 
 
+def sync_whitelisted_worlds(session: Session, lxd_client: LXDClient) -> None:
+    """Keeps whitelist.json current on every whitelist-enabled running
+    world as Discord approvals (§11C) come and go — this is the periodic
+    catch-up; `PUT /worlds/{name}/access` also applies it immediately when
+    the toggle itself changes. See access_apply.py's module docstring for
+    what "whitelist_enabled" actually means here."""
+    worlds = session.exec(
+        select(World).where(World.phase == WorldPhase.running, World.whitelist_enabled.is_(True))
+    ).all()
+    for world in worlds:
+        host = session.exec(select(Host).where(Host.name == world.host_name)).first()
+        if host is not None:
+            apply_whitelist(session, lxd_client, host, world)
+
+
 def reconcile(
     session: Session,
     lxd_client: LXDClient,
@@ -221,6 +237,7 @@ def reconcile(
 
     check_running_worlds(session, settings, health_check)
     recover_crashed_worlds(session, lxd_client)
+    sync_whitelisted_worlds(session, lxd_client)
 
     for world in session.exec(select(World).where(World.phase == WorldPhase.draining)).all():
         teardown_world(session, lxd_client, world)

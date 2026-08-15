@@ -3,8 +3,8 @@ from __future__ import annotations
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from folia_mgmt.config import Settings
-from folia_mgmt.models import Host, HostStatus, World, WorldPhase, WorldType
-from folia_mgmt.scheduler import check_running_worlds, recover_crashed_worlds, select_host
+from folia_mgmt.models import AccessRequest, AccessRequestStatus, Host, HostStatus, World, WorldPhase, WorldType
+from folia_mgmt.scheduler import check_running_worlds, recover_crashed_worlds, select_host, sync_whitelisted_worlds
 
 
 def _session():
@@ -93,9 +93,13 @@ def test_select_host_honors_label_affinity():
 class _RecordingLXDClient:
     def __init__(self):
         self.restarted: list[str] = []
+        self.pushed: dict[tuple[str, str], bytes] = {}
 
     def restart_container(self, host, name):
         self.restarted.append(name)
+
+    def push_file(self, host, name, path, content, *, mode="0644"):
+        self.pushed[(name, path)] = content
 
 
 def test_check_running_worlds_marks_unhealthy_worlds_crashed():
@@ -165,3 +169,73 @@ def test_recover_crashed_worlds_skips_worlds_without_a_host():
 
     world = session.exec(select(World).where(World.name == "world-orphaned")).first()
     assert world.phase == WorldPhase.crashed  # left alone, nothing to restart
+
+
+def test_sync_whitelisted_worlds_pushes_approved_set():
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-overworld",
+            type=WorldType.overworld,
+            cpu_cores=1,
+            memory_gb=1,
+            phase=WorldPhase.running,
+            whitelist_enabled=True,
+            host_name="node-a",
+            container_name="world-overworld",
+        )
+    )
+    session.add(
+        AccessRequest(
+            discord_user_id="1",
+            discord_username="somebody",
+            minecraft_username="Steve",
+            minecraft_uuid="069a79f444e94726a5befca90e38aaf9",
+            status=AccessRequestStatus.approved,
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    sync_whitelisted_worlds(session, lxd)
+
+    import json
+
+    content = lxd.pushed[("world-overworld", "/var/snap/folia-smp-node/common/world/whitelist.json")]
+    assert json.loads(content) == [{"uuid": "069a79f444e94726a5befca90e38aaf9", "name": "Steve"}]
+
+
+def test_sync_whitelisted_worlds_skips_non_whitelisted_and_non_running():
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-open",
+            type=WorldType.overworld,
+            cpu_cores=1,
+            memory_gb=1,
+            phase=WorldPhase.running,
+            whitelist_enabled=False,
+            host_name="node-a",
+            container_name="world-open",
+        )
+    )
+    session.add(
+        World(
+            name="world-not-running-yet",
+            type=WorldType.overworld,
+            cpu_cores=1,
+            memory_gb=1,
+            phase=WorldPhase.provisioning,
+            whitelist_enabled=True,
+            host_name="node-a",
+            container_name="world-not-running-yet",
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    sync_whitelisted_worlds(session, lxd)
+
+    assert lxd.pushed == {}
