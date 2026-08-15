@@ -66,7 +66,7 @@ cd proxy && ./gradlew test
 
 ## Status
 
-149 automated tests passing across four components (95 mgmt, 15 node, 15 bot, 24 proxy), plus `folia-db`'s entrypoint script run end-to-end against real MariaDB binaries. Every mgmt API endpoint, the scheduler, the CLI, and the dashboard have been exercised against a real running server, not just a test client. Full breakdown of what's been verified against real tooling versus what's written against a documented contract but not yet exercised against live infrastructure (a real LXD daemon, a registered Discord application, an actual `snapcraft` build) is in [CLAUDE.md](CLAUDE.md#whats-real-vs-whats-documented-but-unverified).
+149 automated tests passing across four components (95 mgmt, 15 node, 15 bot, 24 proxy). All five snaps build successfully with real `snapcraft` (that build pass caught and fixed two real bugs — see CLAUDE.md). Every mgmt API endpoint, the scheduler, the CLI, and the dashboard have been exercised against a real running server, not just a test client; `folia-db`'s entrypoint script was run end-to-end against real MariaDB binaries. Full breakdown of what's verified against real tooling versus what's written against a documented contract but not yet exercised live (installing/running the snaps, a registered Discord application) is in [CLAUDE.md](CLAUDE.md#whats-real-vs-whats-documented-but-unverified).
 
 This is under active development — expect gaps, and check `PLAN.md`'s inline status notes before assuming a described feature is fully wired up.
 

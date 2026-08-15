@@ -9,3 +9,6 @@ __pycache__/
 build/
 .gradle/
 out/
+
+# Built snap packages — build artifacts, not source
+*.snap

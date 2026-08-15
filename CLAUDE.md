@@ -23,15 +23,22 @@ host.
 | `configs/luckperms/provision-mysql.sh` | Plain-LXD-container alternative to `db/` for operators who'd rather not add another snap | Bash |
 
 Each of `mgmt/`, `node/`, `proxy/`, `bot/`, `db/` is an independent,
-independently testable component with its own `snapcraft.yaml`. None of
-the five `snapcraft.yaml` files have been build-tested with actual
-`snapcraft` — they're written against its documented plugin behavior
-(`python` plugin for mgmt/node/bot, `gradle`/`nil` for proxy, `nil` +
-staged `mariadb-server` for db) but unverified end-to-end as an actual
-snap build. `db/bin/run-folia-db.sh` itself, unlike the other four
-snaps' entrypoints, *has* been run for real against the actual MariaDB
-binaries (extracted from the `.deb`s, outside snap confinement) — see
-its own comments for what that did and didn't prove.
+independently testable component with its own `snapcraft.yaml`. **All
+five build successfully with real `snapcraft` 9.0.1** (`snapcraft` from
+each directory) — confirmed in this environment against a real LXD-based
+build backend, not just reviewed. That build pass caught two real bugs
+that a review wouldn't have: `proxy/snapcraft.yaml` was pointed at
+`api.papermc.io/v2`, which PaperMC has since sunset in favor of
+`fill.papermc.io/v3` (different host, different response shape); and
+`bot/snapcraft.yaml`'s `summary` field exceeded snap metadata's 78-
+character limit. Both fixed. `db/bin/run-folia-db.sh` was additionally
+run end-to-end against the real MariaDB binaries (outside snap
+confinement, extracted from the `.deb`s directly) — see its own comments
+for what that did and didn't prove. None of the five have been
+**installed** (`snap install ... --dangerous`) or actually started in
+this environment — no root/interactive-sudo access was available for
+that — so runtime behavior under real strict confinement is still
+unverified; only the build step is confirmed.
 
 ## Running the test suites
 
@@ -72,9 +79,10 @@ Velocity server.
 ## Bootstrapping a fresh host from scratch
 
 This is the production path — building and installing the actual snaps.
-Two things below are genuinely unverified end-to-end (flagged inline):
-the snap builds themselves, and anything touching a live LXD daemon or a
-live Discord application. Everything else (the CLI flow, the API
+The builds themselves are confirmed (see the repo map note above); what's
+still genuinely unverified end-to-end is *installing* them (needs root,
+unavailable in this environment) and anything touching a live LXD daemon
+or a live Discord application. Everything else (the CLI flow, the API
 contracts, the plugin manifest shape) has been exercised against a real
 running server in development.
 
@@ -96,7 +104,7 @@ running server in development.
 ### Phase 1 — build and install `folia-smp-mgmt`
 
 ```bash
-cd mgmt && snapcraft   # unverified — see the repo map note above
+cd mgmt && snapcraft   # confirmed to build — see the repo map note above
 sudo snap install ./folia-smp-mgmt_0.1_amd64.snap --dangerous
 sudo snap start folia-smp-mgmt.daemon
 ```
@@ -147,7 +155,7 @@ into a base image the scheduler's `launch_container` calls reference by
 alias (`folia-node-base` — `mgmt/src/folia_mgmt/scheduler.py`):
 
 ```bash
-cd node && snapcraft   # unverified, same caveat as mgmt's build
+cd node && snapcraft   # confirmed to build, same as mgmt
 # then, on an LXD host: launch a container, `snap install
 # ./folia-smp-node_0.1_amd64.snap --dangerous`, and publish it as an
 # image aliased folia-node-base — see `lxc publish` / `lxc image alias`.
@@ -192,7 +200,7 @@ Folia/Paper JVMs, not a database server (see
 **`folia-db`** (recommended — self-contained, bundles MariaDB itself):
 
 ```bash
-cd db && snapcraft   # unverified as an actual snap build, see repo map note above
+cd db && snapcraft   # confirmed to build — see the repo map note above
 sudo snap install ./folia-db_11.8_amd64.snap --dangerous
 sudo snap start folia-db.daemon
 sudo snap run folia-db.show-credentials   # prints the FOLIA_MGMT_LUCKPERMS_MYSQL_* vars
@@ -218,7 +226,7 @@ backend at plugin load time, not live).
 ### Phase 7 — build and install `velocity-proxy`
 
 ```bash
-cd proxy && snapcraft   # unverified, same caveat as the others
+cd proxy && snapcraft   # confirmed to build, same as the others
 sudo snap install ./velocity-proxy_3.5.1_amd64.snap --dangerous
 ```
 
@@ -248,7 +256,7 @@ sudo snap start velocity-proxy.daemon
 ### Phase 8 — build and install `folia-discord-bridge` (optional)
 
 ```bash
-cd bot && snapcraft   # unverified, same caveat as the others
+cd bot && snapcraft   # confirmed to build, same as the others
 sudo snap install ./folia-discord-bridge_0.1_amd64.snap --dangerous
 ```
 
@@ -292,25 +300,37 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   explicit `--basedir` under a non-`/usr` prefix like a snap's `$SNAP`)
   before they'd have surfaced as a broken first boot. Not run inside
   actual snap confinement, though — see below.
+- **All five `snapcraft.yaml` files, as real builds** — `snapcraft`
+  9.0.1 against a real LXD-based build backend, every part actually
+  fetching/compiling/staging, not a dry run. Caught two real bugs, both
+  fixed: `proxy/`'s PaperMC API call was pointed at `api.papermc.io/v2`,
+  which has been sunset in favor of `fill.papermc.io/v3` (different
+  host, different response shape — this would have failed on literally
+  the first real build attempt); `bot/`'s snap `summary` exceeded the
+  78-character limit snap metadata enforces.
 
 Written against documented API contracts but **not** exercised against
 live infrastructure:
 
 - Every `LXDClient` method (mTLS bootstrap, instance CRUD, file push,
-  backup export/import for migration) — no LXD daemon was available to
-  test against.
+  backup export/import for migration) — a real LXD daemon exists in the
+  environment this was developed in (used for the snap builds above),
+  but nothing set up a `folia` project on it and pointed `LXDClient` at
+  it for real — that's the next-most-valuable thing to verify if you're
+  picking this project up.
 - The Discord OAuth2 flow, Mojang UUID resolution, and the bot's actual
   gateway connection — no registered Discord application was available
   to test against.
 - `configs/luckperms/provision-mysql.sh` and the LuckPerms config.yml
   format itself (verify plugin config keys against whatever LuckPerms
   version you actually deploy — they can drift between major versions).
-- All five `snapcraft.yaml` files as actual snap builds — no `snapcraft`
-  binary was available. `db/`'s specifically: strict confinement could
-  plausibly restrict something `mariadbd` wants (raw sockets, certain
-  filesystem operations) that running the binary directly, unconfined,
-  wouldn't have caught — confinement-related failures are the main risk
-  left unverified for this one.
+- Actually *installing* (`snap install --dangerous`) or running any of
+  the five built snaps — no root/interactive-sudo access was available
+  in this environment, only the build step. `db/`'s runtime behavior
+  under real strict confinement specifically is the main open question:
+  it could plausibly restrict something `mariadbd` wants (raw sockets,
+  certain filesystem operations) that running the binary directly,
+  unconfined, wouldn't catch.
 
 If you're picking up this project to actually run it: those are the
 places to validate first, roughly in that order.

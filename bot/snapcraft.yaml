@@ -1,6 +1,6 @@
 name: folia-discord-bridge
 version: '0.1'
-summary: Discord bot for a folia-smp-mgmt cluster — status, access requests, leaderboards
+summary: Discord bot for a folia-server cluster — status, access, leaderboards
 description: |
   /status, /request-access, and /leaderboard slash commands backed by
   folia-smp-mgmt's REST API. See PLAN.md §16. Not exercised against a

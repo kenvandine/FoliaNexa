@@ -47,12 +47,13 @@ parts:
       - openjdk-21-jre-headless
     override-build: |
       set -e
-      # Resolve the latest PaperMC build for this Velocity version at
-      # build time rather than pinning a build number that goes stale.
-      BUILD=$(curl -sf "https://api.papermc.io/v2/projects/velocity/versions/${CRAFT_PROJECT_VERSION}/builds" \
-        | python3 -c "import json,sys; print(json.load(sys.stdin)['builds'][-1]['build'])")
-      curl -sf -o $CRAFT_PART_INSTALL/velocity.jar \
-        "https://api.papermc.io/v2/projects/velocity/versions/${CRAFT_PROJECT_VERSION}/builds/${BUILD}/downloads/velocity-${CRAFT_PROJECT_VERSION}-${BUILD}.jar"
+      # Resolve the latest PaperMC ("Fill" — api.papermc.io/v2 was sunset;
+      # this is its documented replacement, confirmed live) build for this
+      # Velocity version at build time rather than pinning a build number
+      # that goes stale.
+      DOWNLOAD_URL=$(curl -sf "https://fill.papermc.io/v3/projects/velocity/versions/${CRAFT_PROJECT_VERSION}/builds" \
+        | python3 -c "import json,sys; print(json.load(sys.stdin)[-1]['downloads']['server:default']['url'])")
+      curl -sf -o $CRAFT_PART_INSTALL/velocity.jar "$DOWNLOAD_URL"
 
       mkdir -p $CRAFT_PART_INSTALL/bin
       cat << 'EOF' > $CRAFT_PART_INSTALL/bin/run-velocity.sh
