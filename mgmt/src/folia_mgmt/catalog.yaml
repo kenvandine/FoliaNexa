@@ -218,6 +218,26 @@
   verified: false
   notes: "Placeholder — same Folia-compatibility caveat as SkyWarsReloaded."
 
+- id: FoliaNexaStats
+  category: analytics
+  source: in-house
+  version: "0.1.0"
+  download_url: null
+  sha256: null
+  homepage: null
+  verified: false
+  notes: >
+    Feeds the public player hub (portal/, PLAN.md §7A) — reports
+    kills/deaths/blocks-mined/playtime to POST /api/v1/stats/report
+    periodically via Bukkit's AsyncScheduler, and softdepends on
+    AuraSkills/AxAuctions to additionally report power level/wealth when
+    either is present on the same world. Not yet built — see
+    docs/plugin-dev/ and the .claude/skills/folia-plugin-scaffold skill
+    for the scaffold this should follow, and
+    docs/plugin-dev/03-submitting-for-review.md §3.1 for why its source
+    belongs in its own repository rather than here. Populate
+    download_url/sha256 once a real release exists.
+
 # Example in-house entry: demonstrates a catalog entry pointing at a
 # separate repository's releases rather than a third-party plugin host.
 # folianexa-plugins doesn't exist yet — replace with your real in-house

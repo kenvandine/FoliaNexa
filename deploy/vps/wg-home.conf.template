@@ -1,0 +1,21 @@
+# Reference only — this is the shape of config setup-wireguard.sh --role
+# home generates for you at /etc/wireguard/wg0.conf, run on the same box
+# that already runs LXD. Fill in by hand only if you'd rather not run the
+# script; either way, keep the real file at mode 600 and never commit a
+# real private key anywhere.
+
+[Interface]
+Address = 10.66.0.2/24
+PrivateKey = <HOME_WIREGUARD_PRIVATE_KEY>
+ListenPort = 51820
+
+[Peer]
+# The VPS's public key (from running setup-wireguard.sh --role vps over
+# there first).
+PublicKey = <VPS_WIREGUARD_PUBLIC_KEY>
+AllowedIPs = 10.66.0.1/32
+Endpoint = <VPS_PUBLIC_IP>:51820
+# Keeps the NAT mapping at home alive so the VPS can still reach back
+# through the same UDP session — this plus the outbound Endpoint above is
+# the entire trick for "no inbound port forwarding needed at home".
+PersistentKeepalive = 25

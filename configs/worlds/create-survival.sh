@@ -29,4 +29,5 @@ folia-nexa-mgmt worlds create world-survival \
   --plugin Spark \
   --plugin BlueMap \
   --plugin DiscordSRV \
+  --plugin FoliaNexaStats \
   "$@"

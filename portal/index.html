@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FoliaNexa</title>
+<!-- Uncomment and set this if your api.<domain> doesn't match the
+     play.<domain> -> api.<domain> guess in portal.js's resolveApiBase():
+<meta name="api-base" content="https://api.example.com/api/v1/public"> -->
+<link rel="stylesheet" href="portal.css">
+</head>
+<body>
+<header>
+  <h1><a href="index.html">FoliaNexa</a></h1>
+  <nav>
+    <a href="index.html" class="active">Home</a>
+    <a href="leaderboards.html">Leaderboards</a>
+  </nav>
+</header>
+<main>
+  <div class="card">
+    <h2>Recently active players</h2>
+    <p class="muted" id="pulse-note">
+      Based on the last stats report each player's client sent — not a live
+      presence feed, so treat this as approximate.
+    </p>
+    <div id="pulse" class="player-grid"><p class="loading">Loading…</p></div>
+  </div>
+
+  <div class="card">
+    <h2>All known players</h2>
+    <div id="all-players" class="player-grid"><p class="loading">Loading…</p></div>
+  </div>
+</main>
+<footer>FoliaNexa player hub — data updates roughly every 30 seconds.</footer>
+<script src="portal.js"></script>
+<script>
+function renderPlayerGrid(container, players) {
+  if (players.length === 0) {
+    container.innerHTML = '<p class="muted">No players tracked yet.</p>';
+    return;
+  }
+  container.innerHTML = "";
+  for (const p of players) {
+    const a = document.createElement("a");
+    a.className = "player-card";
+    a.href = `player.html?uuid=${encodeURIComponent(p.uuid)}`;
+    a.innerHTML = `
+      <img src="${avatarUrl(p.uuid)}" alt="${p.username}" loading="lazy">
+      <span class="name">${p.username}</span>
+    `;
+    container.appendChild(a);
+  }
+}
+
+async function load() {
+  const pulseEl = document.getElementById("pulse");
+  const allEl = document.getElementById("all-players");
+  try {
+    const { players } = await apiGet("/players?limit=100");
+    renderPlayerGrid(allEl, players);
+
+    const active = players.filter((p) => isRecentlyActive(p.last_seen));
+    if (active.length === 0) {
+      pulseEl.innerHTML = '<p class="muted">Nobody’s reported in within the last few minutes.</p>';
+    } else {
+      renderPlayerGrid(pulseEl, active);
+    }
+  } catch (err) {
+    showError(pulseEl, err);
+    showError(allEl, err);
+  }
+}
+
+load();
+</script>
+</body>
+</html>

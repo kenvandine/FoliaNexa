@@ -142,6 +142,50 @@ class JoinToken(SQLModel, table=True):
         return self.used_at is None and utcnow() < self.expires_at
 
 
+class PlayerProfile(SQLModel, table=True):
+    """A tracked player, keyed by Mojang UUID. Created/updated by the stats
+    plugin's periodic reports (PLAN.md §7A) — see routers/stats.py."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    uuid: str = Field(unique=True, index=True)
+    username: str
+    first_seen: datetime = Field(default_factory=utcnow)
+    last_seen: datetime = Field(default_factory=utcnow)
+
+
+class PlayerStat(SQLModel, table=True):
+    """One counter for one player — e.g. stat_key="kills", value=42.
+
+    Upserted (matched on player_uuid+stat_key, no DB-level unique
+    constraint — enforced in routers/stats.py the same way every other
+    upsert-by-lookup in this codebase works). `value` holds the current
+    running total as reported by the plugin, not a delta — the plugin is
+    the source of truth for its own counters, mgmt just mirrors the latest
+    value. Known stat_keys: kills, deaths, blocks_mined,
+    playtime_seconds_total, auraskills_power_level, axauctions_wealth —
+    but this is intentionally open-ended so a future plugin build can
+    report new stat_keys without a schema change.
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    player_uuid: str = Field(index=True, foreign_key="playerprofile.uuid")
+    stat_key: str = Field(index=True)
+    value: float = 0
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
+class PlayerPlaytimeDaily(SQLModel, table=True):
+    """One row per (player, UTC calendar day) — backs a GitHub-style
+    playtime heatmap on a player's profile page without needing a raw
+    join/quit event log. `seconds` accumulates across however many reports
+    land within that day (the plugin reports periodically, not once daily)."""
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    player_uuid: str = Field(index=True, foreign_key="playerprofile.uuid")
+    date: str = Field(index=True)  # "YYYY-MM-DD", UTC
+    seconds: int = 0
+
+
 class AccessRequest(SQLModel, table=True):
     """A Discord-authenticated request to join the network. PLAN.md §11C."""
 

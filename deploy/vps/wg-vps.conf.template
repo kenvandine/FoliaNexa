@@ -1,0 +1,24 @@
+# Reference only — this is the shape of config setup-wireguard.sh --role vps
+# generates for you at /etc/wireguard/wg0.conf. Fill in by hand only if
+# you'd rather not run the script; either way, keep the real file at
+# mode 600 and never commit a real private key anywhere.
+
+[Interface]
+Address = 10.66.0.1/24
+PrivateKey = <VPS_WIREGUARD_PRIVATE_KEY>
+ListenPort = 51820
+
+[Peer]
+# The home LXD host's public key (from running setup-wireguard.sh --role
+# home over there first).
+PublicKey = <HOME_WIREGUARD_PUBLIC_KEY>
+# Start with just the home peer's own tunnel address. Once you know mgmt's
+# real LAN address and the LXD bridge subnet your worlds run on, add them
+# here too — e.g. "10.66.0.2/32, 10.0.1.10/32, 10.0.1.0/24" — so the
+# relocated folia-nexa-proxy can actually reach mgmt and world containers
+# over the tunnel. Don't add the LXD hosts' own :8443 remote-API subnet —
+# that must stay home-only (PLAN.md §3).
+AllowedIPs = 10.66.0.2/32
+# No Endpoint here: the VPS never dials out to home. Home has no forwarded
+# port and a possibly-dynamic IP, so it's always the side that connects out
+# and keeps the NAT mapping alive via PersistentKeepalive on its own side.

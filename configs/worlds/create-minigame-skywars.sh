@@ -19,4 +19,5 @@ folia-nexa-mgmt worlds create world-minigame-skywars \
   --plugin FancyHolograms \
   --plugin FancyNpcs \
   --plugin Spark \
+  --plugin FoliaNexaStats \
   "$@"

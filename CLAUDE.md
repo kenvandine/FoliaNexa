@@ -24,6 +24,8 @@ host.
 | `docs/game-master-howto.md` | Task-oriented guide: designing/deploying a minigame world and configuring the lobby (PLAN.md §14B) | Markdown |
 | `docs/plugin-dev/` | Three-part how-to series: dev environment setup, Folia-safe plugin architecture, submitting a plugin for catalog review | Markdown |
 | `.claude/skills/folia-plugin-scaffold/` | Claude Code skill that operationalizes `docs/plugin-dev/` — scaffolds and writes a real Folia/Paper plugin, from a description or a Modrinth mod/plugin link | Markdown + templates |
+| `portal/` | Public player hub (leaderboards, profiles, playtime heatmaps) — static site, no build step, deployed to the VPS edge (PLAN.md §7A) | HTML/CSS/vanilla JS |
+| `deploy/vps/` | WireGuard tunnel + Caddy config for the VPS edge (PLAN.md §7A) — see `docs/vps-edge-deployment.md` | Bash, Caddyfile, WireGuard config templates |
 
 Each of `mgmt/`, `node/`, `proxy/`, `bot/`, `db/` is an independent,
 independently testable component with its own `snapcraft.yaml`. **All
@@ -287,6 +289,42 @@ server, none of which this repo can set up for you.
 sudo snap start folia-nexa-bot.daemon
 ```
 
+### Phase 9 — VPS edge: public portal + no home port-forwarding (optional)
+
+Everything above assumes players reach the cluster on your home network
+directly. This phase adds a public VPS (Linode or otherwise) in front of
+it instead — a WireGuard tunnel so nothing needs to be forwarded at home,
+`folia-nexa-proxy` relocated onto the VPS as the actual public-facing
+Minecraft port, Caddy for TLS, and the `portal/` static player hub
+(leaderboards/profiles/playtime). `folia-nexa-mgmt` itself **never
+moves** — it stays on the home network for all of this.
+
+Full walkthrough: [`docs/vps-edge-deployment.md`](docs/vps-edge-deployment.md).
+Supporting config lives in [`deploy/vps/`](deploy/vps/). Short version:
+
+```bash
+# On the VPS and the home LXD host (two-pass key exchange, see the doc):
+sudo ./deploy/vps/setup-wireguard.sh --role vps
+sudo ./deploy/vps/setup-wireguard.sh --role home --peer-public-key <...> --peer-endpoint <vps-ip>:51820
+sudo ./deploy/vps/setup-wireguard.sh --role vps --peer-public-key <...>
+sudo systemctl enable --now wg-quick@wg0   # both ends
+
+# On the VPS: relocate folia-nexa-proxy here (FOLIA_MGMT_URL now points
+# at mgmt's WireGuard-reachable address), then Caddy for TLS + routing:
+sudo cp deploy/vps/Caddyfile /etc/caddy/Caddyfile   # filled in first
+sudo systemctl reload caddy
+
+# Deploy the static portal:
+./deploy/vps/deploy-portal.sh --vps-host root@<vps-ip>
+```
+
+The player hub's data (leaderboards, profiles) comes from a new mgmt-side
+public API (`GET /api/v1/public/*`, `mgmt/src/folia_mgmt/routers/
+public_stats.py`) fed by a new plugin, catalog id `FoliaNexaStats`
+(`mgmt/src/folia_mgmt/catalog.yaml`) — as of this writing that catalog
+entry is a placeholder pending the plugin's first real release; see the
+entry's own `notes`.
+
 ## What's real vs. what's documented-but-unverified
 
 Verified with real tooling in this repo's development (real HTTP
@@ -344,6 +382,18 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   host, different response shape — this would have failed on literally
   the first real build attempt); `bot/`'s snap `summary` exceeded the
   78-character limit snap metadata enforces.
+- The VPS edge (PLAN.md §7A): mgmt's new `POST /api/v1/stats/report` and
+  `GET /api/v1/public/*` routers — real pytest suite, including the
+  in-process cache and per-IP rate limiter. `portal/`'s three pages —
+  loaded in a real headless Chromium against a real running mgmt
+  instance seeded with real data, confirming leaderboard sorting, the
+  player profile, and the playtime heatmap all render correctly.
+  `deploy/vps/Caddyfile` — validated with real `caddy validate`.
+  `deploy/vps/setup-wireguard.sh` — run end-to-end with real
+  `wireguard-tools` across its full two-pass key-exchange flow,
+  producing configs `wg-quick strip` parses cleanly. See
+  `docs/vps-edge-deployment.md`'s own "what's real vs. unverified"
+  section for the full breakdown.
 
 Written against documented API contracts but **not** exercised against
 live infrastructure:
@@ -367,6 +417,13 @@ live infrastructure:
   it could plausibly restrict something `mariadbd` wants (raw sockets,
   certain filesystem operations) that running the binary directly,
   unconfined, wouldn't catch.
+- The VPS edge's actual network claims: a real WireGuard handshake
+  across a real NAT'd home connection and a real public VPS IP, Let's
+  Encrypt issuance against a real domain, and a real Minecraft client
+  connecting through the relocated proxy — none of that is exercisable
+  without real VPS + home hardware. The `FoliaNexaStats` plugin that
+  feeds the player hub also doesn't exist yet as a real, released
+  plugin — see `mgmt/src/folia_mgmt/catalog.yaml`'s entry for it.
 
 If you're picking up this project to actually run it: those are the
 places to validate first, roughly in that order.

@@ -69,6 +69,17 @@ class Settings(BaseSettings):
     def luckperms_configured(self) -> bool:
         return bool(self.luckperms_mysql_host and self.luckperms_mysql_password)
 
+    # Public player-hub API (PLAN.md §7A) — GET /api/v1/public/* is
+    # deliberately unauthenticated, the same way plugins-manifest already
+    # is, since it only ever returns already-public leaderboard/profile
+    # data. Unlike every other mgmt route, this one is meant to be reached
+    # by anonymous internet traffic (via the VPS edge's api.<domain>
+    # reverse proxy) — the in-process cache and per-IP rate limit below are
+    # mgmt's own defense in depth; the VPS's Caddy is expected to add
+    # another layer in front of that.
+    public_api_cache_seconds: float = 30.0
+    public_api_rate_limit_per_minute: int = 60
+
     @property
     def db_path(self) -> Path:
         return self.state_dir / "mgmt.db"
