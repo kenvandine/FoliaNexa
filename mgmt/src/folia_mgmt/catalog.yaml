@@ -77,19 +77,22 @@
   version: "0.1.0"
   download_url: null
   sha256: null
-  homepage: null
+  homepage: "https://github.com/kenvandine/folianexa-plugins/tree/main/campus-lobby"
   verified: false
   notes: >
     Procedurally builds an NC State Wolfpack-themed scene (Brickyard
     plaza, Memorial Belltower, wolf-mascot statue, Free Expression
     Tunnel-style mural, student-union/library facades) into a lobby
-    world — see campus-lobby/ in this repo. Source builds and its 8-test
-    JUnit suite passes for real (cd campus-lobby && ./gradlew build), but
-    no release has been cut yet, so download_url is still null — see
-    campus-lobby/README.md and docs/plugin-dev/03-submitting-for-review.md
-    §3.6 for what's left before a world can actually declare
-    --plugin CampusLobby: tag a release, publish the jar, sha256 it, and
-    fill in this entry's download_url/sha256/verified.
+    world. Source lives in the sibling folianexa-plugins repo (campus-
+    lobby/), not this one — see the "In-house plugin source" note in this
+    repo's CLAUDE.md. Source builds and its 8-test JUnit suite passes for
+    real (cd campus-lobby &&
+    ./gradlew build in that repo), but no release has been cut yet, so
+    download_url is still null — see that repo's README and
+    docs/plugin-dev/03-submitting-for-review.md §3.6 for what's left
+    before a world can actually declare --plugin CampusLobby: tag a
+    release, publish the jar, sha256 it, and fill in this entry's
+    download_url/sha256/verified.
 
 - id: HuskClaims
   category: claims

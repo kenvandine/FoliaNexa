@@ -17,7 +17,6 @@ host.
 | `proxy/` | `folia-routes-sync` — Velocity plugin (routing sync + access gate) | Java 21, Gradle |
 | `bot/` | `folia-nexa-bot` — Discord bot (`/status`, `/request-access`, `/leaderboard`) | Python 3.12+, pytest |
 | `db/` | `folia-nexa-db` — self-contained MariaDB snap for LuckPerms' shared backend | Bash, bundled MariaDB |
-| `campus-lobby/` | `CampusLobby` — in-house Paper plugin, procedurally builds an NC State Wolfpack-themed lobby scene (Belltower, Brickyard plaza, wolf statue, more) | Java 21, Gradle |
 | `tools/folia-host-join.sh` | Automates trusting an LXD host into the cluster | Bash |
 | `configs/worlds/*.sh` | Starter world declarations (CLI wrappers) | Bash |
 | `mgmt/src/folia_mgmt/catalog.yaml` | Curated plugin catalog (PLAN.md §14A) — mgmt generates per-world manifests from this + a world's `plugins` list, no hand-authored manifest files | YAML |
@@ -28,6 +27,13 @@ host.
 | `.claude/skills/cluster-onboarding/` | Claude Code skill that operationalizes CLAUDE.md's bootstrap phases + `docs/vps-edge-deployment.md` into an interactive runbook for standing up the VPS edge, DNS, and trusting LXD hosts | Markdown |
 | `portal/` | Public player hub (leaderboards, profiles, playtime heatmaps) — static site, no build step, deployed to the VPS edge (PLAN.md §7A) | HTML/CSS/vanilla JS |
 | `deploy/vps/` | WireGuard tunnel + Caddy config for the VPS edge (PLAN.md §7A) — see `docs/vps-edge-deployment.md` | Bash, Caddyfile, WireGuard config templates |
+
+In-house plugin source doesn't live in this repo — it's in the sibling
+[`folianexa-plugins`](https://github.com/kenvandine/folianexa-plugins)
+repo (one top-level directory per plugin, e.g. `campus-lobby/` for the
+`CampusLobby` lobby-scene plugin), per `docs/plugin-dev/03-submitting-
+for-review.md`. `catalog.yaml`'s `download_url` points at a release
+built from there; this repo only ever needs that URL, not the source.
 
 Each of `mgmt/`, `node/`, `proxy/`, `bot/`, `db/` is an independent,
 independently testable component with its own `snapcraft.yaml`. **All
