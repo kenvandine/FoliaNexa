@@ -6,6 +6,17 @@ A scheduler-driven cluster for running a multi-world [Folia](https://papermc.io/
 
 Running a serious multi-world Minecraft cluster by hand means hand-provisioning containers, hand-editing proxy configs every time a world moves, and hand-syncing plugin configs across every server. FoliaNexa turns that into: declare a world (name, type, size, plugins), and the cluster figures out placement, routing, permissions sync, and health recovery on its own.
 
+### Why LXD, not Kubernetes?
+
+A deliberate choice, not a default. The workload shape doesn't fit Kubernetes' core value proposition: a world is one long-lived, sticky JVM, not a stateless replica you want horizontally scaled or freely rescheduled — the project already leans on things k8s doesn't give you natively:
+
+- **Snapshots.** World backups and cross-host migration (PLAN.md §13) both ride on LXD's built-in instance snapshots and backup export/import. On k8s that's Velero or CSI VolumeSnapshots bolted on top, not something the platform hands you.
+- **Per-host trust, not a single control plane.** Each LXD host is trusted individually via mTLS, scoped to a restricted, quota-capped project (PLAN.md §3) — a federation of independently-owned machines, not nodes joining one cluster's API server. That matches "any number of hosts you personally trust," not a shared/cloud cluster.
+- **CPU pinning is a first-class feature.** Folia's regionized scheduler wants specific worlds pinned to specific physical P-/E-cores. LXD's `limits.cpu` does that directly; the k8s equivalent (CPU manager static policy + Guaranteed QoS) is more indirect to reason about.
+- **No control-plane tax.** A k8s control plane (even k3s/microk8s) has real baseline resource overhead on every node — overhead that competes directly with the core budget this project wants dedicated to Folia's region-tick threads. LXD containers are close to native process overhead.
+
+Where k8s would actually win: running on someone else's cloud cluster, or wanting the existing Helm/Prometheus/ingress ecosystem. Neither is this project's goal.
+
 ## Architecture, at a glance
 
 | Component | Snap | What it does |
