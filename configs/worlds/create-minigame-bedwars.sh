@@ -8,7 +8,7 @@
 # version you're running before relying on it.
 set -euo pipefail
 
-folia-smp-mgmt worlds create world-minigame-bedwars \
+folia-nexa-mgmt worlds create world-minigame-bedwars \
   --type minigame \
   --cpu 2 \
   --memory 3GB \

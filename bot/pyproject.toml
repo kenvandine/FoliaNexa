@@ -1,5 +1,5 @@
 [project]
-name = "folia-discord-bridge"
+name = "folia-nexa-bot"
 version = "0.1.0"
 description = "Discord bot: /status, /request-access, /leaderboard (see PLAN.md §16)"
 requires-python = ">=3.12"
@@ -15,7 +15,7 @@ dev = [
 ]
 
 [project.scripts]
-folia-discord-bridge = "folia_bot.bot:main"
+folia-nexa-bot = "folia_bot.bot:main"
 
 [build-system]
 requires = ["setuptools>=68"]

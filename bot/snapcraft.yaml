@@ -1,9 +1,9 @@
-name: folia-discord-bridge
+name: folia-nexa-bot
 version: '0.1'
-summary: Discord bot for a folia-server cluster — status, access, leaderboards
+summary: Discord bot for a FoliaNexa cluster — status, access, leaderboards
 description: |
   /status, /request-access, and /leaderboard slash commands backed by
-  folia-smp-mgmt's REST API. See PLAN.md §16. Not exercised against a
+  folia-nexa-mgmt's REST API. See PLAN.md §16. Not exercised against a
   live Discord gateway connection during development — see the module
   docstring in folia_bot/bot.py.
 base: core24
@@ -12,7 +12,7 @@ grade: stable
 
 apps:
   daemon:
-    command: bin/folia-discord-bridge
+    command: bin/folia-nexa-bot
     daemon: simple
     restart-condition: on-failure
     restart-delay: 5s

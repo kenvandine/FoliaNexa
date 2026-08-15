@@ -23,7 +23,7 @@ from folia_mgmt.models import Host, HostStatus, World, WorldPhase
 
 logger = logging.getLogger(__name__)
 
-# Base image with folia-smp-node preinstalled. PLAN.md §17 Phase 2 step 3.
+# Base image with folia-nexa-node preinstalled. PLAN.md §17 Phase 2 step 3.
 DEFAULT_IMAGE_ALIAS = "folia-node-base"
 
 # Every world's node agent listens on the standard Minecraft port; PLAN.md
@@ -71,7 +71,7 @@ def select_host(session: Session, world: World) -> Host | None:
 
 
 def _node_config(world: World, settings: Settings) -> dict[str, str]:
-    """`user.folia.*` instance config — this is what folia-smp-node reads
+    """`user.folia.*` instance config — this is what folia-nexa-node reads
     off the devlxd socket to learn its assignment. PLAN.md §9."""
     base = settings.artifacts_base_url.rstrip("/")
     config = {
@@ -162,7 +162,7 @@ def teardown_world(session: Session, lxd_client: LXDClient, world: World) -> Non
 
 
 def default_health_check(world: World, settings: Settings) -> bool:
-    """Polls folia-smp-node's /healthz (PLAN.md §9) directly by IP — mgmt
+    """Polls folia-nexa-node's /healthz (PLAN.md §9) directly by IP — mgmt
     already has network reachability to every world it placed."""
     if not world.address:
         return False

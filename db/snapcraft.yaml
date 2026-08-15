@@ -1,6 +1,6 @@
-name: folia-db
+name: folia-nexa-db
 version: '11.8'
-summary: Self-contained shared MySQL/MariaDB instance for a folia-server cluster
+summary: Self-contained shared MySQL/MariaDB instance for a FoliaNexa cluster
 description: |
   Bundles MariaDB itself so the cluster's shared database — LuckPerms
   today (PLAN.md §11B), potentially other MySQL-backed plugins later —
@@ -8,10 +8,10 @@ description: |
   it, and you have a running, network-reachable MariaDB instance with a
   dedicated database/user bootstrapped on first start.
 
-  Deliberately its own snap, not bundled into folia-smp-mgmt: worlds
+  Deliberately its own snap, not bundled into folia-nexa-mgmt: worlds
   connect to this database directly (LuckPerms plugin -> MySQL wire
   protocol, not through mgmt's API — see PLAN.md §11B), so its lifecycle
-  needs to stay independent of mgmt's. A `snap refresh folia-smp-mgmt`
+  needs to stay independent of mgmt's. A `snap refresh folia-nexa-mgmt`
   should never interrupt every running world's active DB connection.
 base: core24
 confinement: strict
@@ -24,7 +24,7 @@ environment:
 
 apps:
   daemon:
-    command: bin/run-folia-db.sh
+    command: bin/run-folia-nexa-db.sh
     daemon: simple
     restart-condition: on-failure
     restart-delay: 5s
@@ -47,6 +47,6 @@ parts:
     override-build: |
       craftctl default
       mkdir -p $CRAFT_PART_INSTALL/bin
-      cp bin/run-folia-db.sh $CRAFT_PART_INSTALL/bin/run-folia-db.sh
+      cp bin/run-folia-nexa-db.sh $CRAFT_PART_INSTALL/bin/run-folia-nexa-db.sh
       cp bin/show-credentials.sh $CRAFT_PART_INSTALL/bin/show-credentials.sh
-      chmod +x $CRAFT_PART_INSTALL/bin/run-folia-db.sh $CRAFT_PART_INSTALL/bin/show-credentials.sh
+      chmod +x $CRAFT_PART_INSTALL/bin/run-folia-nexa-db.sh $CRAFT_PART_INSTALL/bin/show-credentials.sh

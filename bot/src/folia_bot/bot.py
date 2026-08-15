@@ -1,6 +1,6 @@
-"""folia-discord-bridge entry point. PLAN.md §16.
+"""folia-nexa-bot entry point. PLAN.md §16.
 
-Three slash commands, all backed by folia-smp-mgmt's REST API — this bot
+Three slash commands, all backed by folia-nexa-mgmt's REST API — this bot
 never touches mgmt's DB or LXD directly:
 
 - `/status` — declared worlds and their phase/host, from GET /api/v1/worlds.
@@ -114,7 +114,7 @@ def build_client() -> discord.Client:
             await tree.sync(guild=guild)
         else:
             await tree.sync()
-        logger.info("folia-discord-bridge ready as %s", client.user)
+        logger.info("folia-nexa-bot ready as %s", client.user)
 
     return client
 

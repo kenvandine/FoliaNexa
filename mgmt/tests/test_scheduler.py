@@ -202,7 +202,7 @@ def test_sync_whitelisted_worlds_pushes_approved_set():
 
     import json
 
-    content = lxd.pushed[("world-overworld", "/var/snap/folia-smp-node/common/world/whitelist.json")]
+    content = lxd.pushed[("world-overworld", "/var/snap/folia-nexa-node/common/world/whitelist.json")]
     assert json.loads(content) == [{"uuid": "069a79f444e94726a5befca90e38aaf9", "name": "Steve"}]
 
 

@@ -5,7 +5,7 @@ import java.time.Duration;
 import java.util.List;
 
 /**
- * Polls {@code GET /api/v1/routes} on folia-smp-mgmt. PLAN.md §7, §10.
+ * Polls {@code GET /api/v1/routes} on folia-nexa-mgmt. PLAN.md §7, §10.
  */
 public final class MgmtRoutesClient {
     private final MgmtHttpFetcher fetcher;

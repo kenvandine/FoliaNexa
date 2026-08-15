@@ -1,5 +1,5 @@
 [project]
-name = "folia-smp-mgmt"
+name = "folia-nexa-mgmt"
 version = "0.1.0"
 description = "Folia cluster orchestrator: scheduler, REST API, and dashboard (see PLAN.md)"
 requires-python = ">=3.12"
@@ -21,7 +21,7 @@ dev = [
 ]
 
 [project.scripts]
-folia-smp-mgmt = "folia_mgmt.cli:app"
+folia-nexa-mgmt = "folia_mgmt.cli:app"
 
 [build-system]
 requires = ["setuptools>=68"]

@@ -25,7 +25,7 @@ def ensure_client_identity(certs_dir: Path) -> tuple[Path, Path]:
         return cert_path, key_path
 
     key = ec.generate_private_key(ec.SECP384R1())
-    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "folia-smp-mgmt")])
+    subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "folia-nexa-mgmt")])
     now = datetime.datetime.now(datetime.timezone.utc)
     cert = (
         x509.CertificateBuilder()

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # folia-host-join.sh — enroll this LXD host as a compute resource for a
-# folia-smp-mgmt cluster. See PLAN.md §4 for the design this implements.
+# folia-nexa-mgmt cluster. See PLAN.md §4 for the design this implements.
 #
 # What it does, in order:
 #   1. Confirms LXD is installed and initialized.
@@ -9,8 +9,8 @@
 #   3. Creates (or reuses) a quota-capped "folia" project, sized from
 #      detected CPU/memory unless overridden.
 #   4. Generates a fresh, single-use LXD trust token scoped to that project.
-#   5. Calls POST /api/v1/hosts/enroll on folia-smp-mgmt, authenticated with
-#      the join token from `folia-smp-mgmt hosts create-join-token`, handing
+#   5. Calls POST /api/v1/hosts/enroll on folia-nexa-mgmt, authenticated with
+#      the join token from `folia-nexa-mgmt hosts create-join-token`, handing
 #      over the LXD trust token so mgmt can complete the mTLS handshake
 #      itself (equivalent to mgmt running `lxc remote add` with that token).
 #
@@ -41,8 +41,8 @@ usage() {
 Usage: sudo $PROG --mgmt-url <url> --join-token <token> [options]
 
 Required:
-  --mgmt-url URL        Base URL of folia-smp-mgmt, e.g. https://mgmt.internal:8443
-  --join-token TOKEN     One-time token from 'folia-smp-mgmt hosts create-join-token'
+  --mgmt-url URL        Base URL of folia-nexa-mgmt, e.g. https://mgmt.internal:8443
+  --join-token TOKEN     One-time token from 'folia-nexa-mgmt hosts create-join-token'
                           (not required with --skip-enroll)
 
 Options:
@@ -161,7 +161,7 @@ fi
 
 # --- Step 4: generate a fresh LXD trust token -------------------------------
 
-TRUST_NAME="folia-smp-mgmt-enroll-$(date +%s)"
+TRUST_NAME="folia-nexa-mgmt-enroll-$(date +%s)"
 log "Generating LXD trust token ('$TRUST_NAME', scoped to project '$PROJECT')"
 
 TRUST_OUTPUT="$(lxc config trust add --name "$TRUST_NAME" --projects "$PROJECT" --restricted --quiet 2>&1)" \
@@ -178,9 +178,9 @@ log "Trust token generated (single-use, consumed on first connection)"
 if [[ "$SKIP_ENROLL" == "true" ]]; then
   cat <<EOF
 
---skip-enroll set — stopping here. To finish manually from folia-smp-mgmt:
+--skip-enroll set — stopping here. To finish manually from folia-nexa-mgmt:
 
-  folia-smp-mgmt hosts add ${NODE_NAME} \\
+  folia-nexa-mgmt hosts add ${NODE_NAME} \\
     --address ${NODE_ADDRESS}:${API_PORT} \\
     --project ${PROJECT} \\
     --trust-token ${LXD_TRUST_TOKEN}

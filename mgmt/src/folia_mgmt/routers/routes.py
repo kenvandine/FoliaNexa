@@ -1,4 +1,4 @@
-"""Live routing table for velocity-proxy. PLAN.md §7."""
+"""Live routing table for folia-nexa-proxy. PLAN.md §7."""
 
 from __future__ import annotations
 

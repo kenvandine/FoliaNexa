@@ -1,11 +1,11 @@
-name: folia-smp-node
+name: folia-nexa-node
 version: '0.1'
 summary: In-container Folia/Paper world runner and health agent
 description: |
   Reads its world assignment off the container's own devlxd socket (no
   network call to mgmt needed just to find out what to run), stages the
   jar/plugins, runs the JVM, and serves local health/metrics for
-  folia-smp-mgmt to scrape. See PLAN.md §9.
+  folia-nexa-mgmt to scrape. See PLAN.md §9.
 base: core24
 confinement: strict
 grade: stable
@@ -19,7 +19,7 @@ environment:
 
 apps:
   daemon:
-    command: bin/folia-smp-node
+    command: bin/folia-nexa-node
     daemon: simple
     restart-condition: on-failure
     restart-delay: 5s

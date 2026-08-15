@@ -24,7 +24,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Two related jobs, both driven by polling folia-smp-mgmt:
+ * Two related jobs, both driven by polling folia-nexa-mgmt:
  *
  * <ol>
  *   <li>Keeps Velocity's backend server list in sync with
@@ -51,7 +51,7 @@ import java.util.concurrent.atomic.AtomicReference;
         id = "folia-routes-sync",
         name = "Folia Routes Sync",
         version = "0.1.0",
-        description = "Syncs Velocity's backend list and login access with folia-smp-mgmt"
+        description = "Syncs Velocity's backend list and login access with folia-nexa-mgmt"
 )
 public final class FoliaRoutesSyncPlugin {
 

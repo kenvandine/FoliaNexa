@@ -8,7 +8,7 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 
 /**
- * Shared bearer-token GET client for polling folia-smp-mgmt — used by both
+ * Shared bearer-token GET client for polling folia-nexa-mgmt — used by both
  * {@link MgmtRoutesClient} (§7) and {@link AccessGateClient} (§11C).
  */
 final class MgmtHttpFetcher {

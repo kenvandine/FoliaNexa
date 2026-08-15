@@ -1,5 +1,5 @@
 // folia-routes-sync: a Velocity plugin that keeps the proxy's backend list
-// synced with folia-smp-mgmt's live routing table (PLAN.md §7, §8C).
+// synced with folia-nexa-mgmt's live routing table (PLAN.md §7, §8C).
 //
 // Verified in development against the real velocity-api 3.5.1 jar (Java
 // 21 bytecode — matches this project's JRE baseline elsewhere) using a

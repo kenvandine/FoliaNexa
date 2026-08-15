@@ -1,5 +1,5 @@
 [project]
-name = "folia-smp-node"
+name = "folia-nexa-node"
 version = "0.1.0"
 description = "In-container Folia/Paper world runner and health agent (see PLAN.md §9)"
 requires-python = ">=3.12"
@@ -13,7 +13,7 @@ dev = [
 ]
 
 [project.scripts]
-folia-smp-node = "folia_node.agent:main"
+folia-nexa-node = "folia_node.agent:main"
 
 [build-system]
 requires = ["setuptools>=68"]

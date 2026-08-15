@@ -93,7 +93,7 @@ class LXDClient:
         with httpx.Client(base_url=f"https://{address}", verify=ctx, timeout=self._timeout) as client:
             resp = client.post(
                 "/1.0/certificates",
-                json={"type": "client", "trust_token": trust_token, "name": "folia-smp-mgmt"},
+                json={"type": "client", "trust_token": trust_token, "name": "folia-nexa-mgmt"},
             )
             if resp.status_code not in (200, 201):
                 raise LXDError(

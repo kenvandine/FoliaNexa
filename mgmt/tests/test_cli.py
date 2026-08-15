@@ -14,7 +14,7 @@ runner = CliRunner()
 @pytest.fixture(autouse=True)
 def isolated_cli_config(tmp_path, monkeypatch):
     """Every test gets its own cli.json — never touch the real
-    ~/.config/folia-smp-mgmt/cli.json."""
+    ~/.config/folia-nexa-mgmt/cli.json."""
     monkeypatch.setattr(cli, "_CLI_CONFIG_PATH", tmp_path / "cli.json")
 
 

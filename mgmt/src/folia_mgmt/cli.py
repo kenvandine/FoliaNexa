@@ -1,4 +1,4 @@
-"""`folia-smp-mgmt` command-line entry point. PLAN.md §17.
+"""`folia-nexa-mgmt` command-line entry point. PLAN.md §17.
 
 Talks to the running server's HTTP API using a locally-cached bearer token
 (same auth as the dashboard, per PLAN.md §11A) — except `bootstrap-admin`,
@@ -21,13 +21,13 @@ from folia_mgmt.config import get_settings
 from folia_mgmt.db import get_engine, init_db
 from folia_mgmt.models import User, UserRole
 
-app = typer.Typer(help="folia-smp-mgmt: cluster orchestrator CLI")
+app = typer.Typer(help="folia-nexa-mgmt: cluster orchestrator CLI")
 hosts_app = typer.Typer(help="Manage trusted LXD hosts")
 worlds_app = typer.Typer(help="Manage worlds")
 app.add_typer(hosts_app, name="hosts")
 app.add_typer(worlds_app, name="worlds")
 
-_CLI_CONFIG_PATH = Path.home() / ".config" / "folia-smp-mgmt" / "cli.json"
+_CLI_CONFIG_PATH = Path.home() / ".config" / "folia-nexa-mgmt" / "cli.json"
 
 
 def _load_cli_config() -> dict:
@@ -45,7 +45,7 @@ def _client(mgmt_url: str | None) -> httpx.Client:
     config = _load_cli_config()
     base_url = mgmt_url or config.get("mgmt_url")
     if not base_url:
-        typer.echo("No mgmt URL known — pass --mgmt-url or run 'folia-smp-mgmt login' first.", err=True)
+        typer.echo("No mgmt URL known — pass --mgmt-url or run 'folia-nexa-mgmt login' first.", err=True)
         raise typer.Exit(1)
     token = config.get("token")
     headers = {"Authorization": f"Bearer {token}"} if token else {}

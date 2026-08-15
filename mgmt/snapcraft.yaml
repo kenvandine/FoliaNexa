@@ -1,10 +1,10 @@
-name: folia-smp-mgmt
+name: folia-nexa-mgmt
 version: '0.1'
 summary: Folia cluster orchestrator — scheduler, REST API, and dashboard
 description: |
   Trusts LXD hosts directly over the remote API and schedules Folia/Paper
   worlds (overworld, nether, lobby, minigames, ...) across them. See
-  PLAN.md in the folia-server repo for the full design.
+  PLAN.md in the FoliaNexa repo for the full design.
 base: core24
 confinement: strict
 grade: stable
@@ -15,12 +15,12 @@ environment:
   FOLIA_MGMT_STATE_DIR: $SNAP_COMMON/mgmt
 
 apps:
-  folia-smp-mgmt:
-    command: bin/folia-smp-mgmt
+  folia-nexa-mgmt:
+    command: bin/folia-nexa-mgmt
     plugs: [network]
 
   daemon:
-    command: bin/folia-smp-mgmt serve
+    command: bin/folia-nexa-mgmt serve
     daemon: simple
     restart-condition: on-failure
     restart-delay: 5s

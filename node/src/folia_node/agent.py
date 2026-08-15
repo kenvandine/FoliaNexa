@@ -1,4 +1,4 @@
-"""folia-smp-node entry point. PLAN.md §9.
+"""folia-nexa-node entry point. PLAN.md §9.
 
 Orchestration only — reads the world assignment, stages it, runs the JVM,
 serves health/metrics, and restarts on crash. snapd's own

@@ -73,7 +73,7 @@ class DevLXDClient:
         except KeyError as exc:
             raise DevLXDError(
                 f"missing required world assignment key {exc} — "
-                "was this container launched by folia-smp-mgmt's scheduler?"
+                "was this container launched by folia-nexa-mgmt's scheduler?"
             ) from exc
 
         return WorldAssignment(

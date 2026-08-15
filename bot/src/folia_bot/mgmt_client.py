@@ -1,5 +1,5 @@
-"""Async client for the calls folia-discord-bridge makes to
-folia-smp-mgmt. PLAN.md §16.
+"""Async client for the calls folia-nexa-bot makes to
+folia-nexa-mgmt. PLAN.md §16.
 """
 
 from __future__ import annotations

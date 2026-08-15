@@ -50,7 +50,7 @@ async def lifespan(app: FastAPI):
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="folia-smp-mgmt", lifespan=lifespan)
+    app = FastAPI(title="folia-nexa-mgmt", lifespan=lifespan)
 
     app.include_router(auth.router, prefix="/api/v1")
     app.include_router(hosts.router, prefix="/api/v1")

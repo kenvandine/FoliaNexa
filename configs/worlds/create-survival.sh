@@ -6,13 +6,13 @@
 # auctions, RPG skills, custom items/bosses, homes/portals, voice chat,
 # diagnostics, web map, and a Discord chat bridge. See
 # configs/plugins/manifests/world-survival.json for the manifest this
-# implies — mgmt only downloads it once folia-smp-mgmt's artifacts_base_url
+# implies — mgmt only downloads it once folia-nexa-mgmt's artifacts_base_url
 # (or whatever host you're using) actually serves that file, so populate
 # the placeholder URLs in there with real ones before this world can
 # finish provisioning.
 set -euo pipefail
 
-folia-smp-mgmt worlds create world-survival \
+folia-nexa-mgmt worlds create world-survival \
   --type overworld \
   --cpu 6 \
   --memory 12GB \

@@ -9,7 +9,7 @@
 # doesn't guarantee.
 set -euo pipefail
 
-folia-smp-mgmt worlds create world-minigame-skywars \
+folia-nexa-mgmt worlds create world-minigame-skywars \
   --type minigame \
   --cpu 2 \
   --memory 3GB \

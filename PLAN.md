@@ -1,12 +1,12 @@
 # Folia Multi-World SMP Cluster: Architecture & Implementation Plan (v2)
 
-**Control Plane:** `folia-smp-mgmt` (snap) — orchestrator, scheduler, REST API, web dashboard
-**Compute Agent:** `folia-smp-node` (snap) — runs inside every world's LXD container, runs the JVM, reports health
-**Edge:** `velocity-proxy` (snap) — public entry point, routing table synced live from mgmt
-**Substrate:** One or more standalone LXD hosts, each trusted individually by `folia-smp-mgmt` over the LXD remote API
+**Control Plane:** `folia-nexa-mgmt` (snap) — orchestrator, scheduler, REST API, web dashboard
+**Compute Agent:** `folia-nexa-node` (snap) — runs inside every world's LXD container, runs the JVM, reports health
+**Edge:** `folia-nexa-proxy` (snap) — public entry point, routing table synced live from mgmt
+**Substrate:** One or more standalone LXD hosts, each trusted individually by `folia-nexa-mgmt` over the LXD remote API
 **Application Packaging:** Snaps with `systemd` daemon supervision throughout
 
-> Supersedes the static-topology plan in `PLAN.md.old`. That version hardcoded four fixed containers (`folia-smp`, `folia-nether`, `hub-lobby`, `edge-proxy`) pinned to specific cores on one box. This version replaces the fixed topology with a scheduler: any number of LXD hosts contribute capacity, and `folia-smp-mgmt` decides which worlds (overworld, nether, end, lobby, minigames, ephemeral staging, …) run where, and moves them around as capacity changes.
+> Supersedes the static-topology plan in `PLAN.md.old`. That version hardcoded four fixed containers (`folia-smp`, `folia-nether`, `hub-lobby`, `edge-proxy`) pinned to specific cores on one box. This version replaces the fixed topology with a scheduler: any number of LXD hosts contribute capacity, and `folia-nexa-mgmt` decides which worlds (overworld, nether, end, lobby, minigames, ephemeral staging, …) run where, and moves them around as capacity changes.
 
 ---
 
@@ -14,9 +14,9 @@
 
 Three roles, cleanly separated:
 
-- **`folia-smp-mgmt`** never runs a Minecraft process itself. It holds cluster state (which hosts exist, which worlds should exist, where each is currently placed), talks to each LXD host's remote API to create/destroy/snapshot containers, and exposes a REST API + web dashboard for operators.
-- **`folia-smp-node`** is baked into (or installed at first boot of) every world's container. It never talks to the scheduler to ask "what should I run" — its instance already knows, because `folia-smp-mgmt` wrote that assignment into the container's own LXD instance config at creation time. The node agent's job is: fetch the jar + plugins, run the JVM, expose local health/TPS metrics, restart on crash.
-- **`velocity-proxy`** is the single public-facing port. It doesn't hardcode a server list — it polls `folia-smp-mgmt`'s routing API and rebuilds its backend list as worlds come and go.
+- **`folia-nexa-mgmt`** never runs a Minecraft process itself. It holds cluster state (which hosts exist, which worlds should exist, where each is currently placed), talks to each LXD host's remote API to create/destroy/snapshot containers, and exposes a REST API + web dashboard for operators.
+- **`folia-nexa-node`** is baked into (or installed at first boot of) every world's container. It never talks to the scheduler to ask "what should I run" — its instance already knows, because `folia-nexa-mgmt` wrote that assignment into the container's own LXD instance config at creation time. The node agent's job is: fetch the jar + plugins, run the JVM, expose local health/TPS metrics, restart on crash.
+- **`folia-nexa-proxy`** is the single public-facing port. It doesn't hardcode a server list — it polls `folia-nexa-mgmt`'s routing API and rebuilds its backend list as worlds come and go.
 
 ```
                                    [ Public Internet ]
@@ -24,12 +24,12 @@ Three roles, cleanly separated:
                                     (Port 25565/TCP)
                                             ▼
                           ┌──────────────────────────────────┐
-                          │  velocity-proxy (dynamic routes)  │
+                          │  folia-nexa-proxy (dynamic routes)  │
                           └──────────────────┬─────────────────┘
                                             │  polls /api/v1/routes
                                             ▼
 ┌───────────────────────────────────────────────────────────────────────┐
-│                          folia-smp-mgmt                                 │
+│                          folia-nexa-mgmt                                 │
 │  • Host registry (trusted LXD remotes)                                  │
 │  • World registry (desired state) + scheduler (reconcile loop)          │
 │  • REST API + Web dashboard                                             │
@@ -41,11 +41,11 @@ Three roles, cleanly separated:
 │ project: folia        │   │ project: folia        │   │ project: folia        │
 │ ┌───────────────────┐ │   │ ┌───────────────────┐ │   │ ┌───────────────────┐ │
 │ │ world-overworld    │ │   │ │ world-lobby        │ │   │ │ world-minigame-sg  │ │
-│ │ folia-smp-node     │ │   │ │ folia-smp-node     │ │   │ │ folia-smp-node     │ │
+│ │ folia-nexa-node     │ │   │ │ folia-nexa-node     │ │   │ │ folia-nexa-node     │ │
 │ └───────────────────┘ │   │ └───────────────────┘ │   │ └───────────────────┘ │
 │ ┌───────────────────┐ │   │                        │   │                        │
 │ │ world-nether       │ │   │                        │   │                        │
-│ │ folia-smp-node     │ │   │                        │   │                        │
+│ │ folia-nexa-node     │ │   │                        │   │                        │
 │ └───────────────────┘ │   │                        │   │                        │
 └──────────────────────┘   └──────────────────────┘   └──────────────────────┘
 ```
@@ -58,7 +58,7 @@ Three roles, cleanly separated:
 
 ### Host
 
-A **Host** is a standalone LXD daemon that `folia-smp-mgmt` has been granted restricted, project-scoped access to. Mgmt tracks:
+A **Host** is a standalone LXD daemon that `folia-nexa-mgmt` has been granted restricted, project-scoped access to. Mgmt tracks:
 
 ```yaml
 host:
@@ -93,11 +93,11 @@ world:
 
 Worlds are **stateful and sticky**: once placed, a world stays on its host (its data lives in that container's storage) unless an operator explicitly drains the host or migrates the world (snapshot → copy to new host → delete original — see §13). This avoids building live cross-host storage migration for v1.
 
-`type: infra` exists in the schema for a Folia/Paper-based shared dependency a scheduler-placed world could point at, excluded from `velocity-proxy`'s route table by default. In practice, neither shared dependency this project actually needed turned out to fit that mold: the MySQL/MariaDB instance backing LuckPerms (§11B) and `folia-discord-bridge` (§16) both run things folia-smp-node can't (a database server; a standalone Discord bot process) and are provisioned/installed directly rather than scheduled as worlds. `type: infra` is left in place for a future case that's actually a Folia/Paper process, but has no real user yet.
+`type: infra` exists in the schema for a Folia/Paper-based shared dependency a scheduler-placed world could point at, excluded from `folia-nexa-proxy`'s route table by default. In practice, neither shared dependency this project actually needed turned out to fit that mold: the MySQL/MariaDB instance backing LuckPerms (§11B) and `folia-nexa-bot` (§16) both run things folia-nexa-node can't (a database server; a standalone Discord bot process) and are provisioned/installed directly rather than scheduled as worlds. `type: infra` is left in place for a future case that's actually a Folia/Paper process, but has no real user yet.
 
 ### Reconcile loop
 
-`folia-smp-mgmt` is a controller: it compares desired world list against actual LXD state on every trusted host, and acts on drift — create a container for a pending world, restart a crashed one, tear down a deleted one. Same shape as any k8s-style controller, scaled down to this problem.
+`folia-nexa-mgmt` is a controller: it compares desired world list against actual LXD state on every trusted host, and acts on drift — create a container for a pending world, restart a crashed one, tear down a deleted one. Same shape as any k8s-style controller, scaled down to this problem.
 
 ---
 
@@ -115,19 +115,19 @@ lxc project create folia \
   -c limits.cpu=6 -c limits.memory=16GB -c limits.containers=20 \
   -c restricted=true -c restricted.containers.nesting=block
 
-# Generate a one-time trust token for folia-smp-mgmt to consume
-lxc config trust add --name folia-smp-mgmt --restricted --projects folia
+# Generate a one-time trust token for folia-nexa-mgmt to consume
+lxc config trust add --name folia-nexa-mgmt --restricted --projects folia
 # -> prints a one-time token
 ```
 
-**From `folia-smp-mgmt`'s dashboard or CLI:**
+**From `folia-nexa-mgmt`'s dashboard or CLI:**
 ```bash
-folia-smp-mgmt hosts add node-a --address 10.0.1.11:8443 --token <one-time-token>
+folia-nexa-mgmt hosts add node-a --address 10.0.1.11:8443 --token <one-time-token>
 ```
 
 This performs the standard LXD trust exchange (mTLS, client cert generated and stored under `$SNAP_COMMON/mgmt/certs/`) and records the host. From this point mgmt's certificate is **restricted to the `folia` project** — it cannot see or touch any other project, storage pool, or host-level setting on that machine, even if the mgmt host itself is compromised. Blast radius of a leaked mgmt credential is "the folia project's containers on that one host," never the host itself or other tenants.
 
-**Network requirement:** the LXD API port (8443) must be reachable from `folia-smp-mgmt`, and must **not** be exposed to the public internet — put it on a private management VLAN or a WireGuard mesh between mgmt and every host. This is the one hard networking requirement multi-host introduces; single-host deployments can just bind it to loopback/private bridge.
+**Network requirement:** the LXD API port (8443) must be reachable from `folia-nexa-mgmt`, and must **not** be exposed to the public internet — put it on a private management VLAN or a WireGuard mesh between mgmt and every host. This is the one hard networking requirement multi-host introduces; single-host deployments can just bind it to loopback/private bridge.
 
 A host is **not required to be dedicated** to Folia — the project quota is the isolation boundary. A shared LXD box can host a `folia` project alongside unrelated projects as long as its quota reflects real spare capacity.
 
@@ -141,12 +141,12 @@ Two distinct tokens are involved, and it's worth being precise about what each o
 
 | Token | Issued by | Lifetime | Proves |
 | --- | --- | --- | --- |
-| **Join token** | `folia-smp-mgmt` (admin requests it via dashboard/CLI) | Short-lived (default 15m), single-use | "Whoever holds this is authorized to enroll one new host into *this* cluster" — the control that stops a random machine from adding itself as compute capacity. |
+| **Join token** | `folia-nexa-mgmt` (admin requests it via dashboard/CLI) | Short-lived (default 15m), single-use | "Whoever holds this is authorized to enroll one new host into *this* cluster" — the control that stops a random machine from adding itself as compute capacity. |
 | **LXD trust token** | The host's own LXD daemon, generated by the script | Single-use, consumed immediately | Standard LXD mechanism that lets one specific client certificate (mgmt's) become permanently trusted by that host, scoped to the `folia` project. |
 
 Flow:
 
-1. Admin: `folia-smp-mgmt hosts create-join-token` (or the dashboard's "Add Host" button) → prints a join token.
+1. Admin: `folia-nexa-mgmt hosts create-join-token` (or the dashboard's "Add Host" button) → prints a join token.
 2. Admin, on the target host:
    ```bash
    sudo ./tools/folia-host-join.sh \
@@ -163,9 +163,9 @@ Flow:
    - Mgmt redeems the LXD trust token itself (completing the mTLS handshake — the same "add a trusted client" step from §3, just performed by mgmt instead of a human running `lxc remote add`) and records the host.
 4. `GET /api/v1/hosts` on mgmt shows the new host `online` within a few seconds.
 
-`--skip-enroll` stops after generating the LXD trust token and prints it instead of calling mgmt — useful for finishing the trust exchange manually, or for exercising the host-side steps before `folia-smp-mgmt` itself exists.
+`--skip-enroll` stops after generating the LXD trust token and prints it instead of calling mgmt — useful for finishing the trust exchange manually, or for exercising the host-side steps before `folia-nexa-mgmt` itself exists.
 
-> **Status:** the script is real and safe to run today for the LXD-prep steps (project/quota/https-address/trust-token). The final `POST /api/v1/hosts/enroll` call will fail until `folia-smp-mgmt`'s API (§10) is actually implemented — the script targets that contract now so nothing has to change on the host side once mgmt catches up.
+> **Status:** the script is real and safe to run today for the LXD-prep steps (project/quota/https-address/trust-token). The final `POST /api/v1/hosts/enroll` call will fail until `folia-nexa-mgmt`'s API (§10) is actually implemented — the script targets that contract now so nothing has to change on the host side once mgmt catches up.
 
 ---
 
@@ -179,7 +179,7 @@ On each reconcile pass, for every world in `phase: pending`:
 2. Filter to hosts with enough *unallocated* capacity (`capacity - sum(resources of worlds already placed there)`) for the world's `resources` request.
 3. Pick the host with the most free capacity after placement (bin-pack the fullest-fit-remaining, not first-fit — keeps headroom spread evenly rather than stacking everything on one box).
 4. Call the host's LXD API: launch a container from the base image, apply CPU/memory limits, write world assignment into instance config (see §9), apply the world's `snapshot_policy`.
-5. Mark the world `phase: provisioning` until `folia-smp-node` reports itself healthy, then `phase: running`.
+5. Mark the world `phase: provisioning` until `folia-nexa-node` reports itself healthy, then `phase: running`.
 
 ### World lifecycle states
 
@@ -219,12 +219,12 @@ This is strictly better than the old plan's `provision_staging.sh`/manual `lxc s
 
 ## 7. Networking & Edge Proxy
 
-Each host's `folia` project containers sit on that host's local LXD bridge. `velocity-proxy` needs a routable path to every world's Minecraft port (25565 inside each container) regardless of which host it lands on — cross-host reachability is the one piece of real infrastructure this design requires beyond a single box:
+Each host's `folia` project containers sit on that host's local LXD bridge. `folia-nexa-proxy` needs a routable path to every world's Minecraft port (25565 inside each container) regardless of which host it lands on — cross-host reachability is the one piece of real infrastructure this design requires beyond a single box:
 
 - **Single host (today):** trivial — everything's on `lxdbr0`, no extra work.
-- **Multi-host:** put all hosts + `velocity-proxy` on a WireGuard mesh (or LXD OVN with a shared uplink network) so container IPs are mutually routable, or `lxc config device add` a `proxy` NIC device that publishes each world's port on the host's own address and give mgmt a stable `host-ip:published-port` per world instead of a container IP. Start with the WireGuard mesh — it composes cleanly with the trust model in §3 (same private network the LXD API traffic already lives on).
+- **Multi-host:** put all hosts + `folia-nexa-proxy` on a WireGuard mesh (or LXD OVN with a shared uplink network) so container IPs are mutually routable, or `lxc config device add` a `proxy` NIC device that publishes each world's port on the host's own address and give mgmt a stable `host-ip:published-port` per world instead of a container IP. Start with the WireGuard mesh — it composes cleanly with the trust model in §3 (same private network the LXD API traffic already lives on).
 
-`velocity-proxy` polls `GET /api/v1/routes` on mgmt every few seconds:
+`folia-nexa-proxy` polls `GET /api/v1/routes` on mgmt every few seconds:
 
 ```json
 {
@@ -242,10 +242,10 @@ and reconciles its own `server-list`/forwarding config (via Velocity's plugin AP
 
 ## 8. Snap Packaging Specifications
 
-### A. `folia-smp-mgmt` snap
+### A. `folia-nexa-mgmt` snap
 
 ```yaml
-name: folia-smp-mgmt
+name: folia-nexa-mgmt
 version: '0.1'
 summary: Folia cluster orchestrator — scheduler, REST API, and dashboard
 description: Places Folia/Paper worlds across trusted LXD hosts and tracks cluster state.
@@ -281,10 +281,10 @@ parts:
 
 No `lxd` socket plug — mgmt only ever talks to LXD over the *remote* HTTPS API (`network` plug), including for a host that happens to be colocated on the same machine. One code path for local and remote hosts.
 
-### B. `folia-smp-node` snap
+### B. `folia-nexa-node` snap
 
 ```yaml
-name: folia-smp-node
+name: folia-nexa-node
 version: '0.1'
 summary: In-container Folia/Paper world runner and health agent
 description: Runs the JVM for a single world; reads its assignment from the container's own LXD instance config.
@@ -325,13 +325,13 @@ parts:
       chmod +x $CRAFT_PART_INSTALL/bin/run-node.sh
 ```
 
-### C. `velocity-proxy` snap
+### C. `folia-nexa-proxy` snap
 
 Unchanged from the old plan's runtime (Velocity + Java), plus a routes-sync plugin dropped into `$SNAP_COMMON/proxy/plugins/` that polls mgmt's `/api/v1/routes` and calls Velocity's `ProxyServer.registerServer()` / `unregisterServer()` on diff. `plugs: [network, network-bind]`, unchanged confinement.
 
 ---
 
-## 9. `folia-smp-node` Runtime Behavior
+## 9. `folia-nexa-node` Runtime Behavior
 
 When mgmt creates a world's container, it writes the assignment straight into LXD instance config at launch time:
 
@@ -346,7 +346,7 @@ lxc launch images:folia-node-base world-nether \
   -c snapshots.schedule="@hourly" -c snapshots.expiry="24h"
 ```
 
-Inside the container, `folia-smp-node` reads those `user.folia.*` keys over the **devlxd socket** (`/dev/lxd/sock`, always present, no network config or credentials needed) — this is the same mechanism cloud-init uses inside LXD containers. On start it:
+Inside the container, `folia-nexa-node` reads those `user.folia.*` keys over the **devlxd socket** (`/dev/lxd/sock`, always present, no network config or credentials needed) — this is the same mechanism cloud-init uses inside LXD containers. On start it:
 
 1. Reads its assignment (world name/type, jar URL, plugin manifest URL).
 2. Downloads the jar + plugins into `$SNAP_COMMON/world` if not already staged (idempotent — restarts don't re-download).
@@ -358,7 +358,7 @@ No join token, no outbound registration call — the container's own config *is*
 
 ---
 
-## 10. REST API Reference (`folia-smp-mgmt`)
+## 10. REST API Reference (`folia-nexa-mgmt`)
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -373,7 +373,7 @@ No join token, no outbound registration call — the container's own config *is*
 | `POST` | `/api/v1/worlds/{name}/restore/{snapshot}` | Roll back to a snapshot |
 | `POST` | `/api/v1/worlds/{name}/migrate` | Stop → export → import → start on another host → cut over |
 | `GET`/`PUT` | `/api/v1/worlds/{name}/access` | Per-world whitelist toggle + ops list (§11) |
-| `GET` | `/api/v1/routes` | Live routing table for `velocity-proxy` |
+| `GET` | `/api/v1/routes` | Live routing table for `folia-nexa-proxy` |
 | `POST` | `/api/v1/plugins/stage` | Upload + validate a plugin jar against a staging clone |
 | `POST` | `/api/v1/plugins/promote` | Promote a staged plugin into a world template |
 | `POST` | `/api/v1/auth/login` | Operator login (dashboard/CLI), returns a session/API token |
@@ -398,7 +398,7 @@ Two different questions, two different mechanisms — don't conflate "who can ru
 
 Don't build a bespoke ACL system — every world already needs a permissions plugin, so make that the single source of truth and have mgmt front it:
 
-- **LuckPerms** (§14) as the permissions backend everywhere, backed by a shared MySQL/MariaDB instance so groups/tracks/permissions stay consistent across every world *and* the proxy — a player's rank follows them from `world-lobby` to `world-overworld` without per-world reconfiguration. **Implemented, with a correction from the original plan:** that MySQL instance is *not* scheduled as a `type: infra` world through mgmt — folia-smp-node only knows how to run a Folia/Paper JVM (§9), not arbitrary services, so a database server isn't something the current node agent can run. It's provisioned as its **own snap** instead, `folia-db` (`db/`) — bundles MariaDB itself and bootstraps a dedicated database/user with a generated password on first start, so getting the shared backend running is `snap install` + `snap start`, not a multi-step manual container setup. (`configs/luckperms/provision-mysql.sh`, a plain-LXD-container alternative, still exists for operators who'd rather not add another snap.) Either way, the operator points mgmt at whatever's listening via `luckperms_mysql_*` settings; what mgmt automates is every LuckPerms-enabled world's `config.yml` staying in sync with that instance on every reconcile pass (`folia_mgmt/luckperms.py`), not the database's deployment. `folia-db` is deliberately its own snap, not bundled into `folia-smp-mgmt`'s — worlds connect to it directly (LuckPerms plugin → MySQL wire protocol, never through mgmt's API), so a `snap refresh folia-smp-mgmt` should never interrupt every running world's active DB connection. One real limitation either way: LuckPerms reads its storage backend at plugin load time, so a world whose config just changed needs a restart to actually pick it up — pushing the file doesn't force one.
+- **LuckPerms** (§14) as the permissions backend everywhere, backed by a shared MySQL/MariaDB instance so groups/tracks/permissions stay consistent across every world *and* the proxy — a player's rank follows them from `world-lobby` to `world-overworld` without per-world reconfiguration. **Implemented, with a correction from the original plan:** that MySQL instance is *not* scheduled as a `type: infra` world through mgmt — folia-nexa-node only knows how to run a Folia/Paper JVM (§9), not arbitrary services, so a database server isn't something the current node agent can run. It's provisioned as its **own snap** instead, `folia-nexa-db` (`db/`) — bundles MariaDB itself and bootstraps a dedicated database/user with a generated password on first start, so getting the shared backend running is `snap install` + `snap start`, not a multi-step manual container setup. (`configs/luckperms/provision-mysql.sh`, a plain-LXD-container alternative, still exists for operators who'd rather not add another snap.) Either way, the operator points mgmt at whatever's listening via `luckperms_mysql_*` settings; what mgmt automates is every LuckPerms-enabled world's `config.yml` staying in sync with that instance on every reconcile pass (`folia_mgmt/luckperms.py`), not the database's deployment. `folia-nexa-db` is deliberately its own snap, not bundled into `folia-nexa-mgmt`'s — worlds connect to it directly (LuckPerms plugin → MySQL wire protocol, never through mgmt's API), so a `snap refresh folia-nexa-mgmt` should never interrupt every running world's active DB connection. One real limitation either way: LuckPerms reads its storage backend at plugin load time, so a world whose config just changed needs a restart to actually pick it up — pushing the file doesn't force one.
 - Mgmt's dashboard doesn't reimplement LuckPerms' editor — it deep-links to LuckPerms' own web permissions editor (pointed at the shared MySQL backend) for group/track management, and only adds the two things that are genuinely cluster-level concerns:
   - a network-wide whitelist toggle,
   - a per-world ops list.
@@ -421,7 +421,7 @@ API surface:
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/v1/auth/discord/callback` | OAuth2 redirect target; creates/updates the access request |
-| `POST` | `/api/v1/access-requests` | Create/upsert a request (operator token — used by folia-discord-bridge's `/request-access`, §16) |
+| `POST` | `/api/v1/access-requests` | Create/upsert a request (operator token — used by folia-nexa-bot's `/request-access`, §16) |
 | `GET` | `/api/v1/access-requests` | List requests, filterable by status (operator/admin) |
 | `GET` | `/api/v1/access-requests/approved-uuids` | Polled by the proxy's access gate (viewer-role token) |
 | `POST` | `/api/v1/access-requests/{id}/approve` | Approve → picked up by the gate's next poll |
@@ -445,7 +445,7 @@ Same spirit as the old plan's single-page dashboard, extended with the concepts 
 Staging a plugin change is now just LXD snapshot + copy, orchestrated by mgmt instead of a shell script talking to one hardcoded container name:
 
 1. `POST /api/v1/worlds/world-overworld/snapshot` → `pre-plugin-<ts>`.
-2. mgmt calls `lxc copy node-a:world-overworld/pre-plugin-<ts> node-a:world-overworld-staging -p folia-e-core` (declared as a `type: staging` world so it inherits `snapshot_policy: none` and is excluded from `velocity-proxy`'s route table by default).
+2. mgmt calls `lxc copy node-a:world-overworld/pre-plugin-<ts> node-a:world-overworld-staging -p folia-e-core` (declared as a `type: staging` world so it inherits `snapshot_policy: none` and is excluded from `folia-nexa-proxy`'s route table by default).
 3. Plugin jar validated (`plugin.yml` must declare `folia-supported: true`, same guard as the old plan) and pushed into the staging container's plugin dir.
 4. Operator connects to the staging world directly (mgmt can optionally add it to `/api/v1/routes` with `default: false` for a manual-connect test address) and validates gameplay.
 5. `POST /api/v1/plugins/promote` — pushes the validated jar into the source world's template, restarts `world-overworld`'s node agent, deletes the staging container.
@@ -565,7 +565,7 @@ Unaffected by the orchestration refactor above — still an asynchronous telemet
 
 ```
        ┌──────────────────┐       ┌──────────────────────────┐
-       │   velocity-proxy  │       │   worlds (any host)       │
+       │   folia-nexa-proxy  │       │   worlds (any host)       │
        │ (Velocity Redis)  │       │ (HuskSync MySQL)          │
        └────────┬─────────┘       └────────┬──────────────────┘
                 │ Events (Join/Quit/Stats) │
@@ -599,7 +599,7 @@ Unaffected by the orchestration refactor above — still an asynchronous telemet
 3. **Leaderboard Tracking:** Top `AuraSkills` power levels, richest merchant rankings from `AxAuctions`/`Vault-Unlocked`, and blocks mined.
 4. **Player Profile Cards (`/player/[uuid]`):** 3D skin renders, GitHub-style 365-day playtime heatmaps, and public settlement badges from `HuskClaims`.
 
-### Discord Bot (`folia-discord-bridge`, `bot/`)
+### Discord Bot (`folia-nexa-bot`, `bot/`)
 
 **Implemented**, as a Python package (`discord.py` for the gateway/heartbeat/reconnect protocol — deliberately not hand-rolled; see the module docstring in `bot/src/folia_bot/bot.py` for why) with three slash commands, all backed by mgmt's REST API rather than any direct DB/LXD access:
 
@@ -628,17 +628,17 @@ The remote API, the `folia` project, and its quotas no longer need manual setup 
 
 ### Phase 2: Build snaps
 
-1. Build `folia-smp-mgmt`, `folia-smp-node`, and `velocity-proxy` with `snapcraft --use-lxd`.
+1. Build `folia-nexa-mgmt`, `folia-nexa-node`, and `folia-nexa-proxy` with `snapcraft --use-lxd`.
 2. Publish to a private snap store channel or push `.snap` files directly to hosts.
-3. Build (or point mgmt at) a base LXD image with `folia-smp-node` preinstalled, so container launch doesn't need a post-boot snap install step.
+3. Build (or point mgmt at) a base LXD image with `folia-nexa-node` preinstalled, so container launch doesn't need a post-boot snap install step.
 
 ### Phase 3: Bring up the control plane
 
-1. Install `folia-smp-mgmt` on its own container/VM (it needs almost no resources — 1 E-core class host is plenty).
+1. Install `folia-nexa-mgmt` on its own container/VM (it needs almost no resources — 1 E-core class host is plenty).
 2. Create the first operator account (`admin` role) and log in to the dashboard (§11A).
 3. Issue a join token and run `folia-host-join` on the host from Phase 1 (§4):
    ```bash
-   folia-smp-mgmt hosts create-join-token
+   folia-nexa-mgmt hosts create-join-token
    sudo ./tools/folia-host-join.sh --mgmt-url https://mgmt.internal:8443 --join-token <token> --address 10.0.1.11
    ```
 4. Confirm `GET /api/v1/hosts` shows `node-a` online with correct capacity.
@@ -654,11 +654,11 @@ The remote API, the `folia` project, and its quotas no longer need manual setup 
 
 1. Through the dashboard or API, declare the initial world set:
    ```bash
-   folia-smp-mgmt worlds create world-overworld --type overworld --cpu 6 --memory 12GB --labels cpu_type=p-core
-   folia-smp-mgmt worlds create world-nether    --type nether    --cpu 2 --memory 3GB  --labels cpu_type=e-core
-   folia-smp-mgmt worlds create world-lobby     --type lobby     --cpu 2 --memory 3GB  --labels cpu_type=e-core
+   folia-nexa-mgmt worlds create world-overworld --type overworld --cpu 6 --memory 12GB --labels cpu_type=p-core
+   folia-nexa-mgmt worlds create world-nether    --type nether    --cpu 2 --memory 3GB  --labels cpu_type=e-core
+   folia-nexa-mgmt worlds create world-lobby     --type lobby     --cpu 2 --memory 3GB  --labels cpu_type=e-core
    ```
-2. Watch the scheduler place them; confirm `GET /api/v1/routes` and `velocity-proxy` pick them up automatically.
+2. Watch the scheduler place them; confirm `GET /api/v1/routes` and `folia-nexa-proxy` pick them up automatically.
 3. Pre-generate the overworld with `chunky start world 10000` via `lxc exec node-a:world-overworld -- ...` once it's running.
 
 ### Phase 5: Scale out

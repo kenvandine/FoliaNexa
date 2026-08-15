@@ -11,16 +11,16 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="FOLIA_MGMT_")
 
     # $SNAP_COMMON/mgmt when running as the snap; a local dir otherwise.
-    state_dir: Path = Path.home() / ".local" / "share" / "folia-smp-mgmt"
+    state_dir: Path = Path.home() / ".local" / "share" / "folia-nexa-mgmt"
 
     listen_host: str = "0.0.0.0"
     listen_port: int = 8443
 
-    # Where folia-smp-node downloads jars/plugin manifests from. PLAN.md §9's
+    # Where folia-nexa-node downloads jars/plugin manifests from. PLAN.md §9's
     # example: https://artifacts.internal/folia/1.21.4/folia.jar
     artifacts_base_url: str = "https://artifacts.internal"
 
-    # Must match folia-smp-node's FOLIA_NODE_HEALTH_PORT (node/snapcraft.yaml).
+    # Must match folia-nexa-node's FOLIA_NODE_HEALTH_PORT (node/snapcraft.yaml).
     node_health_port: int = 8123
     node_health_timeout_seconds: float = 3.0
 
@@ -39,7 +39,7 @@ class Settings(BaseSettings):
         return bool(self.discord_client_id and self.discord_client_secret and self.discord_guild_id)
 
     # LuckPerms shared MySQL/MariaDB backend (PLAN.md §11B) — provisioned
-    # by the operator directly (folia-smp-node only knows how to run a
+    # by the operator directly (folia-nexa-node only knows how to run a
     # Folia/Paper JVM, not arbitrary services like a database server), then
     # pointed at here so mgmt can keep every LuckPerms-enabled world's
     # config.yml in sync with it. Unset host disables the sync.

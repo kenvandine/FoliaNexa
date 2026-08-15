@@ -7,7 +7,7 @@ import java.util.UUID;
 
 /**
  * Polls {@code GET /api/v1/access-requests/approved-uuids} on
- * folia-smp-mgmt. PLAN.md §11C.
+ * folia-nexa-mgmt. PLAN.md §11C.
  */
 public final class AccessGateClient {
     private final MgmtHttpFetcher fetcher;

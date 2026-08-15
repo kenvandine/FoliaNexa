@@ -1,13 +1,13 @@
 #!/bin/bash
-# folia-db's daemon entrypoint. Self-contained on purpose: first run
+# folia-nexa-db's daemon entrypoint. Self-contained on purpose: first run
 # initializes a MariaDB data directory under $SNAP_COMMON (persists
 # across snap refreshes) and bootstraps a dedicated database + user with
 # a randomly generated password, written to $SNAP_COMMON/credentials.env
-# for the operator to read once and feed into folia-smp-mgmt's
+# for the operator to read once and feed into folia-nexa-mgmt's
 # luckperms_mysql_* settings. Every run after that just starts mariadbd.
 #
-# Deliberately its own snap, not bundled into folia-smp-mgmt's — see
-# PLAN.md §11B: a `snap refresh folia-smp-mgmt` shouldn't drop every
+# Deliberately its own snap, not bundled into folia-nexa-mgmt's — see
+# PLAN.md §11B: a `snap refresh folia-nexa-mgmt` shouldn't drop every
 # world's active LuckPerms connection, and this needs to be reachable
 # from every world on every host, not just wherever mgmt happens to run.
 #
@@ -72,7 +72,7 @@ SQL
   HOST_ADDR="$(ip -4 route get 1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if ($i=="src") print $(i+1)}' | head -n1)"
 
   cat > "$CREDENTIALS_FILE" <<EOF
-# Generated on first start of folia-db. Feed these into folia-smp-mgmt's
+# Generated on first start of folia-nexa-db. Feed these into folia-nexa-mgmt's
 # environment (PLAN.md §11B) — see CLAUDE.md's LuckPerms bootstrap phase.
 FOLIA_MGMT_LUCKPERMS_MYSQL_HOST=${HOST_ADDR:-<fill-in-this-hosts-address>}
 FOLIA_MGMT_LUCKPERMS_MYSQL_PORT=${DB_PORT}

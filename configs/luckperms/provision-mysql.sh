@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Stands up a plain LXD container running MariaDB to back LuckPerms
 # across every world (PLAN.md §11B). Run this ONCE, directly on any
-# trusted LXD host, before pointing folia-smp-mgmt's luckperms_mysql_*
+# trusted LXD host, before pointing folia-nexa-mgmt's luckperms_mysql_*
 # settings at it — it is NOT run through mgmt's scheduler, because
-# folia-smp-node only knows how to run a Folia/Paper JVM, not arbitrary
+# folia-nexa-node only knows how to run a Folia/Paper JVM, not arbitrary
 # services. See mgmt/src/folia_mgmt/luckperms.py's module docstring for
 # the full reasoning.
 #
@@ -56,7 +56,7 @@ CONTAINER_IP=$(lxc list "$CONTAINER_NAME" --project "$PROJECT" -f csv -c 4 | hea
 
 cat <<EOF
 
-==> Done. Point folia-smp-mgmt at this instance:
+==> Done. Point folia-nexa-mgmt at this instance:
 
   FOLIA_MGMT_LUCKPERMS_MYSQL_HOST=${CONTAINER_IP}
   FOLIA_MGMT_LUCKPERMS_MYSQL_PORT=3306

@@ -121,7 +121,7 @@ def create_access_request(
     session: Session = Depends(get_session),
 ) -> AccessRequestResponse:
     """The in-Discord counterpart to `GET /auth/discord/callback` — used by
-    folia-discord-bridge's `/request-access` command (PLAN.md §16) for
+    folia-nexa-bot's `/request-access` command (PLAN.md §16) for
     players who'd rather not leave Discord for the web OAuth flow. Same
     upsert-by-discord-user-id behavior; `auto_approve` is trusted from the
     caller since reaching this endpoint at all already requires an

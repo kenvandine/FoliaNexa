@@ -1,10 +1,10 @@
-name: velocity-proxy
+name: folia-nexa-proxy
 version: '3.5.1'
-summary: Velocity proxy with live routing synced from folia-smp-mgmt
+summary: Velocity proxy with live routing synced from folia-nexa-mgmt
 description: |
   Velocity Next-Gen proxy, packaged with the folia-routes-sync plugin
   (this directory's Gradle project) that keeps the backend server list in
-  sync with folia-smp-mgmt's GET /api/v1/routes — worlds can come and go
+  sync with folia-nexa-mgmt's GET /api/v1/routes — worlds can come and go
   without a proxy restart. See PLAN.md §7, §8C.
 base: core24
 confinement: strict

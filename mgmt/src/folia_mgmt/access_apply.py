@@ -30,8 +30,8 @@ from folia_mgmt.models import AccessRequest, AccessRequestStatus, Host, World
 
 logger = logging.getLogger(__name__)
 
-# Matches folia-smp-node's WORLD_DIR ($SNAP_COMMON/world, node/snapcraft.yaml).
-NODE_WORLD_DIR = "/var/snap/folia-smp-node/common/world"
+# Matches folia-nexa-node's WORLD_DIR ($SNAP_COMMON/world, node/snapcraft.yaml).
+NODE_WORLD_DIR = "/var/snap/folia-nexa-node/common/world"
 
 UuidResolver = Callable[[str], str | None]
 

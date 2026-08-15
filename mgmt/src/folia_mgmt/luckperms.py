@@ -2,11 +2,11 @@
 shared MySQL/MariaDB backend. PLAN.md §11B.
 
 This does **not** stand up the MySQL/MariaDB instance itself —
-folia-smp-node only knows how to run a Folia/Paper JVM (see
+folia-nexa-node only knows how to run a Folia/Paper JVM (see
 node/src/folia_node/agent.py), not arbitrary services, so scheduling a
 database server as a `type: infra` world isn't something the current
 node agent can do. The operator provisions that instance separately —
-`folia-db` (`db/`) is a self-contained snap for exactly this (bundles
+`folia-nexa-db` (`db/`) is a self-contained snap for exactly this (bundles
 MariaDB, bootstraps a dedicated database/user on first start; see its
 snapcraft.yaml), or `configs/luckperms/provision-mysql.sh` for a plain
 LXD container if you'd rather not add another snap — and points mgmt at

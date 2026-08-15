@@ -5,7 +5,7 @@ def test_dashboard_served_at_root(client):
     resp = client.get("/")
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
-    assert "folia-smp-mgmt" in resp.text
+    assert "folia-nexa-mgmt" in resp.text
 
 
 def test_api_routes_not_shadowed_by_static_mount(client):
