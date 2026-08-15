@@ -1,0 +1,44 @@
+# Caddy config for the VPS edge (PLAN.md §7A, docs/vps-edge-deployment.md).
+# Terminates public HTTPS (automatic Let's Encrypt) for three subdomains and
+# reverse-proxies two of them to folia-nexa-mgmt at home, over the
+# WireGuard tunnel set up by setup-wireguard.sh. Minecraft traffic itself
+# (:25565) is raw TCP, not HTTP — it never goes through Caddy; the
+# relocated folia-nexa-proxy binds that port directly on the VPS.
+#
+# Fill in the placeholders below (or override via environment variables of
+# the same name — Caddy expands {$VAR:default} at load time) before
+# running `caddy run`.
+{
+	email {$ACME_EMAIL:you@example.com}
+}
+
+{$ADMIN_DOMAIN:admin.example.com} {
+	# mgmt's own dashboard/API, unchanged — still behind its existing
+	# bearer-token auth (PLAN.md §11A). mgmt itself never terminates TLS
+	# (see docs/vps-edge-deployment.md); WireGuard already encrypts this
+	# hop, so plain HTTP to the tunnel address is the deliberate choice
+	# here, not an oversight.
+	reverse_proxy {$MGMT_UPSTREAM:mgmt.internal:8443}
+}
+
+{$API_DOMAIN:api.example.com} {
+	# Only the new unauthenticated /api/v1/public/* routes are reachable
+	# through this hostname, even though mgmt itself would happily serve
+	# anything else too — defense in depth. The real auth boundary is
+	# still mgmt's own bearer-token check on every non-public route.
+	@public path /api/v1/public/*
+	handle @public {
+		reverse_proxy {$MGMT_UPSTREAM:mgmt.internal:8443}
+	}
+	handle {
+		respond 404
+	}
+}
+
+{$PLAY_DOMAIN:play.example.com} {
+	# The static player-hub portal (portal/) — no backend process here at
+	# all, just files. See deploy-portal.sh for how they get here.
+	root * {$PORTAL_ROOT:/srv/folianexa-portal}
+	file_server
+	encode gzip
+}

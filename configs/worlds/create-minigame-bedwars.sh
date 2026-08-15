@@ -18,4 +18,5 @@ folia-nexa-mgmt worlds create world-minigame-bedwars \
   --plugin Vault-Unlocked \
   --plugin FancyHolograms \
   --plugin Spark \
+  --plugin FoliaNexaStats \
   "$@"

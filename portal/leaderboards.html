@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Leaderboards — FoliaNexa</title>
+<link rel="stylesheet" href="portal.css">
+</head>
+<body>
+<header>
+  <h1><a href="index.html">FoliaNexa</a></h1>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="leaderboards.html" class="active">Leaderboards</a>
+  </nav>
+</header>
+<main>
+  <div class="card">
+    <h2>Leaderboards</h2>
+    <p class="muted">
+      Stats are reported periodically by the in-house stats plugin running
+      on each world — see the FoliaNexaStats catalog entry. AuraSkills
+      power level and AxAuctions wealth only populate on worlds that run
+      those plugins.
+    </p>
+    <select id="stat-select">
+      <option value="kills">Kills</option>
+      <option value="deaths">Deaths</option>
+      <option value="blocks_mined">Blocks mined</option>
+      <option value="playtime_seconds_total">Playtime</option>
+      <option value="auraskills_power_level">AuraSkills power level</option>
+      <option value="axauctions_wealth">AxAuctions wealth</option>
+    </select>
+    <table>
+      <thead><tr><th></th><th>Player</th><th style="text-align:right">Value</th></tr></thead>
+      <tbody id="leaderboard-body"></tbody>
+    </table>
+    <p id="leaderboard-status" class="loading">Loading…</p>
+  </div>
+</main>
+<footer>FoliaNexa player hub — data updates roughly every 30 seconds.</footer>
+<script src="portal.js"></script>
+<script>
+const select = document.getElementById("stat-select");
+const body = document.getElementById("leaderboard-body");
+const status = document.getElementById("leaderboard-status");
+
+function formatValue(stat, value) {
+  if (stat === "playtime_seconds_total") return formatPlaytime(value);
+  return Number(value).toLocaleString();
+}
+
+async function loadLeaderboard() {
+  const stat = select.value;
+  status.textContent = "Loading…";
+  status.className = "loading";
+  body.innerHTML = "";
+  try {
+    const { entries } = await apiGet(`/leaderboards?stat=${encodeURIComponent(stat)}&limit=25`);
+    if (entries.length === 0) {
+      status.textContent = "No data yet for this stat.";
+      return;
+    }
+    status.textContent = "";
+    entries.forEach((entry, i) => {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td class="rank">${i + 1}</td>
+        <td><a href="player.html?uuid=${encodeURIComponent(entry.uuid)}" style="color:inherit;text-decoration:none">${entry.username}</a></td>
+        <td class="value">${formatValue(stat, entry.value)}</td>
+      `;
+      body.appendChild(tr);
+    });
+  } catch (err) {
+    status.className = "error";
+    status.textContent = `Couldn't load leaderboard: ${err.message}`;
+  }
+}
+
+select.addEventListener("change", loadLeaderboard);
+
+// ?stat= in the URL preselects a leaderboard, e.g. leaderboards.html?stat=deaths
+const params = new URLSearchParams(window.location.search);
+if (params.has("stat")) select.value = params.get("stat");
+
+loadLeaderboard();
+</script>
+</body>
+</html>

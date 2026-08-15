@@ -1,0 +1,133 @@
+/* Shared styling for the public player hub (portal/). Same dark palette as
+   mgmt's own dashboard (mgmt/src/folia_mgmt/static/index.html) so the whole
+   VPS edge — admin.<domain> and play.<domain> alike — reads as one system. */
+
+:root {
+  --bg: #0f1115;
+  --panel: #161922;
+  --border: #2a2f3a;
+  --text: #e6e8eb;
+  --muted: #8b93a1;
+  --accent: #4f8cff;
+  --danger: #e5534b;
+  --ok: #3fb950;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--text);
+}
+
+header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.9rem 1.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+header h1 { font-size: 1.1rem; margin: 0; font-weight: 600; }
+header h1 a { color: inherit; text-decoration: none; }
+
+nav { display: flex; gap: 1.25rem; }
+nav a { color: var(--muted); text-decoration: none; font-size: 0.9rem; }
+nav a:hover, nav a.active { color: var(--text); }
+
+main { padding: 1.5rem; max-width: 1100px; margin: 0 auto; }
+
+h2 { font-size: 1rem; font-weight: 600; margin: 0 0 0.9rem; }
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 1.1rem;
+  margin-bottom: 1.25rem;
+}
+
+.muted { color: var(--muted); font-size: 0.85rem; }
+
+.player-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: 0.9rem;
+}
+
+.player-card {
+  text-align: center;
+  text-decoration: none;
+  color: var(--text);
+}
+
+.player-card img {
+  width: 64px;
+  height: 64px;
+  image-rendering: pixelated;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.player-card .name {
+  display: block;
+  margin-top: 0.35rem;
+  font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); font-size: 0.9rem; }
+th { color: var(--muted); font-weight: 500; }
+td.rank { color: var(--muted); width: 2.5rem; }
+td.value { text-align: right; font-variant-numeric: tabular-nums; }
+
+select, input {
+  background: #0b0d12;
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 0.4rem 0.55rem;
+  border-radius: 5px;
+  font-size: 0.85rem;
+}
+
+.profile-header { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.25rem; }
+.profile-header img { width: 96px; height: 96px; image-rendering: pixelated; border-radius: 10px; border: 1px solid var(--border); }
+.profile-header h1 { margin: 0; font-size: 1.4rem; }
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+}
+.stat-tile {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem;
+}
+.stat-tile .value { font-size: 1.3rem; font-weight: 600; }
+.stat-tile .label { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.03em; }
+
+.heatmap { display: flex; flex-wrap: wrap; gap: 3px; }
+.heatmap .day {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+  background: var(--border);
+}
+
+.error { color: var(--danger); font-size: 0.85rem; }
+.loading { color: var(--muted); font-size: 0.85rem; }
+
+footer {
+  padding: 1.5rem;
+  text-align: center;
+  color: var(--muted);
+  font-size: 0.78rem;
+}

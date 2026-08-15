@@ -240,6 +240,61 @@ and reconciles its own `server-list`/forwarding config (via Velocity's plugin AP
 
 ---
 
+## 7A. VPS Edge & Public Portal (Implemented, v1)
+
+A concrete instance of §7's multi-host reachability problem, extended one
+hop further: instead of (or in addition to) a home LAN's hosts, one peer
+on the WireGuard mesh is a public VPS (Linode or otherwise) with no
+inbound port forwarding required at home. This supersedes §7's abstract
+"put everything on a WireGuard mesh" sketch with a concrete, implemented
+shape — see `docs/vps-edge-deployment.md` for the operator walkthrough and
+`deploy/vps/` for the actual config (WireGuard setup script, Caddyfile).
+
+**What moves to the VPS:** `folia-nexa-proxy` itself (it was always meant
+to be "the single public-facing port" — this just gives it a real public
+box), Caddy (TLS termination + reverse proxy), and the static player
+portal (`portal/`). **What stays home:** `folia-nexa-mgmt`, the LXD hosts,
+every world. mgmt is reachable from the VPS only over the WireGuard
+tunnel, with `AllowedIPs`/firewall rules scoped to just what the relocated
+proxy and Caddy actually need — the LXD hosts' own remote API stays off
+that path entirely, unchanged from §3's rule that it must never be
+internet-adjacent.
+
+Three public subdomains, terminated by Caddy on the VPS:
+`admin.<domain>` (mgmt's dashboard/API, reverse-proxied, still behind its
+existing bearer-token auth — unchanged), `api.<domain>` (a new
+unauthenticated public API, see below), `play.<domain>` (the static
+portal).
+
+**Public player-hub API (`GET /api/v1/public/*`,
+`mgmt/src/folia_mgmt/routers/public_stats.py`):** leaderboards, player
+profiles, and playtime heatmaps — deliberately unauthenticated, same
+rationale as `/plugins-manifest` in §14: everything it returns is already
+meant to be public. This is the first mgmt surface designed to take real
+internet traffic, so it carries its own in-process TTL cache and per-IP
+rate limit (`Settings.public_api_cache_seconds` /
+`public_api_rate_limit_per_minute`) as defense in depth under whatever
+Caddy adds in front. Fed by a new ingestion endpoint (`POST
+/api/v1/stats/report`, operator-role token, `routers/stats.py`) that a new
+in-house plugin — catalog id `FoliaNexaStats`, still a placeholder
+pending its first real release — reports to periodically via
+`AsyncScheduler`, softdepending on `AuraSkills`/`AxAuctions` for two
+extra stat keys when either is present on a world.
+
+This is a deliberately scoped-down v1 of §16's original "Public Community
+& Analytics Portal" vision below — see that section for what's still
+aspirational beyond this. New tables (`PlayerProfile`, `PlayerStat`,
+`PlayerPlaytimeDaily` in `mgmt/src/folia_mgmt/models.py`) reuse mgmt's
+existing SQLModel/SQLite stack rather than introducing Redis/Postgres/
+ClickHouse; `portal/` is hand-written static HTML/JS with no build step or
+Node.js tooling, matching mgmt's own dashboard rather than adopting
+Next.js/Astro; there's no WebSocket live-push layer — "recently active"
+on the portal's home page is a client-side approximation from stats
+report recency, clearly labeled as such rather than claimed as exact
+real-time presence.
+
+---
+
 ## 8. Snap Packaging Specifications
 
 ### A. `folia-nexa-mgmt` snap
@@ -578,6 +633,16 @@ SummonVoidRifts:
 ---
 
 ## 16. Future Expansion: Public Community & Analytics Portal
+
+**Partially superseded by §7A**, which shipped a deliberately scoped-down
+v1 of this vision (SQLite instead of Postgres/ClickHouse, no Redis, no
+WebSocket live-push, a plain static `portal/` instead of a Next.js/Astro
+`world (type: portal)`). Read §7A for what actually exists today; this
+section remains the aspirational full vision beyond that v1 — Crafatar 3D
+avatar galleries did make it into v1 (it's a free third-party CDN, no
+backend cost), but the rest below (live WebSocket presence, a real
+event-sourced Postgres/ClickHouse store, the portal running as an
+LXD-scheduled world of its own) is still unbuilt.
 
 Unaffected by the orchestration refactor above — still an asynchronous telemetry portal fed by proxy/world events, now simply pointed at whichever containers the scheduler happens to be running:
 

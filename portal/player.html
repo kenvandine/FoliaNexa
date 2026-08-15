@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Player profile — FoliaNexa</title>
+<link rel="stylesheet" href="portal.css">
+</head>
+<body>
+<header>
+  <h1><a href="index.html">FoliaNexa</a></h1>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="leaderboards.html">Leaderboards</a>
+  </nav>
+</header>
+<main>
+  <div id="content"><p class="loading">Loading…</p></div>
+</main>
+<footer>FoliaNexa player hub — data updates roughly every 30 seconds.</footer>
+<script src="portal.js"></script>
+<script>
+const STAT_LABELS = {
+  kills: "Kills",
+  deaths: "Deaths",
+  blocks_mined: "Blocks mined",
+  playtime_seconds_total: "Playtime",
+  auraskills_power_level: "AuraSkills power",
+  axauctions_wealth: "AxAuctions wealth",
+};
+
+function formatStatValue(key, value) {
+  if (key === "playtime_seconds_total") return formatPlaytime(value);
+  return Number(value).toLocaleString();
+}
+
+async function load() {
+  const content = document.getElementById("content");
+  const uuid = new URLSearchParams(window.location.search).get("uuid");
+  if (!uuid) {
+    content.innerHTML = '<p class="error">No ?uuid= given.</p>';
+    return;
+  }
+
+  try {
+    const profile = await apiGet(`/players/${encodeURIComponent(uuid)}`);
+
+    const statTiles = Object.entries(profile.stats)
+      .map(
+        ([key, value]) => `
+        <div class="stat-tile">
+          <div class="value">${formatStatValue(key, value)}</div>
+          <div class="label">${STAT_LABELS[key] || formatStatLabel(key)}</div>
+        </div>`
+      )
+      .join("");
+
+    content.innerHTML = `
+      <div class="profile-header">
+        <img src="${avatarUrl(profile.uuid)}" alt="${profile.username}">
+        <div>
+          <h1>${profile.username}</h1>
+          <p class="muted">First seen ${formatRelativeTime(profile.first_seen)} · last seen ${formatRelativeTime(profile.last_seen)}</p>
+        </div>
+      </div>
+      <div class="card">
+        <h2>Stats</h2>
+        <div class="stat-grid">${statTiles || '<p class="muted">No stats reported yet.</p>'}</div>
+      </div>
+      <div class="card">
+        <h2>Playtime, last 365 days</h2>
+        <div id="heatmap" class="heatmap"></div>
+      </div>
+    `;
+    renderHeatmap(document.getElementById("heatmap"), profile.playtime_daily);
+  } catch (err) {
+    showError(content, err);
+  }
+}
+
+load();
+</script>
+</body>
+</html>
