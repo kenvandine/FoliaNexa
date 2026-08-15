@@ -17,6 +17,7 @@ from sqlmodel import Session, select
 
 from folia_mgmt.access_apply import apply_whitelist
 from folia_mgmt.config import Settings, get_settings
+from folia_mgmt.luckperms import apply_luckperms_config
 from folia_mgmt.lxd_client import LXDClient, LXDError, extract_ipv4
 from folia_mgmt.models import Host, HostStatus, World, WorldPhase
 
@@ -220,6 +221,22 @@ def sync_whitelisted_worlds(session: Session, lxd_client: LXDClient) -> None:
             apply_whitelist(session, lxd_client, host, world)
 
 
+def sync_luckperms_configs(session: Session, lxd_client: LXDClient, settings: Settings) -> None:
+    """Keeps every LuckPerms-enabled running world's config.yml pointed at
+    the shared MySQL backend (PLAN.md §11B) — no-op if that backend isn't
+    configured. See luckperms.py's module docstring for what this does
+    and doesn't automate."""
+    if not settings.luckperms_configured:
+        return
+    worlds = session.exec(select(World).where(World.phase == WorldPhase.running)).all()
+    for world in worlds:
+        if "LuckPerms" not in world.plugins:
+            continue
+        host = session.exec(select(Host).where(Host.name == world.host_name)).first()
+        if host is not None:
+            apply_luckperms_config(lxd_client, host, world, settings)
+
+
 def reconcile(
     session: Session,
     lxd_client: LXDClient,
@@ -238,6 +255,7 @@ def reconcile(
     check_running_worlds(session, settings, health_check)
     recover_crashed_worlds(session, lxd_client)
     sync_whitelisted_worlds(session, lxd_client)
+    sync_luckperms_configs(session, lxd_client, settings)
 
     for world in session.exec(select(World).where(World.phase == WorldPhase.draining)).all():
         teardown_world(session, lxd_client, world)

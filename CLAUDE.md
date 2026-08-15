@@ -19,6 +19,7 @@ host.
 | `tools/folia-host-join.sh` | Automates trusting an LXD host into the cluster | Bash |
 | `configs/worlds/*.sh` | Starter world declarations (CLI wrappers) | Bash |
 | `configs/plugins/manifests/*.json` | Per-world plugin manifests `folia-smp-node` downloads from | JSON |
+| `configs/luckperms/provision-mysql.sh` | Stands up the shared MySQL/MariaDB instance LuckPerms configs get synced to | Bash |
 
 Each of `mgmt/`, `node/`, `proxy/`, `bot/` is an independent,
 independently testable component with its own `snapcraft.yaml`. None of
@@ -176,7 +177,25 @@ guarantee.
 ./configs/worlds/create-all.sh
 ```
 
-### Phase 6 — build and install `velocity-proxy`
+### Phase 6 — shared MySQL for LuckPerms (optional)
+
+Only needed if any declared world includes `LuckPerms` in its plugin
+list (the survival starter config in `configs/worlds/` does). Run once,
+directly on a trusted LXD host — not through mgmt's scheduler, since
+folia-smp-node only runs Folia/Paper JVMs, not a database server (see
+`mgmt/src/folia_mgmt/luckperms.py`'s module docstring):
+
+```bash
+./configs/luckperms/provision-mysql.sh
+```
+
+It prints the `FOLIA_MGMT_LUCKPERMS_MYSQL_*` environment variables to
+set on the mgmt host. Once set, every running world with `LuckPerms` in
+its plugin list gets its `config.yml` kept in sync automatically —
+existing worlds pick it up on their next restart (LuckPerms reads its
+storage backend at plugin load time, not live).
+
+### Phase 7 — build and install `velocity-proxy`
 
 ```bash
 cd proxy && snapcraft   # unverified, same caveat as the others
@@ -206,7 +225,7 @@ curl -X POST https://<mgmt-host>:8443/api/v1/users/velocity-proxy/api-token \
 sudo snap start velocity-proxy.daemon
 ```
 
-### Phase 7 — build and install `folia-discord-bridge` (optional)
+### Phase 8 — build and install `folia-discord-bridge` (optional)
 
 ```bash
 cd bot && snapcraft   # unverified, same caveat as the others
@@ -242,6 +261,8 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
 - `folia-host-join.sh`'s LXD-prep steps (project creation, trust token
   generation) — bash-syntax-checked and logically reviewed, not run
   against a live LXD daemon in this environment.
+- `luckperms.py`'s config.yml rendering and the reconcile-loop sync logic
+  that decides which worlds get it pushed.
 
 Written against documented API contracts but **not** exercised against
 live infrastructure:
@@ -252,6 +273,9 @@ live infrastructure:
 - The Discord OAuth2 flow, Mojang UUID resolution, and the bot's actual
   gateway connection — no registered Discord application was available
   to test against.
+- `configs/luckperms/provision-mysql.sh` and the LuckPerms config.yml
+  format itself (verify plugin config keys against whatever LuckPerms
+  version you actually deploy — they can drift between major versions).
 - All four `snapcraft.yaml` files — no `snapcraft` binary was available
   to build with.
 

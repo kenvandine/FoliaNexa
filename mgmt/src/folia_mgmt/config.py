@@ -33,11 +33,26 @@ class Settings(BaseSettings):
     discord_redirect_uri: str | None = None
     discord_guild_id: str | None = None
     discord_auto_approve_role_id: str | None = None
-    discord_bot_token: str | None = None
 
     @property
     def discord_configured(self) -> bool:
         return bool(self.discord_client_id and self.discord_client_secret and self.discord_guild_id)
+
+    # LuckPerms shared MySQL/MariaDB backend (PLAN.md §11B) — provisioned
+    # by the operator directly (folia-smp-node only knows how to run a
+    # Folia/Paper JVM, not arbitrary services like a database server), then
+    # pointed at here so mgmt can keep every LuckPerms-enabled world's
+    # config.yml in sync with it. Unset host disables the sync.
+    luckperms_mysql_host: str | None = None
+    luckperms_mysql_port: int = 3306
+    luckperms_mysql_database: str = "luckperms"
+    luckperms_mysql_user: str = "luckperms"
+    luckperms_mysql_password: str | None = None
+    luckperms_table_prefix: str = "luckperms_"
+
+    @property
+    def luckperms_configured(self) -> bool:
+        return bool(self.luckperms_mysql_host and self.luckperms_mysql_password)
 
     @property
     def db_path(self) -> Path:

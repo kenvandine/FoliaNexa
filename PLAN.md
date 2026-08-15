@@ -93,7 +93,7 @@ world:
 
 Worlds are **stateful and sticky**: once placed, a world stays on its host (its data lives in that container's storage) unless an operator explicitly drains the host or migrates the world (snapshot → copy to new host → delete original — see §13). This avoids building live cross-host storage migration for v1.
 
-`type: infra` worlds are shared dependencies other worlds point at rather than something a player connects to directly — the canonical examples are the MySQL/MariaDB instance backing LuckPerms and network access requests (§11), and `discord-bridge` (§16). They're scheduled the same way as any other world (placed, snapshotted, health-checked) but excluded from `velocity-proxy`'s route table by default.
+`type: infra` exists in the schema for a Folia/Paper-based shared dependency a scheduler-placed world could point at, excluded from `velocity-proxy`'s route table by default. In practice, neither shared dependency this project actually needed turned out to fit that mold: the MySQL/MariaDB instance backing LuckPerms (§11B) and `folia-discord-bridge` (§16) both run things folia-smp-node can't (a database server; a standalone Discord bot process) and are provisioned/installed directly rather than scheduled as worlds. `type: infra` is left in place for a future case that's actually a Folia/Paper process, but has no real user yet.
 
 ### Reconcile loop
 
@@ -398,7 +398,7 @@ Two different questions, two different mechanisms — don't conflate "who can ru
 
 Don't build a bespoke ACL system — every world already needs a permissions plugin, so make that the single source of truth and have mgmt front it:
 
-- **LuckPerms** (§14) as the permissions backend everywhere, backed by a shared MySQL/MariaDB `type: infra` world (§2) so groups/tracks/permissions stay consistent across every world *and* the proxy — a player's rank follows them from `world-lobby` to `world-overworld` without per-world reconfiguration.
+- **LuckPerms** (§14) as the permissions backend everywhere, backed by a shared MySQL/MariaDB instance so groups/tracks/permissions stay consistent across every world *and* the proxy — a player's rank follows them from `world-lobby` to `world-overworld` without per-world reconfiguration. **Implemented, with a correction from the original plan:** that MySQL instance is *not* scheduled as a `type: infra` world through mgmt — folia-smp-node only knows how to run a Folia/Paper JVM (§9), not arbitrary services, so a database server isn't something the current node agent can run. The operator provisions it directly instead (`configs/luckperms/provision-mysql.sh` — a plain LXD container, not managed by mgmt's scheduler) and points mgmt at it via `luckperms_mysql_*` settings; what mgmt automates is every LuckPerms-enabled world's `config.yml` staying in sync with that instance on every reconcile pass (`folia_mgmt/luckperms.py`), not the database's deployment. One real limitation: LuckPerms reads its storage backend at plugin load time, so a world whose config just changed needs a restart to actually pick it up — pushing the file doesn't force one.
 - Mgmt's dashboard doesn't reimplement LuckPerms' editor — it deep-links to LuckPerms' own web permissions editor (pointed at the shared MySQL backend) for group/track management, and only adds the two things that are genuinely cluster-level concerns:
   - a network-wide whitelist toggle,
   - a per-world ops list.
