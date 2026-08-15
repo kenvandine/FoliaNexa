@@ -29,6 +29,7 @@ class MgmtClient:
         discord_username: str,
         minecraft_username: str,
         auto_approve: bool,
+        minecraft_uuid: str | None = None,
     ) -> dict:
         async with httpx.AsyncClient(base_url=self._base_url, timeout=self._timeout) as client:
             resp = await client.post(
@@ -38,6 +39,7 @@ class MgmtClient:
                     "discord_user_id": discord_user_id,
                     "discord_username": discord_username,
                     "minecraft_username": minecraft_username,
+                    "minecraft_uuid": minecraft_uuid,
                     "auto_approve": auto_approve,
                 },
             )

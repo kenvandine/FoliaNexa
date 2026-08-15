@@ -4,11 +4,16 @@ Three slash commands, all backed by folia-nexa-mgmt's REST API — this bot
 never touches mgmt's DB or LXD directly:
 
 - `/status` — declared worlds and their phase/host, from GET /api/v1/worlds.
-- `/request-access <minecraft_username>` — an in-Discord alternative to
-  the web OAuth flow (§11C) for players who'd rather not leave Discord.
-  Auto-approves if the invoking member holds `FOLIA_BOT_AUTO_APPROVE_ROLE_ID`
-  (optional; unset means every request lands pending, same as the web
-  flow with no role configured).
+- `/request-access <minecraft_username> [minecraft_uuid]` — an in-Discord
+  alternative to the web OAuth flow (§11C) for players who'd rather not
+  leave Discord. Auto-approves if the invoking member holds
+  `FOLIA_BOT_AUTO_APPROVE_ROLE_ID` (optional; unset means every request
+  lands pending, same as the web flow with no role configured). The
+  optional `minecraft_uuid` is for Bedrock players (PLAN.md §7B) — mgmt
+  can't resolve a Floodgate UUID from a Bedrock gamertag the way it
+  resolves Java usernames via Mojang, so a Bedrock player supplies their
+  own (found via Floodgate's in-game `/uuid` command) and mgmt stores it
+  directly instead of doing a Mojang lookup.
 - `/leaderboard` — an explicit stub. There's no analytics store backing
   it yet (PLAN.md §16's Future Expansion), and saying so beats a missing
   command or fabricated numbers.
@@ -82,8 +87,15 @@ def build_client() -> discord.Client:
         await interaction.response.send_message(embed=build_leaderboard_stub_embed())
 
     @tree.command(name="request-access", description="Request access to the Minecraft server")
-    @app_commands.describe(minecraft_username="Your exact in-game username")
-    async def request_access(interaction: discord.Interaction, minecraft_username: str) -> None:
+    @app_commands.describe(
+        minecraft_username="Your exact in-game username (Bedrock players: your gamertag is fine here too)",
+        minecraft_uuid="Bedrock players only: your Floodgate UUID (get it with /uuid in-game once you've joined via Geyser). Leave blank for Java.",
+    )
+    async def request_access(
+        interaction: discord.Interaction,
+        minecraft_username: str,
+        minecraft_uuid: str | None = None,
+    ) -> None:
         await interaction.response.defer(ephemeral=True)
 
         role_ids: set[int] = set()
@@ -96,6 +108,7 @@ def build_client() -> discord.Client:
                 discord_user_id=str(interaction.user.id),
                 discord_username=str(interaction.user),
                 minecraft_username=minecraft_username,
+                minecraft_uuid=minecraft_uuid,
                 auto_approve=auto_approve,
             )
         except Exception:

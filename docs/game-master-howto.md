@@ -77,6 +77,14 @@ shape of an in-house entry.
   `SkyWarsReloaded`/`BedWars1058` catalog entries carry this same
   caveat in their `notes`.
 
+**Bedrock players on this world:** the cluster's proxy already lets
+Bedrock (console/mobile/Win10) clients join by default (PLAN.md §7B) —
+you don't need to do anything for a Bedrock player to reach your world.
+Add `--plugin Floodgate` only if *this specific world* should recognize
+who joined via Bedrock (correct skin/identity here, or a plugin reading
+the Floodgate API) — see the `Floodgate` catalog entry's `notes` for the
+one manual setup step it needs (copying a key file from the proxy).
+
 ## 3. Declare and deploy the world
 
 ```bash

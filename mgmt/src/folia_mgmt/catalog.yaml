@@ -217,6 +217,34 @@
   verified: false
   notes: "Placeholder, not independently verified."
 
+- id: Floodgate
+  category: bedrock-bridge
+  source: external
+  version: "2.2.5"
+  download_url: "https://download.geysermc.org/v2/projects/floodgate/versions/2.2.5/builds/140/downloads/spigot"
+  sha256: "9f436c42ffd8b1091a437d7a4e16f82181b9d5314f8b1732dfa9d5a4fffb19fe"
+  homepage: "https://geysermc.org/floodgate"
+  verified: true
+  notes: >
+    Verified 2026-08-15 — downloaded from GeyserMC's build API and
+    sha256'd for real. Optional, Paper-side counterpart to the
+    Geyser-Velocity + floodgate-velocity plugins bundled into the
+    folia-nexa-proxy snap itself (PLAN.md §7B) — the proxy alone is
+    enough for Bedrock players to join at all; add this to a world's
+    `--plugin` list only if that world should recognize Bedrock players
+    specifically (correct skin/identity there, the Floodgate API for
+    other plugins). Requires a one-time manual step: after
+    folia-nexa-proxy has started once (so its bundled Floodgate has
+    generated a keypair), copy
+    $SNAP_COMMON/proxy/plugins/floodgate/key.pem from the proxy host to
+    this world's plugins/floodgate/key.pem and restart the world — there
+    is no automated proxy-to-world file-push channel for this today
+    (unlike LuckPerms' mgmt-driven config sync, see luckperms.py).
+    Without a matching key.pem the world can't decrypt the identity data
+    Floodgate forwards through the proxy. This is a rolling per-minor-
+    version build URL (2.2.5 build 140 at verification time) — re-check
+    before assuming it stays current indefinitely.
+
 - id: SkyWarsReloaded
   category: minigame
   source: external

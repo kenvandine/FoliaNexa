@@ -57,6 +57,7 @@ sudo apt update
 sudo apt install -y wireguard-tools caddy
 sudo ufw allow 51820/udp   # WireGuard
 sudo ufw allow 80/tcp 443/tcp   # Caddy / Let's Encrypt
+sudo ufw allow 19132/udp   # Bedrock/RakNet (Geyser, PLAN.md §7B) — skip if you don't want Bedrock clients
 ```
 
 ## Phase 2: DNS
@@ -72,7 +73,9 @@ subdomain scheme — adjust if you chose differently):
 
 (Minecraft's own hostname, e.g. `play.<domain>` or a separate `mc.<domain>`
 SRV record pointed at the VPS's `:25565`, is up to you — it isn't an HTTP
-subdomain and Caddy never touches it.)
+subdomain and Caddy never touches it. Bedrock clients connect straight to
+the VPS's public IP on `:19132/udp` — Bedrock has no DNS-based SRV
+equivalent, so there's no separate record needed for it, PLAN.md §7B.)
 
 ## Phase 3: WireGuard tunnel
 
@@ -147,7 +150,9 @@ same way.
 
 Confirm a real Minecraft client can join through the VPS's public IP with
 **zero home port forwarding** before moving on — this is the core claim
-this whole setup exists to deliver.
+this whole setup exists to deliver. If the snap was built with Bedrock
+support (PLAN.md §7B — bundled by default), a Bedrock client should be
+able to join the same way on `:19132/udp`, no separate relocation step.
 
 ## Phase 5: Caddy — TLS + admin/public-API edge
 
@@ -234,6 +239,14 @@ Not verified — needs your real VPS + home network:
 - Let's Encrypt certificate issuance against your real domain/DNS.
 - A real Minecraft client connecting through the VPS's public `:25565`
   with the proxy relocated.
+- A real Bedrock client connecting through `:19132/udp` (PLAN.md §7B) —
+  no Bedrock/console/mobile client or live GeyserMC build was reachable
+  to test against in this environment. The bundled Geyser-Velocity/
+  floodgate-velocity jars were downloaded for real and sha256-verified
+  against GeyserMC's own build API (see the `geyser-plugins` part in
+  `proxy/snapcraft.yaml`), but `snapcraft` itself wasn't available to
+  re-run the full snap build in the environment this addition was made
+  in — see that file's own comments for the exact verification done.
 - The `FoliaNexaStats` plugin actually loading in a live Folia server and
   posting real counters (including live AuraSkills/AxAuctions reads) over
   the tunnel — the plugin itself doesn't exist yet as of this doc (see
