@@ -1,0 +1,31 @@
+# Curated data pack catalog. See datapack_catalog.py's module docstring
+# for how this is loaded/merged with operator overrides — same pattern as
+# catalog.yaml's plugins, just a separate list since data packs stage into
+# a world's `<level-name>/datapacks/` folder, not `plugins/`.
+#
+# `id` is what world.datapacks entries reference (the `--datapack` CLI
+# flag) — treat it as a stable key, not just a display label.
+
+- id: Matcha
+  category: gameplay-tweaks
+  source: external
+  version: "1.12"
+  download_url: "https://cdn.modrinth.com/data/QI0EmgZ1/versions/E9rngRfK/Matcha_Flavoured_1_12.zip"
+  sha256: "6209783021c358044abedabacee471faff5bd4080437d4e3b5e51963f1804248"
+  homepage: "https://modrinth.com/datapack/matcha-flavoured"
+  verified: true
+  notes: >
+    "Matcha Flavoured" by klei_wright — reworks vanilla gameplay to be
+    friendlier to slower/less-technical players (recipe tweaks, tool
+    changes, etc). Verified 2026-08-15: downloaded the exact download_url
+    above from Modrinth's API and confirmed the sha256 for real (Modrinth
+    itself only publishes sha1/sha512 for this file, not sha256 — computed
+    here directly from the downloaded bytes). The zip's root pack.mcmeta
+    declares `min_format: 88.0, max_format: 107.1` (Modrinth lists it as
+    built for game version "26.2") — check that range against whatever
+    Minecraft version a world runs before declaring this, the same way
+    catalog.yaml's minigame-plugin entries call out to check Folia
+    compatibility rather than mgmt enforcing it. Also bundles some
+    `assets/` (custom sounds) alongside its `data/` folder — normal for
+    this pack, both land together under datapacks/ since it's a single
+    zip.

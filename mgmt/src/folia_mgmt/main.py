@@ -13,7 +13,18 @@ from folia_mgmt.certs import ensure_client_identity
 from folia_mgmt.config import get_settings
 from folia_mgmt.db import get_engine, init_db
 from folia_mgmt.lxd_client import LXDClient
-from folia_mgmt.routers import access_requests, auth, hosts, plugins, public_stats, routes, stats, users, worlds
+from folia_mgmt.routers import (
+    access_requests,
+    auth,
+    datapacks,
+    hosts,
+    plugins,
+    public_stats,
+    routes,
+    stats,
+    users,
+    worlds,
+)
 from folia_mgmt.scheduler import reconcile
 
 logger = logging.getLogger(__name__)
@@ -66,6 +77,7 @@ def create_app() -> FastAPI:
     app.include_router(access_requests.router, prefix="/api/v1")
     app.include_router(routes.router, prefix="/api/v1")
     app.include_router(plugins.router, prefix="/api/v1")
+    app.include_router(datapacks.router, prefix="/api/v1")
     app.include_router(stats.router, prefix="/api/v1")
     app.include_router(public_stats.router, prefix="/api/v1")
 

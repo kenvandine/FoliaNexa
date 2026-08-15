@@ -624,6 +624,53 @@ A `lobby`-type world is where players land first and pick which game/world to jo
 - **It's the default landing point.** `GET /api/v1/routes` (§7) flags exactly one route `default: true`, and `_pick_default` in `routers/routes.py` prefers a running `lobby` world over a running `overworld` — so as soon as a cluster declares a lobby, new connections land there automatically, no proxy config change needed. Multiple lobby worlds are unlikely (a hub is meant to be the one shared front door) but if there ever are, the pick is deterministic (lowest name), not row-order-dependent.
 - **It's where players choose a game.** The proxy already knows every running world by name — `folia-routes-sync` registers each one as a Velocity backend server as soon as mgmt reports it `running` (§7). That means the zero-plugin path already works: any player connected through the proxy can run `/server <world-name>` (Velocity's built-in command) to jump to any other running world, tab-completed from the live registration list. For a friendlier in-game menu instead of a raw command, the catalog's `ServerSelector` entry (category `lobby`) is a Paper plugin installed *on the lobby world itself* — not the proxy — that gives players a compass/GUI and switches them over the standard BungeeCord/Velocity plugin-messaging channel, so it needs no `folia-nexa-proxy` changes either. Its per-entry `id:` in `config.yml` should be set to the target world's name (the same string mgmt uses for `world.name` and the proxy uses for the backend server name) — see `docs/game-master-howto.md` for a worked example.
 
+### 14C. Data Pack Support
+
+Vanilla data packs (JSON-defined recipe/loot-table/advancement/function
+tweaks — no jar, no Bukkit/Paper plugin loader involved — e.g. the
+"Matcha Flavoured" gameplay-tweaks pack) are a different content type
+from §14A's plugins, but follow the exact same catalog → manifest →
+node-fetch shape, in a second, parallel instance of it:
+
+- **Catalog**: `mgmt/src/folia_mgmt/datapacks.yaml` (`DatapackEntry`:
+  `id`, `category`, `source`, `version`, `download_url`, `sha256`,
+  `homepage`, `verified`, `notes`), loaded/merged with an operator
+  override file (`datapack-catalog-override.yaml` in mgmt's state dir)
+  the same way `plugin_catalog.py` does — see `datapack_catalog.py`.
+  Kept as a second catalog file/module rather than folded into
+  `PluginEntry`/`catalog.yaml` because it stages to a genuinely different
+  place on disk (below).
+- **API**: `GET /api/v1/datapacks` (+ `/{id}`), and
+  `GET /api/v1/worlds/{name}/datapacks-manifest` — same
+  validate-at-create-time, unauthenticated-manifest, skip-unresolved-
+  entries-with-a-warning design as the plugin manifest. `World.datapacks`
+  is validated against the catalog at `POST /api/v1/worlds` time, same as
+  `World.plugins`.
+- **CLI**: `folia-nexa-mgmt datapacks list [--category]` / `datapacks show
+  <id>`; `worlds create --datapack <id>` (repeatable).
+- **Dashboard**: a "Data Packs" tab mirroring "Plugins", and a second
+  checkbox picker in "Declare a world".
+- **Staging (the one real divergence from plugins)**: `folia-nexa-node`
+  places each downloaded entry under
+  `<world_dir>/<level-name>/datapacks/<id>.zip` — a world *save's*
+  `datapacks/` folder, not the server root's `plugins/` — since data
+  packs are read by the vanilla/Paper world-loading code, not a plugin
+  loader. This codebase never templates `server.properties` (the Folia/
+  Paper server generates its own save folder on first boot), so staging
+  assumes the vanilla default level-name (`world` — see `LEVEL_NAME` in
+  `node/src/folia_node/staging.py`); a world running a non-default
+  level-name won't get its data packs staged to the right place. Staging
+  before first boot works cleanly because data packs apply at world
+  generation — no live-server `/reload` or restart-after-copy step is
+  needed the way it would be for a plugin hot-swap.
+- Declaring any datapacks requires `FOLIA_MGMT_PUBLIC_URL`, same as
+  plugins, enforced at world-creation time.
+- Not enforced (a manual check, same posture as the minigame-plugin
+  Folia-compatibility caveat in §14A): a data pack's `pack.mcmeta`
+  `pack_format`/`min_format`/`max_format` against the world's actual
+  Minecraft version. Mismatches fail at world load, not at
+  `worlds create` time.
+
 ---
 
 ## 15. Sample MythicMobs & ItemsAdder Configurations

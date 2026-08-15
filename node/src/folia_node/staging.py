@@ -1,6 +1,6 @@
-"""Downloads and stages the jar + plugins for this world. PLAN.md §9 step 2:
-idempotent so a node-agent restart doesn't re-download an already-staged
-world.
+"""Downloads and stages the jar + plugins + datapacks for this world.
+PLAN.md §9 step 2: idempotent so a node-agent restart doesn't re-download
+an already-staged world.
 """
 
 from __future__ import annotations
@@ -16,6 +16,17 @@ logger = logging.getLogger(__name__)
 
 JAR_FILENAME = "server.jar"
 STAGED_MARKER = ".staged"
+
+# Vanilla/Paper/Folia's default level-name ("world" in server.properties)
+# — this codebase doesn't template server.properties at all (the server
+# generates its own save folder on first boot), so there's no way to know
+# a world's actual level-name ahead of time. Data packs have to land in
+# <level-name>/datapacks/ before first boot for the server to pick them up
+# as part of world generation, so this assumes the vanilla default. A
+# world declared with a custom level-name in server.properties (nothing
+# in this codebase sets one) would need its datapacks staged elsewhere —
+# not something node can detect today.
+LEVEL_NAME = "world"
 
 
 def _download(client: httpx.Client, url: str, dest: Path) -> None:
@@ -59,6 +70,17 @@ def ensure_staged(
             for entry in manifest:
                 dest = plugins_dir / f"{entry['name']}.jar"
                 logger.info("staging plugin '%s'", entry["name"])
+                _download(client, entry["url"], dest)
+
+        if assignment.datapacks_manifest_url:
+            datapacks_dir = world_dir / LEVEL_NAME / "datapacks"
+            datapacks_dir.mkdir(parents=True, exist_ok=True)
+            resp = client.get(assignment.datapacks_manifest_url)
+            resp.raise_for_status()
+            manifest = resp.json()  # [{"name": "...", "url": "..."}, ...]
+            for entry in manifest:
+                dest = datapacks_dir / f"{entry['name']}.zip"
+                logger.info("staging datapack '%s'", entry["name"])
                 _download(client, entry["url"], dest)
 
         marker.write_text("ok")

@@ -11,6 +11,7 @@ from sqlmodel import Session, select
 from folia_mgmt.access_apply import UuidResolver, apply_ops, apply_whitelist
 from folia_mgmt.auth import require_operator, require_viewer
 from folia_mgmt.config import Settings
+from folia_mgmt.datapack_catalog import load_catalog as load_datapack_catalog
 from folia_mgmt.db import get_session
 from folia_mgmt.deps import get_health_check, get_lxd_client, get_uuid_resolver, settings_dependency
 from folia_mgmt.lxd_client import LXDClient, LXDError
@@ -29,6 +30,7 @@ class CreateWorldRequest(BaseModel):
     engine: str = "folia"
     version: str = "1.21.4"
     plugins: list[str] = []
+    datapacks: list[str] = []
     cpu_cores: int
     memory_gb: int
     placement_labels: dict[str, str] = {}
@@ -42,6 +44,7 @@ class WorldResponse(BaseModel):
     engine: str
     version: str
     plugins: list[str]
+    datapacks: list[str]
     cpu_cores: int
     memory_gb: int
     placement_labels: dict[str, str]
@@ -60,6 +63,7 @@ def _to_response(world: World) -> WorldResponse:
         engine=world.engine,
         version=world.version,
         plugins=world.plugins,
+        datapacks=world.datapacks,
         cpu_cores=world.cpu_cores,
         memory_gb=world.memory_gb,
         placement_labels=world.placement_labels,
@@ -113,6 +117,26 @@ def _validate_plugins(plugins: list[str], settings: Settings) -> None:
         )
 
 
+def _validate_datapacks(datapacks: list[str], settings: Settings) -> None:
+    """Same reasoning as _validate_plugins — every declared datapack must
+    be a real catalog entry, and a world can't declare one without a
+    reachable public_url to serve its datapacks-manifest from."""
+    if not datapacks:
+        return
+    if not settings.public_url:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "cannot declare datapacks: FOLIA_MGMT_PUBLIC_URL is not configured, "
+            "so worlds have no reachable URL to fetch their datapacks manifest from",
+        )
+    catalog_ids = {entry.id for entry in load_datapack_catalog(settings)}
+    unknown = [d for d in datapacks if d not in catalog_ids]
+    if unknown:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST, f"unknown datapack(s), not in the catalog: {', '.join(unknown)}"
+        )
+
+
 @router.post("", response_model=WorldResponse, dependencies=[Depends(require_operator)])
 def create_world(
     body: CreateWorldRequest,
@@ -124,6 +148,7 @@ def create_world(
     if session.exec(select(World).where(World.name == body.name)).first():
         raise HTTPException(status.HTTP_409_CONFLICT, f"world '{body.name}' already exists")
     _validate_plugins(body.plugins, settings)
+    _validate_datapacks(body.datapacks, settings)
 
     world = World(
         name=body.name,
@@ -131,6 +156,7 @@ def create_world(
         engine=body.engine,
         version=body.version,
         plugins=body.plugins,
+        datapacks=body.datapacks,
         cpu_cores=body.cpu_cores,
         memory_gb=body.memory_gb,
         placement_labels=body.placement_labels,
@@ -341,6 +367,34 @@ def get_plugins_manifest(
                 "world '%s' declares plugin '%s' with no resolvable download_url in the catalog, skipping",
                 name,
                 plugin_id,
+            )
+            continue
+        manifest.append({"name": entry.id, "url": entry.download_url})
+    return manifest
+
+
+@router.get("/{name}/datapacks-manifest")
+def get_datapacks_manifest(
+    name: str, session: Session = Depends(get_session), settings: Settings = Depends(settings_dependency)
+) -> list[dict]:
+    """What folia-nexa-node fetches to stage a world's data packs — same
+    shape and same reasoning as get_plugins_manifest above (generated live
+    from world.datapacks + the data pack catalog, deliberately
+    unauthenticated for the same reasons). Node places each entry under
+    the world save's `datapacks/` folder instead of `plugins/` — see
+    folia_node.staging.
+    """
+    world = _get_world_or_404(session, name)
+    catalog = {entry.id: entry for entry in load_datapack_catalog(settings)}
+
+    manifest = []
+    for datapack_id in world.datapacks:
+        entry = catalog.get(datapack_id)
+        if entry is None or entry.download_url is None:
+            logger.warning(
+                "world '%s' declares datapack '%s' with no resolvable download_url in the catalog, skipping",
+                name,
+                datapack_id,
             )
             continue
         manifest.append({"name": entry.id, "url": entry.download_url})

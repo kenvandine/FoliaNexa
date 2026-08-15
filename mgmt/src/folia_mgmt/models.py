@@ -83,6 +83,7 @@ class World(SQLModel, table=True):
     engine: str = "folia"
     version: str = "1.21.4"
     plugins: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    datapacks: list[str] = Field(default_factory=list, sa_column=Column(JSON))
 
     cpu_cores: int
     memory_gb: int

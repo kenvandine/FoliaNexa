@@ -185,11 +185,36 @@ def test_worlds_create_sends_plugins_and_labels(tmp_path, monkeypatch, mock_http
         "engine": "folia",
         "version": "1.21.4",
         "plugins": ["LuckPerms", "HuskClaims"],
+        "datapacks": [],
         "cpu_cores": 6,
         "memory_gb": 12,
         "placement_labels": {"cpu_type": "p-core"},
     }
     assert "declared world 'world-survival'" in result.output
+
+
+def test_worlds_create_sends_datapacks(tmp_path, monkeypatch, mock_http):
+    _seed_login(tmp_path, monkeypatch)
+
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={})
+
+    mock_http(handler)
+    result = runner.invoke(
+        cli.app,
+        [
+            "worlds", "create", "world-survival",
+            "--type", "overworld",
+            "--cpu", "6",
+            "--memory", "12GB",
+            "--datapack", "Matcha",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["body"]["datapacks"] == ["Matcha"]
 
 
 def test_worlds_create_without_plugins_sends_empty_list(tmp_path, monkeypatch, mock_http):
@@ -358,5 +383,60 @@ def test_plugins_show_unknown_id_surfaces_404(tmp_path, monkeypatch, mock_http):
     _seed_login(tmp_path, monkeypatch)
     mock_http(lambda r: httpx.Response(404, json={"detail": "no such plugin 'Nope' in the catalog"}))
     result = runner.invoke(cli.app, ["plugins", "show", "Nope"])
+    assert result.exit_code != 0
+    assert "404" in result.output
+
+
+def test_datapacks_list_formats_rows(tmp_path, monkeypatch, mock_http):
+    _seed_login(tmp_path, monkeypatch)
+    mock_http(
+        lambda r: httpx.Response(
+            200,
+            json=[
+                {
+                    "id": "Matcha",
+                    "category": "gameplay-tweaks",
+                    "source": "external",
+                    "version": "1.12",
+                    "verified": True,
+                }
+            ],
+        )
+    )
+    result = runner.invoke(cli.app, ["datapacks", "list"])
+    assert result.exit_code == 0, result.output
+    assert "Matcha" in result.output
+    assert "gameplay-tweaks" in result.output
+    assert "verified" in result.output
+
+
+def test_datapacks_show_prints_fields(tmp_path, monkeypatch, mock_http):
+    _seed_login(tmp_path, monkeypatch)
+    mock_http(
+        lambda r: httpx.Response(
+            200,
+            json={
+                "id": "Matcha",
+                "category": "gameplay-tweaks",
+                "source": "external",
+                "version": "1.12",
+                "download_url": "https://cdn.modrinth.com/data/QI0EmgZ1/versions/E9rngRfK/Matcha_Flavoured_1_12.zip",
+                "sha256": "6209783021c358044abedabacee471faff5bd4080437d4e3b5e51963f1804248",
+                "homepage": "https://modrinth.com/datapack/matcha-flavoured",
+                "verified": True,
+                "notes": None,
+            },
+        )
+    )
+    result = runner.invoke(cli.app, ["datapacks", "show", "Matcha"])
+    assert result.exit_code == 0, result.output
+    assert "id: Matcha" in result.output
+    assert "verified: True" in result.output
+
+
+def test_datapacks_show_unknown_id_surfaces_404(tmp_path, monkeypatch, mock_http):
+    _seed_login(tmp_path, monkeypatch)
+    mock_http(lambda r: httpx.Response(404, json={"detail": "no such datapack 'Nope' in the catalog"}))
+    result = runner.invoke(cli.app, ["datapacks", "show", "Nope"])
     assert result.exit_code != 0
     assert "404" in result.output

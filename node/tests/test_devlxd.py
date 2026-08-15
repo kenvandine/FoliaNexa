@@ -10,6 +10,7 @@ CONFIG_KEYS = [
     "/1.0/config/user.folia.world-type",
     "/1.0/config/user.folia.jar-url",
     "/1.0/config/user.folia.plugins-manifest-url",
+    "/1.0/config/user.folia.datapacks-manifest-url",
 ]
 
 VALUES = {
@@ -17,6 +18,7 @@ VALUES = {
     "/1.0/config/user.folia.world-type": "nether",
     "/1.0/config/user.folia.jar-url": "https://artifacts.internal/folia/1.21.4/folia.jar",
     "/1.0/config/user.folia.plugins-manifest-url": "https://artifacts.internal/folia/manifests/world-nether.json",
+    "/1.0/config/user.folia.datapacks-manifest-url": "https://artifacts.internal/folia/manifests/world-nether-datapacks.json",
 }
 
 
@@ -44,6 +46,7 @@ def test_get_world_assignment_parses_expected_fields():
     assert assignment.world_type == "nether"
     assert assignment.jar_url.endswith("folia.jar")
     assert assignment.plugins_manifest_url.endswith("world-nether.json")
+    assert assignment.datapacks_manifest_url.endswith("world-nether-datapacks.json")
 
 
 def test_missing_required_key_raises():

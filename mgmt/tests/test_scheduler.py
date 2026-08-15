@@ -270,3 +270,27 @@ def test_node_config_sets_manifest_url_when_plugins_and_public_url_present():
         config["user.folia.plugins-manifest-url"]
         == "https://mgmt.example:8443/api/v1/worlds/world-overworld/plugins-manifest"
     )
+
+
+def test_node_config_omits_datapacks_manifest_url_without_datapacks():
+    world = World(name="w", type=WorldType.lobby, cpu_cores=1, memory_gb=1)
+    settings = Settings(public_url="https://mgmt.example:8443")
+    config = _node_config(world, settings)
+    assert "user.folia.datapacks-manifest-url" not in config
+
+
+def test_node_config_omits_datapacks_manifest_url_without_public_url():
+    world = World(name="w", type=WorldType.overworld, cpu_cores=4, memory_gb=8, datapacks=["Matcha"])
+    settings = Settings(public_url=None)
+    config = _node_config(world, settings)
+    assert "user.folia.datapacks-manifest-url" not in config
+
+
+def test_node_config_sets_datapacks_manifest_url_when_datapacks_and_public_url_present():
+    world = World(name="world-overworld", type=WorldType.overworld, cpu_cores=4, memory_gb=8, datapacks=["Matcha"])
+    settings = Settings(public_url="https://mgmt.example:8443/")
+    config = _node_config(world, settings)
+    assert (
+        config["user.folia.datapacks-manifest-url"]
+        == "https://mgmt.example:8443/api/v1/worlds/world-overworld/datapacks-manifest"
+    )

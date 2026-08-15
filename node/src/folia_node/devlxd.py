@@ -27,6 +27,7 @@ class WorldAssignment:
     world_type: str
     jar_url: str
     plugins_manifest_url: str | None = None
+    datapacks_manifest_url: str | None = None
     jar_engine: str = "folia"
     jar_version: str = "1.21.4"
 
@@ -81,6 +82,7 @@ class DevLXDClient:
             world_type=world_type,
             jar_url=jar_url,
             plugins_manifest_url=config.get("user.folia.plugins-manifest-url"),
+            datapacks_manifest_url=config.get("user.folia.datapacks-manifest-url"),
             jar_engine=config.get("user.folia.jar-engine", "folia"),
             jar_version=config.get("user.folia.jar-version", "1.21.4"),
         )
