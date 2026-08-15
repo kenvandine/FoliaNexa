@@ -20,6 +20,7 @@ host.
 | `tools/folia-host-join.sh` | Automates trusting an LXD host into the cluster | Bash |
 | `configs/worlds/*.sh` | Starter world declarations (CLI wrappers) | Bash |
 | `mgmt/src/folia_mgmt/catalog.yaml` | Curated plugin catalog (PLAN.md §14A) — mgmt generates per-world manifests from this + a world's `plugins` list, no hand-authored manifest files | YAML |
+| `mgmt/src/folia_mgmt/datapacks.yaml` | Curated data pack catalog (e.g. Matcha) — same pattern as `catalog.yaml` but for vanilla data packs, staged into `<level-name>/datapacks/` instead of `plugins/`; see `datapack_catalog.py` | YAML |
 | `configs/luckperms/provision-mysql.sh` | Plain-LXD-container alternative to `db/` for operators who'd rather not add another snap | Bash |
 | `docs/game-master-howto.md` | Task-oriented guide: designing/deploying a minigame world and configuring the lobby (PLAN.md §14B) | Markdown |
 | `docs/plugin-dev/` | Three-part how-to series: dev environment setup, Folia-safe plugin architecture, submitting a plugin for catalog review | Markdown |
@@ -61,11 +62,11 @@ unverified; only the build step is confirmed.
 ## Running the test suites
 
 ```bash
-# mgmt (Python) — 129 tests
+# mgmt (Python) — 167 tests
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
-# node (Python) — 15 tests
+# node (Python) — 17 tests
 cd node && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
@@ -208,6 +209,22 @@ these**, note two separate things need to be reachable:
   dir) with real download links before relying on them; a plugin with no
   `download_url` is silently skipped in the generated manifest, not an
   error.
+
+Vanilla data packs (e.g. the Matcha gameplay-tweaks pack) work the same
+way, one catalog over: `--datapack <id>` (ids from
+`mgmt/src/folia_mgmt/datapacks.yaml`, browsable with `folia-nexa-mgmt
+datapacks list`), needs `FOLIA_MGMT_PUBLIC_URL` for the same reason
+(`{public_url}/api/v1/worlds/{name}/datapacks-manifest`), and an
+operator override file (`datapack-catalog-override.yaml` in mgmt's state
+dir) works the same way. The one real difference: `folia-nexa-node`
+stages a world's data packs into `<level-name>/datapacks/` inside the
+world save (assumed level-name `world`, the vanilla default — this
+codebase never templates `server.properties`, so a world running a
+non-default level-name won't get its data packs staged correctly; see
+`node/src/folia_node/staging.py`'s `LEVEL_NAME` comment) rather than a
+server-root `plugins/` folder, and they take effect at the server's next
+first-boot/world-generation rather than needing a JVM plugin loader at
+all.
 
 The minigame plugins listed (SkyWarsReloaded, BedWars1058) are common,
 well-known choices, not something verified Folia-compatible in this
@@ -368,6 +385,23 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   have real, curl-verified (or downloaded-and-sha256'd, for
   `ServerSelector`) download URLs and checksums; the rest are
   placeholders (`download_url: null`) pending real vetting —
+- The data pack catalog (`datapacks.yaml` + override merge,
+  `/api/v1/datapacks`, world-creation validation, `/datapacks-manifest`
+  generation, the CLI's `datapacks list`/`show`, and the dashboard's Data
+  Packs tab + world-creation picker) — same pattern as the plugin catalog
+  above, exercised end-to-end through the pytest suite (FastAPI's
+  TestClient, not a manually-curled live server the way the plugin
+  catalog note above was). Its one entry, `Matcha` ("Matcha Flavoured"),
+  is real and verified 2026-08-15: fetched from Modrinth's API, the exact
+  `download_url` above downloaded for real and sha256'd directly (Modrinth
+  itself only publishes sha1/sha512 for this file). `folia-nexa-node`'s
+  staging side (downloading a data pack manifest and placing zips under
+  `<level-name>/datapacks/`) is unit-tested against a mocked HTTP
+  transport only — not run against a real Folia/Paper server to confirm
+  Matcha actually loads and applies at world generation; see the
+  `LEVEL_NAME` note in `node/src/folia_node/staging.py` for the one
+  assumption (`world`, the vanilla default level-name) this depends on,
+  since this codebase never templates `server.properties`.
   `verified: false` in the catalog flags which is which.
 - The lobby-as-hub design (PLAN.md §14B): `GET /api/v1/routes` preferring
   a running `lobby`-type world over an `overworld` for the `default`

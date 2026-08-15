@@ -7,16 +7,21 @@ from folia_node.staging import ensure_staged
 
 JAR_BYTES = b"fake-jar-bytes"
 PLUGIN_BYTES = b"fake-plugin-bytes"
+DATAPACK_BYTES = b"fake-datapack-bytes"
 
 
 def _handler(request: httpx.Request) -> httpx.Response:
     url = str(request.url)
     if url.endswith("folia.jar"):
         return httpx.Response(200, content=JAR_BYTES)
+    if url.endswith("datapacks-manifest.json"):
+        return httpx.Response(200, json=[{"name": "Matcha", "url": "https://artifacts.internal/datapacks/matcha.zip"}])
     if url.endswith("manifest.json"):
         return httpx.Response(200, json=[{"name": "HuskClaims", "url": "https://artifacts.internal/plugins/huskclaims.jar"}])
     if url.endswith("huskclaims.jar"):
         return httpx.Response(200, content=PLUGIN_BYTES)
+    if url.endswith("matcha.zip"):
+        return httpx.Response(200, content=DATAPACK_BYTES)
     return httpx.Response(404)
 
 
@@ -63,3 +68,20 @@ def test_ensure_staged_without_plugins_manifest(tmp_path):
     jar_path = ensure_staged(tmp_path, _assignment(plugins_manifest_url=None), client=client)
     assert jar_path.read_bytes() == JAR_BYTES
     assert not (tmp_path / "plugins").exists()
+
+
+def test_ensure_staged_downloads_datapacks_into_level_datapacks_dir(tmp_path):
+    client = httpx.Client(transport=httpx.MockTransport(_handler))
+    ensure_staged(
+        tmp_path,
+        _assignment(datapacks_manifest_url="https://artifacts.internal/folia/manifests/datapacks-manifest.json"),
+        client=client,
+    )
+    assert (tmp_path / "world" / "datapacks" / "Matcha.zip").read_bytes() == DATAPACK_BYTES
+
+
+def test_ensure_staged_without_datapacks_manifest(tmp_path):
+    client = httpx.Client(transport=httpx.MockTransport(_handler))
+    jar_path = ensure_staged(tmp_path, _assignment(datapacks_manifest_url=None), client=client)
+    assert jar_path.read_bytes() == JAR_BYTES
+    assert not (tmp_path / "world" / "datapacks").exists()

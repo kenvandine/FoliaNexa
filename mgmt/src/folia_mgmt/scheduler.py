@@ -82,6 +82,9 @@ def _node_config(world: World, settings: Settings) -> dict[str, str]:
     list anymore. World creation already validated plugins against the
     catalog and that public_url is set (routers/worlds.py), so this can
     assume both are fine by the time a world reaches placement.
+    datapacks-manifest-url is the same pattern again, one catalog over
+    (datapack_catalog.py) — see routers/worlds.py's get_datapacks_manifest
+    and folia_node.staging for where node stages the result.
     """
     base = settings.artifacts_base_url.rstrip("/")
     config = {
@@ -94,6 +97,10 @@ def _node_config(world: World, settings: Settings) -> dict[str, str]:
     if world.plugins and settings.public_url:
         config["user.folia.plugins-manifest-url"] = (
             f"{settings.public_url.rstrip('/')}/api/v1/worlds/{world.name}/plugins-manifest"
+        )
+    if world.datapacks and settings.public_url:
+        config["user.folia.datapacks-manifest-url"] = (
+            f"{settings.public_url.rstrip('/')}/api/v1/worlds/{world.name}/datapacks-manifest"
         )
     return config
 

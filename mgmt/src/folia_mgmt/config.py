@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     # mgmt release — see plugin_catalog.py.
     plugin_catalog_path: Path = Path(__file__).resolve().parent / "catalog.yaml"
 
+    # Curated data pack catalog (e.g. Matcha) — same override mechanism as
+    # plugin_catalog_path above, see datapack_catalog.py.
+    datapack_catalog_path: Path = Path(__file__).resolve().parent / "datapacks.yaml"
+
     # Must match folia-nexa-node's FOLIA_NODE_HEALTH_PORT (node/snapcraft.yaml).
     node_health_port: int = 8123
     node_health_timeout_seconds: float = 3.0
