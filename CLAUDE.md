@@ -22,6 +22,7 @@ host.
 | `mgmt/src/folia_mgmt/catalog.yaml` | Curated plugin catalog (PLAN.md §14A) — mgmt generates per-world manifests from this + a world's `plugins` list, no hand-authored manifest files | YAML |
 | `configs/luckperms/provision-mysql.sh` | Plain-LXD-container alternative to `db/` for operators who'd rather not add another snap | Bash |
 | `docs/game-master-howto.md` | Task-oriented guide: designing/deploying a minigame world and configuring the lobby (PLAN.md §14B) | Markdown |
+| `docs/plugin-dev/` | Three-part how-to series: dev environment setup, Folia-safe plugin architecture, submitting a plugin for catalog review | Markdown |
 
 Each of `mgmt/`, `node/`, `proxy/`, `bot/`, `db/` is an independent,
 independently testable component with its own `snapcraft.yaml`. **All

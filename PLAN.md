@@ -482,6 +482,7 @@ The matrix above is a design reference; the thing mgmt and worlds actually use i
 - **CLI**: `folia-nexa-mgmt plugins list [--category]` and `plugins show <id>` browse the catalog; `worlds create --plugin <id>` (repeatable) takes catalog ids.
 - **Dashboard**: the "Plugins" tab lists the catalog (id, category, source, version, verified/unverified, homepage); the "Declare a world" form has a checkbox picker populated from the same catalog instead of free text.
 - Declaring any plugins requires `FOLIA_MGMT_PUBLIC_URL` to be set (the address the world's `plugins-manifest-url` points back at) — enforced at world-creation time.
+- **Writing a new in-house entry?** `docs/plugin-dev/` is a three-part how-to series (Ubuntu dev environment → Folia-safe plugin architecture → submitting a catalog entry for review) aimed at someone who's never built a Minecraft server plugin before.
 
 ### 14B. The Lobby as a Hub
 
