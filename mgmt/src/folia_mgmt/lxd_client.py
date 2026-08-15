@@ -210,6 +210,20 @@ class LXDClient:
             if resp.status_code == 202:
                 self._wait_operation(client, resp.json())
 
+    def push_file(self, host: Host, name: str, path: str, content: bytes, *, mode: str = "0644") -> None:
+        """Writes a file into a running container via LXD's file API — used
+        to apply ops.json/whitelist.json changes without an exec round
+        trip. PLAN.md §11B."""
+        with self._client_for(host) as client:
+            resp = client.post(
+                f"/1.0/instances/{name}/files",
+                params={"project": host.project, "path": path},
+                content=content,
+                headers={"X-LXD-type": "file", "X-LXD-mode": mode},
+            )
+            if resp.status_code not in (200, 201):
+                raise LXDError(f"failed to push '{path}' to '{name}' on '{host.name}': {resp.text}")
+
     def snapshot_container(self, host: Host, name: str, snapshot_name: str) -> None:
         with self._client_for(host) as client:
             resp = client.post(

@@ -80,7 +80,10 @@ def get_guild_member_roles(access_token: str, guild_id: str) -> list[str]:
 
 
 def resolve_minecraft_uuid(username: str) -> str | None:
-    resp = httpx.get(f"{MOJANG_API}/users/profiles/minecraft/{username}", timeout=10.0)
+    try:
+        resp = httpx.get(f"{MOJANG_API}/users/profiles/minecraft/{username}", timeout=10.0)
+    except httpx.HTTPError:
+        return None
     if resp.status_code != 200:
         return None
     return resp.json().get("id")

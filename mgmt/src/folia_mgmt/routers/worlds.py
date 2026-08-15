@@ -8,9 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from folia_mgmt.access_apply import UuidResolver, apply_ops
 from folia_mgmt.auth import require_operator, require_viewer
 from folia_mgmt.db import get_session
-from folia_mgmt.deps import get_health_check, get_lxd_client
+from folia_mgmt.deps import get_health_check, get_lxd_client, get_uuid_resolver
 from folia_mgmt.lxd_client import LXDClient, LXDError
 from folia_mgmt.models import Host, World, WorldPhase, WorldType, utcnow
 from folia_mgmt.scheduler import HealthCheck, reconcile
@@ -208,11 +209,16 @@ def get_world_access(name: str, session: Session = Depends(get_session)) -> dict
 
 @router.put("/{name}/access", dependencies=[Depends(require_operator)])
 def put_world_access(
-    name: str, body: AccessUpdateRequest, session: Session = Depends(get_session)
+    name: str,
+    body: AccessUpdateRequest,
+    session: Session = Depends(get_session),
+    lxd_client: LXDClient = Depends(get_lxd_client),
+    uuid_resolver: UuidResolver = Depends(get_uuid_resolver),
 ) -> dict:
-    # PLAN.md §11B: this updates desired state. Actually applying it to the
-    # live container's whitelist.json/ops.json via `lxc exec` is a follow-up
-    # once folia-smp-node's runtime side (§9) exists to reload it.
+    # whitelist_enabled updates desired state only — see access_apply.py's
+    # module docstring for why applying it live needs a product decision
+    # this codebase hasn't made yet. `ops` is applied to the live
+    # container immediately below when the world is placed.
     world = _get_world_or_404(session, name)
     if body.whitelist_enabled is not None:
         world.whitelist_enabled = body.whitelist_enabled
@@ -221,4 +227,11 @@ def put_world_access(
     world.updated_at = utcnow()
     session.add(world)
     session.commit()
+    session.refresh(world)
+
+    if body.ops is not None and world.host_name and world.container_name:
+        host = session.exec(select(Host).where(Host.name == world.host_name)).first()
+        if host is not None:
+            apply_ops(lxd_client, host, world, uuid_resolver)
+
     return {"whitelist_enabled": world.whitelist_enabled, "ops": world.ops}

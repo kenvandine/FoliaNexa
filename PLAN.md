@@ -402,7 +402,7 @@ Don't build a bespoke ACL system — every world already needs a permissions plu
 - Mgmt's dashboard doesn't reimplement LuckPerms' editor — it deep-links to LuckPerms' own web permissions editor (pointed at the shared MySQL backend) for group/track management, and only adds the two things that are genuinely cluster-level concerns:
   - a network-wide whitelist toggle,
   - a per-world ops list.
-- `GET/PUT /api/v1/worlds/{name}/access` above is the API surface for both, applied by mgmt via `lxc exec <world> -- ...` against that world's `whitelist.json`/`ops.json`.
+- `GET/PUT /api/v1/worlds/{name}/access` is the API surface for both. **Implemented for `ops`:** mgmt resolves each name to a UUID via the Mojang API and pushes `ops.json` straight into the running container over LXD's file-push API (no exec round trip needed for a plain file write). **Not yet implemented for `whitelist_enabled`:** there's no per-world list of *who's* whitelisted separate from network-wide Discord approval (§11C) — pushing an empty `whitelist.json` while flipping the toggle on would lock everyone out rather than let the approved set in. Resolving that needs a product decision (give worlds their own entries list, or mirror the same approved-uuids set §11C's access gate already uses) that hasn't been made yet, so the toggle updates mgmt's desired state without touching the live container until it is.
 
 ### C. Requesting access, via Discord
 

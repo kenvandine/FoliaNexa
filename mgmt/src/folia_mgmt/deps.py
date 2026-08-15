@@ -5,8 +5,10 @@ from pathlib import Path
 
 from fastapi import Depends
 
+from folia_mgmt.access_apply import UuidResolver
 from folia_mgmt.certs import ensure_client_identity
 from folia_mgmt.config import Settings, get_settings
+from folia_mgmt.discord import resolve_minecraft_uuid
 from folia_mgmt.lxd_client import LXDClient
 from folia_mgmt.scheduler import HealthCheck, default_health_check
 
@@ -27,3 +29,7 @@ def get_lxd_client(settings: Settings = Depends(settings_dependency)) -> LXDClie
 
 def get_health_check() -> HealthCheck:
     return default_health_check
+
+
+def get_uuid_resolver() -> UuidResolver:
+    return resolve_minecraft_uuid

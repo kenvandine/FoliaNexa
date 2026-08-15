@@ -6,7 +6,7 @@ from sqlmodel import Session
 
 from folia_mgmt.auth import hash_password
 from folia_mgmt.db import get_engine, init_db
-from folia_mgmt.deps import get_health_check, get_lxd_client
+from folia_mgmt.deps import get_health_check, get_lxd_client, get_uuid_resolver
 from folia_mgmt.lxd_client import LXDError
 from folia_mgmt.models import User, UserRole
 
@@ -23,6 +23,7 @@ class FakeLXDClient:
         self.restores: list[tuple[str, str, str]] = []
         self._next_ip = 10
         self.fail_launch_for: set[str] = set()
+        self.pushed_files: dict[tuple[str, str, str], bytes] = {}  # (host_name, container, path) -> content
 
     def redeem_trust_token(self, address: str, project: str, trust_token: str):
         if trust_token == "bad-token":
@@ -59,6 +60,9 @@ class FakeLXDClient:
     def restore_snapshot(self, host, name, snapshot_name):
         self.restores.append((host.name, name, snapshot_name))
 
+    def push_file(self, host, name, path, content, *, mode="0644"):
+        self.pushed_files[(host.name, name, path)] = content
+
 
 @pytest.fixture
 def fake_lxd():
@@ -83,8 +87,22 @@ def fake_health_check():
     return FakeHealthCheck()
 
 
+class FakeUuidResolver:
+    """Deterministic name->UUID mapping — no real Mojang API calls in tests."""
+
+    def __call__(self, username: str) -> str | None:
+        if username == "unresolvable":
+            return None
+        return (username.lower() + "0" * 32)[:32]
+
+
 @pytest.fixture
-def app(tmp_path, monkeypatch, fake_lxd, fake_health_check):
+def fake_uuid_resolver():
+    return FakeUuidResolver()
+
+
+@pytest.fixture
+def app(tmp_path, monkeypatch, fake_lxd, fake_health_check, fake_uuid_resolver):
     monkeypatch.setenv("FOLIA_MGMT_STATE_DIR", str(tmp_path / "state"))
     # Import after the env var is set so any module-level Settings() reads
     # (there shouldn't be any, but this keeps the fixture order foolproof).
@@ -93,6 +111,7 @@ def app(tmp_path, monkeypatch, fake_lxd, fake_health_check):
     application = create_app()
     application.dependency_overrides[get_lxd_client] = lambda: fake_lxd
     application.dependency_overrides[get_health_check] = lambda: fake_health_check
+    application.dependency_overrides[get_uuid_resolver] = lambda: fake_uuid_resolver
 
     settings_state_dir = tmp_path / "state"
     settings_state_dir.mkdir(parents=True, exist_ok=True)
