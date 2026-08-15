@@ -242,21 +242,25 @@
   category: analytics
   source: in-house
   version: "0.1.0"
-  download_url: null
-  sha256: null
-  homepage: null
-  verified: false
+  download_url: "https://github.com/kenvandine/folianexa-plugins/releases/download/folianexa-stats-v0.0.1/folianexa-stats-0.1.0.jar"
+  sha256: "30dbe9a7562c3f0648d279c918a67f00cf3deee42c1780ffb8ed6911286ee6dc"
+  homepage: "https://github.com/kenvandine/folianexa-plugins/tree/main/folianexa-stats"
+  verified: true
   notes: >
     Feeds the public player hub (portal/, PLAN.md §7A) — reports
     kills/deaths/blocks-mined/playtime to POST /api/v1/stats/report
     periodically via Bukkit's AsyncScheduler, and softdepends on
-    AuraSkills/AxAuctions to additionally report power level/wealth when
-    either is present on the same world. Not yet built — see
-    docs/plugin-dev/ and the .claude/skills/folia-plugin-scaffold skill
-    for the scaffold this should follow, and
-    docs/plugin-dev/03-submitting-for-review.md §3.1 for why its source
-    belongs in its own repository rather than here. Populate
-    download_url/sha256 once a real release exists.
+    AuraSkills/Vault (economy balance, gated on AxAuctions being present)
+    to additionally report power level/wealth when either is present on
+    the same world. Source: kenvandine/folianexa-plugins, folianexa-stats/
+    — see docs/plugin-dev/03-submitting-for-review.md §3.1 for why it
+    lives in its own repository rather than here. Verified 2026-08-15:
+    downloaded the exact download_url above and confirmed the sha256.
+    Note the release tag (v0.0.1) doesn't match the jar's own internal
+    version (0.1.0, matching this entry's version field) — a cosmetic
+    mismatch in how the release was cut, not a functional issue; the
+    download_url/sha256 above are for the real, currently-published
+    asset regardless.
 
 # Example in-house entry: demonstrates a catalog entry pointing at a
 # separate repository's releases rather than a third-party plugin host.
