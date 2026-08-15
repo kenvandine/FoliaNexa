@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from folia_mgmt.auth import User, require_operator
+from folia_mgmt.auth import User, require_operator, require_viewer
 from folia_mgmt.config import Settings
 from folia_mgmt.db import get_session
 from folia_mgmt.deps import settings_dependency
@@ -101,6 +101,30 @@ def discord_callback(
     session.commit()
     session.refresh(request)
     return _to_response(request, auto_approved=auto_approved)
+
+
+class ApprovedUuidsResponse(BaseModel):
+    uuids: list[str]
+
+
+@router.get(
+    "/access-requests/approved-uuids",
+    response_model=ApprovedUuidsResponse,
+    dependencies=[Depends(require_viewer)],
+)
+def approved_uuids(session: Session = Depends(get_session)) -> ApprovedUuidsResponse:
+    """Polled by the proxy's access-gate plugin (PLAN.md §11C) to decide
+    who's allowed to connect at all. Viewer-role token is enough — this
+    endpoint leaks no more than "these UUIDs are approved," unlike
+    /access-requests below which includes Discord usernames and is
+    operator-only."""
+    approved = session.exec(
+        select(AccessRequest).where(
+            AccessRequest.status == AccessRequestStatus.approved,
+            AccessRequest.minecraft_uuid.is_not(None),
+        )
+    ).all()
+    return ApprovedUuidsResponse(uuids=[r.minecraft_uuid for r in approved])
 
 
 @router.get("/access-requests", response_model=list[AccessRequestResponse], dependencies=[Depends(require_operator)])

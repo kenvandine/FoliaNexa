@@ -70,7 +70,8 @@ parts:
         [ -f "plugins/$(basename "$jar")" ] || cp "$jar" "plugins/"
       done
 
-      # FOLIA_MGMT_URL / FOLIA_MGMT_API_TOKEN / FOLIA_ROUTES_POLL_SECONDS —
+      # FOLIA_MGMT_URL / FOLIA_MGMT_API_TOKEN / FOLIA_ROUTES_POLL_SECONDS /
+      # FOLIA_ACCESS_GATE_ENABLED —
       # see folia-routes-sync's FoliaRoutesSyncPlugin javadoc. Operator-
       # provided, not shipped with the snap.
       [ -f config.env ] && source config.env

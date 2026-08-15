@@ -406,23 +406,24 @@ Don't build a bespoke ACL system — every world already needs a permissions plu
 
 ### C. Requesting access, via Discord
 
-"Can this person join at all" is a network-wide question, not a per-world one, so it's enforced once, at the front door — a small Velocity plugin (`AccessGate`) on `velocity-proxy` checks a `network_access` table in the shared MySQL (§2, same `type: infra` world LuckPerms already uses) at login time and rejects anyone not on it, before they ever reach a world's whitelist/ops check.
+"Can this person join at all" is a network-wide question, not a per-world one, so it's enforced once, at the front door. **Implemented:** `folia-routes-sync` (§8C) doubles as the access gate rather than being a separate plugin — it already polls mgmt on a timer for the routing table, so polling `GET /api/v1/access-requests/approved-uuids` on the same cycle and denying `LoginEvent` for anyone not in that set costs nothing extra to run. This means v1 doesn't need the shared MySQL `network_access` table at all — mgmt's own SQLite is the source of truth, same as everything else it tracks. The gate is opt-in (`FOLIA_ACCESS_GATE_ENABLED`, default off) so a fresh install never locks the operator out by surprise. Moving to a MySQL-backed `network_access` table (e.g. if something other than this proxy plugin ever needs to check approval) is a future migration, not a v1 requirement.
 
-Getting onto that table is a Discord OAuth2 flow, not an operator manually running `whitelist add`:
+Getting approved is a Discord OAuth2 flow, not an operator manually running `whitelist add`:
 
 1. Player hits mgmt's public "Request Access" page → **Sign in with Discord** (standard OAuth2 authorization-code flow; mgmt is a registered Discord application with `identify` + `guilds.members.read` scopes).
 2. `GET /api/v1/auth/discord/callback` (mgmt) exchanges the code, then calls Discord's API *with the player's own token* to confirm they're a member of the configured guild — no bot needed for this check.
 3. Player links a Minecraft username once (resolved to a UUID via the Mojang API) — stored alongside their Discord ID.
-4. Policy, set per-cluster: `auto_approve_on_role: <role-id>` inserts into `network_access` immediately if the player holds that Discord role; otherwise the request lands as `pending` for an operator to approve/deny from the Access panel (§12) or — for mods who live in Discord — via a bot command (§16).
-5. Approval both inserts into `network_access` (so `AccessGate` lets them through) and adds them to LuckPerms' default group.
+4. Policy, set per-cluster: `auto_approve_on_role: <role-id>` approves immediately if the player holds that Discord role; otherwise the request lands as `pending` for an operator to approve/deny from the Access panel (§12) or — for mods who live in Discord — via a bot command (§16).
+5. Approval makes the player's UUID show up in `GET /api/v1/access-requests/approved-uuids` on the gate's next poll (§8C), and — once LuckPerms integration lands — would add them to its default group.
 
-New API surface:
+API surface:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/api/v1/auth/discord/callback` | OAuth2 redirect target; creates/updates the access request |
-| `GET` | `/api/v1/access-requests` | List pending requests (operator/admin) |
-| `POST` | `/api/v1/access-requests/{id}/approve` | Approve → `network_access` + default LuckPerms group |
+| `GET` | `/api/v1/access-requests` | List requests, filterable by status (operator/admin) |
+| `GET` | `/api/v1/access-requests/approved-uuids` | Polled by the proxy's access gate (viewer-role token) |
+| `POST` | `/api/v1/access-requests/{id}/approve` | Approve → picked up by the gate's next poll |
 | `POST` | `/api/v1/access-requests/{id}/deny` | Deny, with an optional reason shown to the player |
 
 ---

@@ -1,13 +1,16 @@
 package dev.foliasmp.routessync;
 
 import com.google.inject.Inject;
+import com.velocitypowered.api.event.ResultedEvent.ComponentResult;
 import com.velocitypowered.api.event.Subscribe;
-import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
+import com.velocitypowered.api.event.connection.LoginEvent;
 import com.velocitypowered.api.event.player.PlayerChooseInitialServerEvent;
+import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.proxy.server.ServerInfo;
+import net.kyori.adventure.text.Component;
 import org.slf4j.Logger;
 
 import java.net.InetSocketAddress;
@@ -15,34 +18,48 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Keeps Velocity's backend server list in sync with folia-smp-mgmt's
- * {@code GET /api/v1/routes}, so worlds can come and go without a proxy
- * restart. PLAN.md §7.
+ * Two related jobs, both driven by polling folia-smp-mgmt:
+ *
+ * <ol>
+ *   <li>Keeps Velocity's backend server list in sync with
+ *       {@code GET /api/v1/routes}, so worlds can come and go without a
+ *       proxy restart (PLAN.md §7).</li>
+ *   <li>Optionally gates login entirely against
+ *       {@code GET /api/v1/access-requests/approved-uuids} — only
+ *       Discord-approved players get past the proxy at all (PLAN.md
+ *       §11C).</li>
+ * </ol>
  *
  * Configuration is via environment variables — matching how the rest of
  * this project's snaps are configured (mgmt, node), and avoiding a second
- * config-file format for what's fundamentally the same three settings:
+ * config-file format for what's fundamentally a handful of settings:
  *
  * <ul>
  *   <li>{@code FOLIA_MGMT_URL} (required) — e.g. https://mgmt.internal:8443</li>
- *   <li>{@code FOLIA_MGMT_API_TOKEN} (required) — an mgmt API token, any role (§11A) works; only reads /api/v1/routes</li>
+ *   <li>{@code FOLIA_MGMT_API_TOKEN} (required) — an mgmt API token; viewer role is enough for both endpoints this plugin reads</li>
  *   <li>{@code FOLIA_ROUTES_POLL_SECONDS} (optional, default 5)</li>
+ *   <li>{@code FOLIA_ACCESS_GATE_ENABLED} (optional, default {@code false}) — opt-in on purpose, so a fresh install never locks the operator out by surprise</li>
  * </ul>
  */
 @Plugin(
         id = "folia-routes-sync",
         name = "Folia Routes Sync",
         version = "0.1.0",
-        description = "Syncs Velocity's backend list with folia-smp-mgmt's live routing table"
+        description = "Syncs Velocity's backend list and login access with folia-smp-mgmt"
 )
 public final class FoliaRoutesSyncPlugin {
 
     private final ProxyServer server;
     private final Logger logger;
     private final AtomicReference<String> defaultWorld = new AtomicReference<>();
+    private final AtomicReference<Set<UUID>> approvedUuids = new AtomicReference<>(Set.of());
+    private final AtomicBoolean accessGateEnabled = new AtomicBoolean(false);
 
     @Inject
     public FoliaRoutesSyncPlugin(ProxyServer server, Logger logger) {
@@ -55,13 +72,15 @@ public final class FoliaRoutesSyncPlugin {
         String mgmtUrl = requireEnv("FOLIA_MGMT_URL");
         String apiToken = requireEnv("FOLIA_MGMT_API_TOKEN");
         int pollSeconds = Integer.parseInt(System.getenv().getOrDefault("FOLIA_ROUTES_POLL_SECONDS", "5"));
+        accessGateEnabled.set(Boolean.parseBoolean(System.getenv().getOrDefault("FOLIA_ACCESS_GATE_ENABLED", "false")));
 
-        MgmtRoutesClient client = new MgmtRoutesClient(mgmtUrl, apiToken, Duration.ofSeconds(10));
+        MgmtRoutesClient routesClient = new MgmtRoutesClient(mgmtUrl, apiToken, Duration.ofSeconds(10));
+        AccessGateClient accessGateClient = new AccessGateClient(mgmtUrl, apiToken, Duration.ofSeconds(10));
 
-        logger.info("polling {} every {}s for the live routing table", mgmtUrl, pollSeconds);
+        logger.info("polling {} every {}s (access gate: {})", mgmtUrl, pollSeconds, accessGateEnabled.get() ? "enabled" : "disabled");
 
         server.getScheduler()
-                .buildTask(this, () -> pollAndReconcile(client))
+                .buildTask(this, () -> pollAndReconcile(routesClient, accessGateClient))
                 .repeat(Duration.ofSeconds(pollSeconds))
                 .schedule();
     }
@@ -75,7 +94,26 @@ public final class FoliaRoutesSyncPlugin {
         server.getServer(world).ifPresent(event::setInitialServer);
     }
 
-    private void pollAndReconcile(MgmtRoutesClient client) {
+    @Subscribe
+    public void onLogin(LoginEvent event) {
+        UUID playerId = event.getPlayer().getUniqueId();
+        if (AccessDecision.isAllowed(accessGateEnabled.get(), approvedUuids.get(), playerId)) {
+            return;
+        }
+        logger.info("denied login for {} ({}) — not on the approved list", event.getPlayer().getUsername(), playerId);
+        event.setResult(ComponentResult.denied(
+                Component.text("Access not approved yet. Request access via Discord, then try again.")
+        ));
+    }
+
+    private void pollAndReconcile(MgmtRoutesClient routesClient, AccessGateClient accessGateClient) {
+        reconcileRoutes(routesClient);
+        if (accessGateEnabled.get()) {
+            refreshApprovedUuids(accessGateClient);
+        }
+    }
+
+    private void reconcileRoutes(MgmtRoutesClient client) {
         List<Route> desired;
         try {
             desired = client.fetch();
@@ -109,6 +147,16 @@ public final class FoliaRoutesSyncPlugin {
         }
 
         plan.defaultWorld().ifPresent(defaultWorld::set);
+    }
+
+    private void refreshApprovedUuids(AccessGateClient client) {
+        try {
+            Set<UUID> latest = client.fetchApprovedUuids();
+            approvedUuids.set(latest);
+            logger.debug("access gate: {} approved player(s)", latest.size());
+        } catch (Exception e) {
+            logger.warn("failed to fetch approved players from mgmt, keeping previous list: {}", e.getMessage());
+        }
     }
 
     private static String addressOf(ServerInfo info) {
