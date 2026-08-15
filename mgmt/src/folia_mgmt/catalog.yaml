@@ -52,6 +52,25 @@
     tag — v5.23). sha256 not yet computed; do that before relying on
     integrity checking for this one.
 
+- id: ServerSelector
+  category: lobby
+  source: external
+  version: "2.0"
+  download_url: "https://cdn.modrinth.com/data/em8DRVZA/versions/I2G16GEZ/Crqzys_Server_Selector-2.0.jar"
+  sha256: "1e69e8c2997420ba301c322ad4b82fbc0a3148b2140cd032f981cd1af59766c0"
+  homepage: "https://modrinth.com/plugin/crqzys-server-selector"
+  verified: true
+  notes: >
+    Verified 2026-08-15 — downloaded from Modrinth and sha256'd for real.
+    Installs on the lobby world itself (not the proxy) and switches
+    players to other worlds over the standard BungeeCord/Velocity plugin
+    messaging channel, so it needs no folia-nexa-proxy changes — routes
+    already register every running world by name (see PLAN.md §14B), and
+    that's exactly what this plugin's per-entry `id:` in its config.yml
+    should reference. Small, single-maintainer plugin (a few dozen
+    Modrinth downloads at time of writing) — the download and jar
+    contents are verified, its production-readiness at scale isn't.
+
 - id: HuskClaims
   category: claims
   source: external

@@ -236,6 +236,63 @@ def test_command_error_surfaces_server_detail(tmp_path, monkeypatch, mock_http):
     assert "already exists" in result.output
 
 
+def test_worlds_delete_calls_api_and_warns_unrecoverable(tmp_path, monkeypatch, mock_http):
+    _seed_login(tmp_path, monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "DELETE"
+        assert request.url.path == "/api/v1/worlds/world-minigame-parkour"
+        return httpx.Response(200, json={})
+
+    mock_http(handler)
+    result = runner.invoke(cli.app, ["worlds", "delete", "world-minigame-parkour"])
+    assert result.exit_code == 0, result.output
+    assert "draining 'world-minigame-parkour'" in result.output
+    assert "unrecoverable" in result.output
+
+
+def test_worlds_snapshot_prints_snapshot_name(tmp_path, monkeypatch, mock_http):
+    _seed_login(tmp_path, monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/api/v1/worlds/world-overworld/snapshot"
+        return httpx.Response(200, json={"snapshot": "manual-123"})
+
+    mock_http(handler)
+    result = runner.invoke(cli.app, ["worlds", "snapshot", "world-overworld"])
+    assert result.exit_code == 0, result.output
+    assert "manual-123" in result.output
+
+
+def test_worlds_snapshot_passes_custom_name(tmp_path, monkeypatch, mock_http):
+    _seed_login(tmp_path, monkeypatch)
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(200, json={"snapshot": "before-event"})
+
+    mock_http(handler)
+    result = runner.invoke(cli.app, ["worlds", "snapshot", "world-overworld", "--snapshot-name", "before-event"])
+    assert result.exit_code == 0, result.output
+    assert captured["params"] == {"snapshot_name": "before-event"}
+
+
+def test_worlds_restore_calls_api(tmp_path, monkeypatch, mock_http):
+    _seed_login(tmp_path, monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/api/v1/worlds/world-overworld/restore/before-event"
+        return httpx.Response(200, json={"restored": "before-event"})
+
+    mock_http(handler)
+    result = runner.invoke(cli.app, ["worlds", "restore", "world-overworld", "before-event"])
+    assert result.exit_code == 0, result.output
+    assert "restored 'world-overworld' from snapshot 'before-event'" in result.output
+
+
 def test_plugins_list_formats_rows(tmp_path, monkeypatch, mock_http):
     _seed_login(tmp_path, monkeypatch)
     mock_http(

@@ -21,6 +21,7 @@ host.
 | `configs/worlds/*.sh` | Starter world declarations (CLI wrappers) | Bash |
 | `mgmt/src/folia_mgmt/catalog.yaml` | Curated plugin catalog (PLAN.md §14A) — mgmt generates per-world manifests from this + a world's `plugins` list, no hand-authored manifest files | YAML |
 | `configs/luckperms/provision-mysql.sh` | Plain-LXD-container alternative to `db/` for operators who'd rather not add another snap | Bash |
+| `docs/game-master-howto.md` | Task-oriented guide: designing/deploying a minigame world and configuring the lobby (PLAN.md §14B) | Markdown |
 
 Each of `mgmt/`, `node/`, `proxy/`, `bot/`, `db/` is an independent,
 independently testable component with its own `snapcraft.yaml`. **All
@@ -43,7 +44,7 @@ unverified; only the build step is confirmed.
 ## Running the test suites
 
 ```bash
-# mgmt (Python) — 123 tests
+# mgmt (Python) — 129 tests
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
@@ -298,10 +299,21 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   picker) — hit end-to-end with curl against a real running mgmt server
   (login, list catalog, create a world with `plugins`, confirm the exact
   JSON body the dashboard's picker sends is accepted). The catalog's own
-  data is a mix: `LuckPerms`, `Spark`, and `BlueMap` have real,
-  curl-verified download URLs and checksums; the rest are placeholders
-  (`download_url: null`) pending real vetting — `verified: false` in the
-  catalog flags which is which.
+  data is a mix: `LuckPerms`, `Spark`, `BlueMap`, and `ServerSelector`
+  have real, curl-verified (or downloaded-and-sha256'd, for
+  `ServerSelector`) download URLs and checksums; the rest are
+  placeholders (`download_url: null`) pending real vetting —
+  `verified: false` in the catalog flags which is which.
+- The lobby-as-hub design (PLAN.md §14B): `GET /api/v1/routes` preferring
+  a running `lobby`-type world over an `overworld` for the `default`
+  flag, and the `worlds delete`/`snapshot`/`restore` CLI commands it and
+  `docs/game-master-howto.md` depend on — hit end-to-end against a real
+  running mgmt server (declare a lobby and a minigame world, snapshot,
+  confirm the clean 409 when snapshotting/restoring an unplaced world,
+  delete). Not verified: `ServerSelector` actually switching a player
+  between worlds in a real Velocity+Paper runtime — no live proxy/game
+  client was available in this environment, only the plugin's own
+  download and jar contents.
 - `folia-routes-sync`'s routing diff, JSON parsing, and access-gate logic
   — compiled and unit-tested against the real `velocity-api` jar.
 - `folia-nexa-bot`'s embed-building, auto-approve decision logic,

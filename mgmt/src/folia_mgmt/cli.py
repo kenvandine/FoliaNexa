@@ -178,6 +178,31 @@ def worlds_list(mgmt_url: str | None = None) -> None:
             typer.echo(f"{w['name']:<20} {w['type']:<12} {w['phase']:<14} host={w['host_name']}")
 
 
+@worlds_app.command("delete")
+def worlds_delete(name: str, mgmt_url: str | None = None) -> None:
+    with _client(mgmt_url) as client:
+        resp = client.delete(f"/api/v1/worlds/{name}")
+        _fail_on_error(resp)
+    typer.echo(f"draining '{name}' (container teardown is unrecoverable — snapshot first if you need the data)")
+
+
+@worlds_app.command("snapshot")
+def worlds_snapshot(name: str, snapshot_name: str | None = None, mgmt_url: str | None = None) -> None:
+    with _client(mgmt_url) as client:
+        params = {"snapshot_name": snapshot_name} if snapshot_name else None
+        resp = client.post(f"/api/v1/worlds/{name}/snapshot", params=params)
+        _fail_on_error(resp)
+    typer.echo(f"snapshot '{resp.json()['snapshot']}' taken for '{name}'")
+
+
+@worlds_app.command("restore")
+def worlds_restore(name: str, snapshot_name: str, mgmt_url: str | None = None) -> None:
+    with _client(mgmt_url) as client:
+        resp = client.post(f"/api/v1/worlds/{name}/restore/{snapshot_name}")
+        _fail_on_error(resp)
+    typer.echo(f"restored '{name}' from snapshot '{snapshot_name}'")
+
+
 @plugins_app.command("list")
 def plugins_list(category: str | None = None, mgmt_url: str | None = None) -> None:
     with _client(mgmt_url) as client:

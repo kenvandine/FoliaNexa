@@ -175,3 +175,23 @@ def test_routes_only_lists_running_routable_worlds(client, admin_token, operator
     default_routes = [r for r in resp.json()["routes"] if r["default"]]
     assert len(default_routes) == 1
     assert default_routes[0]["world"] == "world-overworld"
+
+
+def test_routes_prefers_lobby_over_overworld_as_default(client, admin_token, operator_token):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-lobby", "type": "lobby", "cpu_cores": 1, "memory_gb": 1},
+        headers=auth_header(operator_token),
+    )
+
+    resp = client.get("/api/v1/routes", headers=auth_header(operator_token))
+    assert resp.status_code == 200
+    default_routes = [r for r in resp.json()["routes"] if r["default"]]
+    assert len(default_routes) == 1
+    assert default_routes[0]["world"] == "world-lobby"

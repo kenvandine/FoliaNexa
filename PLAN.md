@@ -229,14 +229,14 @@ Each host's `folia` project containers sit on that host's local LXD bridge. `fol
 ```json
 {
   "routes": [
-    {"world": "world-overworld", "type": "overworld", "address": "10.0.1.21:25565", "default": true},
+    {"world": "world-overworld", "type": "overworld", "address": "10.0.1.21:25565"},
     {"world": "world-nether",    "type": "nether",    "address": "10.0.1.22:25565"},
-    {"world": "world-lobby",     "type": "lobby",     "address": "10.0.2.10:25565"}
+    {"world": "world-lobby",     "type": "lobby",     "address": "10.0.2.10:25565", "default": true}
   ]
 }
 ```
 
-and reconciles its own `server-list`/forwarding config (via Velocity's plugin API) against it — no restart required to add or remove a world.
+and reconciles its own `server-list`/forwarding config (via Velocity's plugin API) against it — no restart required to add or remove a world. Exactly one route is flagged `default`: a running `lobby`-type world if one exists, else the fallback is a running `overworld` (`routers/routes.py`'s `_pick_default` — see §14B for the lobby-as-hub design this exists for).
 
 ---
 
@@ -482,6 +482,13 @@ The matrix above is a design reference; the thing mgmt and worlds actually use i
 - **CLI**: `folia-nexa-mgmt plugins list [--category]` and `plugins show <id>` browse the catalog; `worlds create --plugin <id>` (repeatable) takes catalog ids.
 - **Dashboard**: the "Plugins" tab lists the catalog (id, category, source, version, verified/unverified, homepage); the "Declare a world" form has a checkbox picker populated from the same catalog instead of free text.
 - Declaring any plugins requires `FOLIA_MGMT_PUBLIC_URL` to be set (the address the world's `plugins-manifest-url` points back at) — enforced at world-creation time.
+
+### 14B. The Lobby as a Hub
+
+A `lobby`-type world is where players land first and pick which game/world to join next — not just another entry in the world list. Two pieces make that actually work:
+
+- **It's the default landing point.** `GET /api/v1/routes` (§7) flags exactly one route `default: true`, and `_pick_default` in `routers/routes.py` prefers a running `lobby` world over a running `overworld` — so as soon as a cluster declares a lobby, new connections land there automatically, no proxy config change needed. Multiple lobby worlds are unlikely (a hub is meant to be the one shared front door) but if there ever are, the pick is deterministic (lowest name), not row-order-dependent.
+- **It's where players choose a game.** The proxy already knows every running world by name — `folia-routes-sync` registers each one as a Velocity backend server as soon as mgmt reports it `running` (§7). That means the zero-plugin path already works: any player connected through the proxy can run `/server <world-name>` (Velocity's built-in command) to jump to any other running world, tab-completed from the live registration list. For a friendlier in-game menu instead of a raw command, the catalog's `ServerSelector` entry (category `lobby`) is a Paper plugin installed *on the lobby world itself* — not the proxy — that gives players a compass/GUI and switches them over the standard BungeeCord/Velocity plugin-messaging channel, so it needs no `folia-nexa-proxy` changes either. Its per-entry `id:` in `config.yml` should be set to the target world's name (the same string mgmt uses for `world.name` and the proxy uses for the backend server name) — see `docs/game-master-howto.md` for a worked example.
 
 ---
 

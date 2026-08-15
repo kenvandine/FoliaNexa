@@ -53,6 +53,8 @@ Full design rationale, data model, and API reference live in **[PLAN.md](PLAN.md
 
 **Bootstrapping a real cluster from scratch?** See **[CLAUDE.md](CLAUDE.md)** — it's a phase-by-phase runbook (prerequisites → build/install the snaps → trust a host → declare worlds → bring up the proxy) with exact commands, not just a description.
 
+**Designing and deploying a minigame world, or setting up the lobby players land in?** See **[docs/game-master-howto.md](docs/game-master-howto.md)** — sizing, picking plugins from the catalog, deploying, wiring it into the lobby's server selector, and tearing it down again.
+
 **Want a running cluster fast?** [`configs/`](configs/) has a starter world set — one survival world with a full plugin loadout, two minigames (SkyWars, BedWars) — declared via one script once mgmt is up:
 
 ```bash
@@ -64,7 +66,7 @@ Full design rationale, data model, and API reference live in **[PLAN.md](PLAN.md
 **Just want to run the test suites?**
 
 ```bash
-# mgmt (Python, 123 tests)
+# mgmt (Python, 129 tests)
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]" && .venv/bin/pytest -q
 
 # node (Python, 15 tests)
@@ -79,7 +81,7 @@ cd proxy && ./gradlew test
 
 ## Status
 
-177 automated tests passing across four components (123 mgmt, 15 node, 15 bot, 24 proxy). All five snaps build successfully with real `snapcraft` (that build pass caught and fixed two real bugs — see CLAUDE.md). Every mgmt API endpoint, the scheduler, the CLI, and the dashboard have been exercised against a real running server, not just a test client; `folia-nexa-db`'s entrypoint script was run end-to-end against real MariaDB binaries. Full breakdown of what's verified against real tooling versus what's written against a documented contract but not yet exercised live (installing/running the snaps, a registered Discord application) is in [CLAUDE.md](CLAUDE.md#whats-real-vs-whats-documented-but-unverified).
+183 automated tests passing across four components (129 mgmt, 15 node, 15 bot, 24 proxy). All five snaps build successfully with real `snapcraft` (that build pass caught and fixed two real bugs — see CLAUDE.md). Every mgmt API endpoint, the scheduler, the CLI, and the dashboard have been exercised against a real running server, not just a test client; `folia-nexa-db`'s entrypoint script was run end-to-end against real MariaDB binaries. Full breakdown of what's verified against real tooling versus what's written against a documented contract but not yet exercised live (installing/running the snaps, a registered Discord application) is in [CLAUDE.md](CLAUDE.md#whats-real-vs-whats-documented-but-unverified).
 
 This is under active development — expect gaps, and check `PLAN.md`'s inline status notes before assuming a described feature is fully wired up.
 

@@ -28,6 +28,14 @@ def test_get_plugin_unknown_id_returns_none():
     assert get_plugin(Settings(), "NotARealPlugin") is None
 
 
+def test_server_selector_is_a_verified_lobby_entry():
+    entry = get_plugin(Settings(), "ServerSelector")
+    assert entry is not None
+    assert entry.category == "lobby"
+    assert entry.verified is True
+    assert entry.download_url is not None
+
+
 def test_override_file_adds_new_entry(tmp_path):
     state_dir = tmp_path / "state"
     state_dir.mkdir()
