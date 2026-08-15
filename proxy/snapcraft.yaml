@@ -1,0 +1,80 @@
+name: velocity-proxy
+version: '3.5.1'
+summary: Velocity proxy with live routing synced from folia-smp-mgmt
+description: |
+  Velocity Next-Gen proxy, packaged with the folia-routes-sync plugin
+  (this directory's Gradle project) that keeps the backend server list in
+  sync with folia-smp-mgmt's GET /api/v1/routes — worlds can come and go
+  without a proxy restart. See PLAN.md §7, §8C.
+base: core24
+confinement: strict
+grade: stable
+
+environment:
+  JAVA_HOME: $SNAP/usr/lib/jvm/java-21-openjdk-amd64
+  PATH: $SNAP/usr/lib/jvm/java-21-openjdk-amd64/bin:$PATH
+
+apps:
+  daemon:
+    command: bin/run-velocity.sh
+    daemon: simple
+    restart-condition: on-failure
+    restart-delay: 5s
+    plugs: [network, network-bind]
+
+parts:
+  # Builds folia-routes-sync-<version>.jar via the real Gradle wrapper in
+  # this directory (verified locally with `./gradlew build` — 15/15 tests
+  # pass, jar contains the annotation-processor-generated
+  # velocity-plugin.json). snapcraft's `gradle` plugin invokes ./gradlew
+  # itself; its output lands under $CRAFT_PART_INSTALL/plugins and is
+  # merged into the final snap tree automatically, no explicit copy step
+  # needed between parts.
+  routes-sync-plugin:
+    plugin: gradle
+    source: .
+    gradle-task: shadowJar
+    build-packages:
+      - openjdk-21-jdk-headless
+    override-build: |
+      craftctl default
+      mkdir -p $CRAFT_PART_INSTALL/plugins
+      cp build/libs/folia-routes-sync-*.jar $CRAFT_PART_INSTALL/plugins/
+
+  velocity-runtime:
+    plugin: nil
+    stage-packages:
+      - openjdk-21-jre-headless
+    override-build: |
+      set -e
+      # Resolve the latest PaperMC build for this Velocity version at
+      # build time rather than pinning a build number that goes stale.
+      BUILD=$(curl -sf "https://api.papermc.io/v2/projects/velocity/versions/${CRAFT_PROJECT_VERSION}/builds" \
+        | python3 -c "import json,sys; print(json.load(sys.stdin)['builds'][-1]['build'])")
+      curl -sf -o $CRAFT_PART_INSTALL/velocity.jar \
+        "https://api.papermc.io/v2/projects/velocity/versions/${CRAFT_PROJECT_VERSION}/builds/${BUILD}/downloads/velocity-${CRAFT_PROJECT_VERSION}-${BUILD}.jar"
+
+      mkdir -p $CRAFT_PART_INSTALL/bin
+      cat << 'EOF' > $CRAFT_PART_INSTALL/bin/run-velocity.sh
+      #!/bin/bash
+      set -euo pipefail
+      PROXY_DIR="$SNAP_COMMON/proxy"
+      mkdir -p "$PROXY_DIR/plugins"
+      cd "$PROXY_DIR"
+
+      # First run: seed the working directory from the snap's read-only
+      # payload. Never overwrite an operator-edited velocity.toml/plugin
+      # set on subsequent runs.
+      [ -f velocity.jar ] || cp "$SNAP/velocity.jar" velocity.jar
+      for jar in "$SNAP"/plugins/*.jar; do
+        [ -f "plugins/$(basename "$jar")" ] || cp "$jar" "plugins/"
+      done
+
+      # FOLIA_MGMT_URL / FOLIA_MGMT_API_TOKEN / FOLIA_ROUTES_POLL_SECONDS —
+      # see folia-routes-sync's FoliaRoutesSyncPlugin javadoc. Operator-
+      # provided, not shipped with the snap.
+      [ -f config.env ] && source config.env
+
+      exec java -Xms1G -Xmx2G -XX:+UseG1GC -jar velocity.jar
+      EOF
+      chmod +x $CRAFT_PART_INSTALL/bin/run-velocity.sh

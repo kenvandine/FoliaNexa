@@ -4,3 +4,8 @@ __pycache__/
 .venv/
 .pytest_cache/
 *.db
+
+# Java (proxy/) — gradlew/gradle-wrapper.jar ARE committed on purpose
+build/
+.gradle/
+out/
