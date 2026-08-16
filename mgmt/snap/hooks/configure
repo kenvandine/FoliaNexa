@@ -1,0 +1,9 @@
+#!/bin/sh
+# Restarts the daemon after `snap set folia-nexa-mgmt <key>=<value>` so
+# scripts/run-mgmt-daemon.sh's snapctl-get re-reads the new value. No-op on
+# first install (before `snap start` has ever run) — nothing to restart yet.
+set -e
+
+if snapctl services "$SNAP_NAME.daemon" | tail -n +2 | grep -q ' active '; then
+  snapctl restart "$SNAP_NAME.daemon"
+fi

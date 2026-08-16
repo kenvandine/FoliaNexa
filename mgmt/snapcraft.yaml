@@ -20,12 +20,17 @@ apps:
     plugs: [network]
 
   daemon:
-    command: bin/folia-nexa-mgmt serve
+    command: bin/run-mgmt-daemon.sh
     daemon: simple
     restart-condition: on-failure
     restart-delay: 5s
     plugs: [network, network-bind]
 
+# `snap set folia-nexa-mgmt listen-port=<port>` overrides Settings.listen_port
+# (default 8443) without a hand-rolled systemd drop-in — useful when this
+# snap and a host's own LXD remote API (also default 8443) share a machine.
+# scripts/run-mgmt-daemon.sh reads it via snapctl at every daemon start;
+# snap/hooks/configure restarts the daemon whenever it's changed.
 parts:
   mgmt:
     plugin: python
@@ -33,3 +38,6 @@ parts:
     python-packages: []
     stage-packages:
       - libargon2-1
+    override-build: |
+      craftctl default
+      install -m 0755 scripts/run-mgmt-daemon.sh "$CRAFT_PART_INSTALL/bin/run-mgmt-daemon.sh"
