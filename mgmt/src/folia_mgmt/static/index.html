@@ -228,10 +228,40 @@
 
     <section id="panel-plugins" class="panel">
       <div class="card">
+        <h2 id="plugin-form-title">Add a catalog entry</h2>
+        <p class="hint">Writes to the operator override file, which always wins over the bundled catalog for this id — no mgmt release needed to add a plugin, bump a download URL to a new version, or flip <code>verified</code> once you've actually checked the download. A world that already declares this plugin picks up the change on its next restart (folia-nexa-node re-fetches the manifest every time — see PLAN.md §9).</p>
+        <form onsubmit="return savePluginEntry(event)">
+          <div class="inline" style="margin-bottom:0.5rem">
+            <input id="pl-id" placeholder="Plugin id (e.g. LuckPerms)" required>
+            <input id="pl-category" placeholder="Category (e.g. permissions)" required>
+            <select id="pl-source">
+              <option value="external">external</option>
+              <option value="in-house">in-house</option>
+            </select>
+            <input id="pl-version" placeholder="Version" required style="width:8rem">
+          </div>
+          <div class="inline" style="margin-bottom:0.5rem">
+            <input id="pl-download-url" placeholder="download_url (https://...)" style="flex:1;min-width:16rem">
+            <input id="pl-sha256" placeholder="sha256 (optional)" style="width:20rem">
+          </div>
+          <div class="inline" style="margin-bottom:0.5rem">
+            <input id="pl-homepage" placeholder="homepage (optional)" style="flex:1;min-width:16rem">
+            <label style="display:inline-flex;align-items:center;gap:0.3rem;font-size:0.85rem"><input type="checkbox" id="pl-verified"> verified</label>
+            <label style="display:inline-flex;align-items:center;gap:0.3rem;font-size:0.85rem"><input type="checkbox" id="pl-default-all"> on every world</label>
+          </div>
+          <textarea id="pl-notes" placeholder="notes (optional)" rows="2" style="width:100%;margin-bottom:0.5rem"></textarea>
+          <button class="btn" type="submit">Save</button>
+          <button type="button" class="btn ghost" onclick="clearPluginForm()">Clear / add new</button>
+          <span id="plugin-form-saved" class="hint"></span>
+        </form>
+        <div id="plugin-form-error" class="error"></div>
+      </div>
+
+      <div class="card">
         <h2>Curated plugin catalog</h2>
         <p class="hint">Vetted external plugins (pinned versions) plus in-house plugins, bundled with mgmt and extendable via an operator override file. Select these by id in a world's plugin list — see PLAN.md §14.</p>
         <table>
-          <thead><tr><th>Id</th><th>Category</th><th>Source</th><th>Version</th><th>Status</th><th>Homepage</th></tr></thead>
+          <thead><tr><th>Id</th><th>Category</th><th>Source</th><th>Version</th><th>Status</th><th>Homepage</th><th></th></tr></thead>
           <tbody id="plugins-body"></tbody>
         </table>
       </div>
@@ -652,14 +682,91 @@ function renderPluginsTable() {
   if (!body) return;
   body.innerHTML = state.catalog.map(p => `
     <tr>
-      <td>${escapeHtml(p.id)}</td>
+      <td>${escapeHtml(p.id)}${p.default_for_all_worlds ? ' <span class="hint">(every world)</span>' : ''}</td>
       <td>${escapeHtml(p.category)}</td>
       <td>${escapeHtml(p.source)}</td>
       <td>${escapeHtml(p.version)}</td>
-      <td>${p.verified ? '<span class="pill running">verified</span>' : '<span class="pill pending">unverified</span>'}${p.download_url ? '' : ' <span class="hint">(no download url yet)</span>'}</td>
+      <td>${p.verified ? '<span class="pill running">verified</span>' : '<span class="pill pending">unverified</span>'}${p.download_url ? '' : ' <span class="hint">(no download url yet)</span>'}${p.is_override ? ' <span class="pill" style="color:var(--accent);border-color:var(--accent)">customized</span>' : ''}</td>
       <td>${p.homepage ? `<a href="${escapeHtml(p.homepage)}" target="_blank" rel="noopener">link</a>` : '—'}</td>
+      <td class="row-actions">
+        <button class="btn ghost" onclick="openPluginEditForm('${escapeHtml(p.id)}')">Edit</button>
+        ${p.is_override ? `<button class="btn danger" onclick="deletePluginOverride('${escapeHtml(p.id)}')">Reset/remove</button>` : ''}
+      </td>
     </tr>
-  `).join('') || '<tr><td colspan="6" class="hint">No plugins in the catalog yet.</td></tr>';
+  `).join('') || '<tr><td colspan="7" class="hint">No plugins in the catalog yet.</td></tr>';
+}
+
+function openPluginEditForm(id) {
+  const p = state.catalog.find(entry => entry.id === id);
+  if (!p) return;
+  document.getElementById('plugin-form-title').textContent = 'Edit catalog entry: ' + p.id;
+  document.getElementById('pl-id').value = p.id;
+  document.getElementById('pl-id').disabled = true;
+  document.getElementById('pl-category').value = p.category;
+  document.getElementById('pl-source').value = p.source;
+  document.getElementById('pl-version').value = p.version;
+  document.getElementById('pl-download-url').value = p.download_url || '';
+  document.getElementById('pl-sha256').value = p.sha256 || '';
+  document.getElementById('pl-homepage').value = p.homepage || '';
+  document.getElementById('pl-verified').checked = !!p.verified;
+  document.getElementById('pl-default-all').checked = !!p.default_for_all_worlds;
+  document.getElementById('pl-notes').value = p.notes || '';
+  document.getElementById('plugin-form-error').textContent = '';
+  document.getElementById('plugin-form-saved').textContent = '';
+  document.getElementById('pl-id').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function clearPluginForm() {
+  document.getElementById('plugin-form-title').textContent = 'Add a catalog entry';
+  document.getElementById('pl-id').disabled = false;
+  for (const id of ['pl-id', 'pl-category', 'pl-version', 'pl-download-url', 'pl-sha256', 'pl-homepage', 'pl-notes']) {
+    document.getElementById(id).value = '';
+  }
+  document.getElementById('pl-source').value = 'external';
+  document.getElementById('pl-verified').checked = false;
+  document.getElementById('pl-default-all').checked = false;
+  document.getElementById('plugin-form-error').textContent = '';
+  document.getElementById('plugin-form-saved').textContent = '';
+}
+
+async function savePluginEntry(event) {
+  event.preventDefault();
+  const errorEl = document.getElementById('plugin-form-error');
+  const savedEl = document.getElementById('plugin-form-saved');
+  errorEl.textContent = '';
+  savedEl.textContent = '';
+  const id = document.getElementById('pl-id').value.trim();
+  try {
+    await api('/plugins/' + encodeURIComponent(id), {
+      method: 'PUT',
+      body: JSON.stringify({
+        category: document.getElementById('pl-category').value.trim(),
+        source: document.getElementById('pl-source').value,
+        version: document.getElementById('pl-version').value.trim(),
+        download_url: document.getElementById('pl-download-url').value.trim() || null,
+        sha256: document.getElementById('pl-sha256').value.trim() || null,
+        homepage: document.getElementById('pl-homepage').value.trim() || null,
+        verified: document.getElementById('pl-verified').checked,
+        default_for_all_worlds: document.getElementById('pl-default-all').checked,
+        notes: document.getElementById('pl-notes').value.trim() || null,
+      }),
+    });
+    savedEl.textContent = 'Saved.';
+    await loadCatalog();
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+  return false;
+}
+
+async function deletePluginOverride(id) {
+  if (!confirm(`Remove the override for "${id}"? If it exists in the bundled catalog it'll fall back to that; otherwise it disappears entirely.`)) return;
+  try {
+    await api('/plugins/' + encodeURIComponent(id), { method: 'DELETE' });
+    await loadCatalog();
+  } catch (e) {
+    document.getElementById('plugin-form-error').textContent = e.message;
+  }
 }
 
 async function loadDatapackCatalog() {

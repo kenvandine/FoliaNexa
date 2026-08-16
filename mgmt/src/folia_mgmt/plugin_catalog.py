@@ -56,9 +56,13 @@ def _load_yaml_entries(path: Path) -> list[PluginEntry]:
     return [PluginEntry(**item) for item in raw]
 
 
+def _override_path(settings: Settings) -> Path:
+    return settings.state_dir / "plugin-catalog-override.yaml"
+
+
 def load_catalog(settings: Settings) -> list[PluginEntry]:
     bundled = _load_yaml_entries(settings.plugin_catalog_path)
-    overrides = _load_yaml_entries(settings.state_dir / "plugin-catalog-override.yaml")
+    overrides = _load_yaml_entries(_override_path(settings))
 
     by_id: dict[str, PluginEntry] = {entry.id: entry for entry in bundled}
     for entry in overrides:
@@ -72,3 +76,43 @@ def get_plugin(settings: Settings, plugin_id: str) -> PluginEntry | None:
         if entry.id == plugin_id:
             return entry
     return None
+
+
+def overridden_ids(settings: Settings) -> set[str]:
+    """Which ids currently have an entry in the operator override file —
+    i.e. edited/added from the dashboard rather than only the bundled,
+    PR-reviewed catalog.yaml. Lets the dashboard show which entries can
+    be reset back to the bundled version (save_plugin_override always
+    writes here; delete_plugin_override only ever removes from here, the
+    bundled catalog itself is never touched at runtime)."""
+    return {entry.id for entry in _load_yaml_entries(_override_path(settings))}
+
+
+def save_plugin_override(settings: Settings, entry: PluginEntry) -> None:
+    """Upserts one entry into the operator override file — this is how
+    the dashboard's Plugins tab adds a new catalog entry or edits an
+    existing one (new download_url for a version bump, verified: true
+    after checking a download for real, etc.) without needing a new mgmt
+    release, same as hand-editing the file already worked before this had
+    an API in front of it."""
+    path = _override_path(settings)
+    entries = _load_yaml_entries(path)
+    by_id = {e.id: e for e in entries}
+    by_id[entry.id] = entry
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump([e.model_dump() for e in by_id.values()], sort_keys=False))
+
+
+def delete_plugin_override(settings: Settings, plugin_id: str) -> bool:
+    """Removes plugin_id from the override file only — if it also exists
+    in the bundled catalog.yaml, load_catalog falls back to that version;
+    if it was override-only (an operator-added entry with no bundled
+    counterpart), this makes it disappear from the catalog entirely.
+    Returns whether an override entry actually existed to remove."""
+    path = _override_path(settings)
+    entries = _load_yaml_entries(path)
+    remaining = [e for e in entries if e.id != plugin_id]
+    if len(remaining) == len(entries):
+        return False
+    path.write_text(yaml.safe_dump([e.model_dump() for e in remaining], sort_keys=False))
+    return True
