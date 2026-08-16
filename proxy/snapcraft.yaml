@@ -129,6 +129,11 @@ parts:
       show-plugins = false
       EOF
 
+      # 64x64 server-list icon shown next to the motd — Velocity picks up
+      # server-icon.png automatically from the same directory as
+      # velocity.toml, no config.env entry needed.
+      cp "$CRAFT_PART_SRC/server-icon.png" $CRAFT_PART_INSTALL/server-icon.png
+
       mkdir -p $CRAFT_PART_INSTALL/bin
       cat << 'EOF' > $CRAFT_PART_INSTALL/bin/run-velocity.sh
       #!/bin/bash
@@ -146,6 +151,7 @@ parts:
       # $PROXY_DIR/plugins/ once, post-install, and it'll stick.
       [ -f velocity.jar ] || cp "$SNAP/velocity.jar" velocity.jar
       [ -f velocity.toml ] || cp "$SNAP/velocity.toml" velocity.toml
+      [ -f server-icon.png ] || cp "$SNAP/server-icon.png" server-icon.png
       for jar in "$SNAP"/plugins/*.jar; do
         [ -f "plugins/$(basename "$jar")" ] || cp "$jar" "plugins/"
       done
