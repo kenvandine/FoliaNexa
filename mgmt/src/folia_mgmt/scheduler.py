@@ -17,6 +17,7 @@ from sqlmodel import Session, select
 
 from folia_mgmt.access_apply import apply_whitelist
 from folia_mgmt.config import Settings, get_settings
+from folia_mgmt.folianexa_stats import apply_stats_config
 from folia_mgmt.luckperms import apply_luckperms_config
 from folia_mgmt.lxd_client import LXDClient, LXDError, extract_ipv4
 from folia_mgmt.models import Host, HostStatus, MinecraftVersionConfig, World, WorldPhase
@@ -297,6 +298,19 @@ def sync_luckperms_configs(session: Session, lxd_client: LXDClient, settings: Se
             apply_luckperms_config(lxd_client, host, world, settings)
 
 
+def sync_stats_configs(session: Session, lxd_client: LXDClient, settings: Settings) -> None:
+    """Keeps every FoliaNexaStats-enabled running world's config.yml
+    pointed at a real mgmt API token, so its periodic stats reports
+    don't 401 — see folianexa_stats.py's module docstring."""
+    worlds = session.exec(select(World).where(World.phase == WorldPhase.running)).all()
+    for world in worlds:
+        if "FoliaNexaStats" not in world.plugins:
+            continue
+        host = session.exec(select(Host).where(Host.name == world.host_name)).first()
+        if host is not None:
+            apply_stats_config(session, lxd_client, host, world, settings)
+
+
 def reconcile(
     session: Session,
     lxd_client: LXDClient,
@@ -316,6 +330,7 @@ def reconcile(
     recover_crashed_worlds(session, lxd_client)
     sync_whitelisted_worlds(session, lxd_client)
     sync_luckperms_configs(session, lxd_client, settings)
+    sync_stats_configs(session, lxd_client, settings)
 
     for world in session.exec(select(World).where(World.phase == WorldPhase.draining)).all():
         teardown_world(session, lxd_client, world)
