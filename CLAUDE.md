@@ -370,12 +370,19 @@ sudo ./deploy/vps/setup-wireguard.sh --role vps --peer-name node-a --peer-public
 sudo systemctl enable --now wg-quick@wg0   # both ends
 
 # On the VPS: relocate folia-nexa-proxy here (FOLIA_MGMT_URL now points
-# at mgmt's WireGuard-reachable address), then Caddy for TLS + routing:
-sudo cp deploy/vps/Caddyfile /etc/caddy/Caddyfile   # filled in first
+# at mgmt's WireGuard-reachable address), then Caddy for TLS + routing.
+# One cluster's admin/api/portal site blocks per ./add-cluster.sh call —
+# see PLAN.md §7D if this VPS is fanning out to more than one:
+cd deploy/vps
+./add-cluster.sh --id mycluster --admin-domain admin.example.com \
+  --api-domain api.example.com --play-domain play.example.com \
+  --mgmt-upstream <mgmt-tunnel-address>:8443
+sudo cp Caddyfile /etc/caddy/Caddyfile
+sudo cp -r clusters.d /etc/caddy/
 sudo systemctl reload caddy
 
 # Deploy the static portal:
-./deploy/vps/deploy-portal.sh --vps-host root@<vps-ip>
+./deploy-portal.sh --vps-host root@<vps-ip>
 ```
 
 The player hub's data (leaderboards, profiles) comes from a new mgmt-side
@@ -384,6 +391,19 @@ public_stats.py`) fed by a new plugin, catalog id `FoliaNexaStats`
 (`mgmt/src/folia_mgmt/catalog.yaml`) — as of this writing that catalog
 entry is a placeholder pending the plugin's first real release; see the
 entry's own `notes`.
+
+**Fanning one VPS proxy out to multiple independent private clusters**
+(PLAN.md §7D) — distinct from the single-cluster, multi-*host* domain
+routing above (PLAN.md §7C) — is `./add-cluster.sh` called once per
+independent cluster (each with its own mgmt, reachable over its own
+`--role vps --peer-name <id>` WireGuard peer) plus
+`folia-nexa-proxy`'s `FOLIA_MGMT_CLUSTER_IDS`/
+`FOLIA_MGMT_CLUSTER_<ID>_URL`/`FOLIA_MGMT_CLUSTER_<ID>_TOKEN`/
+`FOLIA_MGMT_PRIMARY_CLUSTER` env vars in place of the single
+`FOLIA_MGMT_URL`/`FOLIA_MGMT_API_TOKEN` pair (see
+`FoliaRoutesSyncPlugin`'s javadoc for the full shape). Bedrock still can't
+be routed per-cluster (no SNI/hostname in RakNet) and always lands on
+whichever cluster is configured as primary.
 
 ## What's real vs. what's documented-but-unverified
 
@@ -486,6 +506,21 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   `--peer-name` replaces only that peer's block without touching others.
   `--role home` is byte-for-byte unchanged from its previously-verified
   behavior.
+- Multi-cluster edge (PLAN.md §7D) — one proxy fanning out to N
+  independent private mgmt clusters, distinct from §7C's single-cluster
+  multi-host routing above: `ClusterConfig`, `ServerName`, and
+  `DomainRouteMerger` (all pure logic, no Velocity dependency) and the
+  `FoliaRoutesSyncPlugin` refactor built on them — real Gradle test run,
+  62 tests total (up from 35). `deploy/vps/Caddyfile`'s
+  `import clusters.d/*.caddy` plus `add-cluster.sh`'s generated output —
+  validated with a real `caddy validate` (Caddy 2.9.1) for both the
+  empty-`clusters.d` default and a real two-cluster example, including
+  confirming `add-cluster.sh` re-running for one `--id` leaves every
+  other cluster's file untouched. `setup-wireguard.sh`'s new
+  `AllowedIPs` overlap check on `--role vps` — same fake-`wg`-binary dry
+  run as §7C's mesh work; confirmed it accepts disjoint LAN subnets,
+  refuses a colliding one with a specific peer-naming error, and doesn't
+  false-positive on an existing peer's own unchanged `--allowed-ips`.
 
 Written against documented API contracts but **not** exercised against
 live infrastructure:
@@ -516,6 +551,14 @@ live infrastructure:
   without real VPS + home hardware. The `FoliaNexaStats` plugin that
   feeds the player hub also doesn't exist yet as a real, released
   plugin — see `mgmt/src/folia_mgmt/catalog.yaml`'s entry for it.
+- The multi-cluster edge's (PLAN.md §7D) actual claims specifically: a
+  real Java client connecting to two genuinely independent mgmt clusters
+  through one live proxy instance and landing on the correct one, a real
+  Discord chat bridge round-trip per cluster, and a real WireGuard mesh
+  spanning two truly separate operators' networks (as opposed to the
+  same operator's several home hosts, which is what §7C's mesh work
+  actually exercised) — none of that is exercisable without real,
+  independently-operated infrastructure on both sides.
 - Bedrock client support (PLAN.md §7B): a real Bedrock/console/mobile
   client actually joining through Geyser-Velocity, and the full
   `snapcraft` build of `proxy/`'s new `geyser-plugins` part — neither a

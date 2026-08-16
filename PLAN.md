@@ -468,6 +468,110 @@ as the rest of §7A/§7B.
 
 ---
 
+## 7D. Multi-Cluster Edge (Independent Private Clusters Behind One Proxy)
+
+§7C's `Host.domains` routes to multiple *hosts inside one mgmt's own
+inventory* — still one mgmt process, one database, one operator. This
+section covers a broader, distinct case: **one VPS-edge proxy fanning out
+to N fully independent FoliaNexa clusters** — separate mgmt processes,
+separate databases, potentially separate operators, each reachable over
+its own WireGuard tunnel peer — so that e.g. `{admin,play,api}.domain1.com`
+lands on domain1's own cluster and `{admin,play,api}.domain2.com` lands on
+domain2's, with neither cluster's mgmt ever aware the other exists.
+
+**Two independent layers, not one.** Browser/HTTP traffic (`admin.*`,
+`api.*`) and Minecraft traffic (`play.*`) are routed by entirely different
+software for entirely different reasons, and this section's job is to keep
+both consistent per-cluster rather than to unify them:
+
+- **Caddy** (`deploy/vps/Caddyfile` + `deploy/vps/clusters.d/`) owns
+  `admin.*`/`api.*`. There's no single `$ADMIN_DOMAIN`/`$MGMT_UPSTREAM` env
+  var pair once there's more than one cluster — each cluster's three site
+  blocks (admin/api/portal) are generated as literal, fully-resolved text
+  into their own file, `clusters.d/<id>.caddy`, by `add-cluster.sh`, and
+  the top-level `Caddyfile` just does `import clusters.d/*.caddy`. Same
+  "one file per thing, re-running one never disturbs another" discipline
+  §7C's WireGuard `peers.d/` already established. `clusters.d/*.caddy` is
+  gitignored (real operator domains/tunnel addresses, generated on the VPS
+  itself, not source) — `clusters.d/README.md` is the only tracked file,
+  so the directory still exists in a fresh checkout with zero clusters
+  configured (`import` of an empty glob is a Caddy warning, not an error —
+  confirmed with a real `caddy validate`, Caddy 2.9.1).
+- **`folia-nexa-proxy`** owns `play.*` (the Java client's actual game
+  connection — never HTTP, never touches Caddy at all). `FoliaRoutesSyncPlugin`
+  now polls a *list* of independent mgmt clusters instead of exactly one:
+  `ClusterConfig.parse` reads either the original single-cluster env vars
+  (`FOLIA_MGMT_URL`/`FOLIA_MGMT_API_TOKEN`, unchanged — becomes one cluster
+  named `"default"`, so an existing single-cluster deployment needs zero
+  config changes) or, for real multi-cluster use,
+  `FOLIA_MGMT_CLUSTER_IDS` (comma/whitespace-separated short ids) plus
+  per-id `FOLIA_MGMT_CLUSTER_<ID>_URL`/`FOLIA_MGMT_CLUSTER_<ID>_TOKEN`, and
+  `FOLIA_MGMT_PRIMARY_CLUSTER` to pick which cluster's default world
+  backstops a connection with no hostname at all (defaults to the first id
+  listed). Every registered Velocity server name is qualified with its
+  owning cluster's id (`ServerName.qualify`, e.g.
+  `domain1__world-overworld`) so two clusters' same-named worlds never
+  collide in Velocity's single global server registry; `reconcileRoutes`
+  scopes its register/unregister diff to just that cluster's own
+  `<id>__`-prefixed entries, so one cluster's route table never touches
+  another's registrations. Each configured cluster's own `domains` map
+  (§7C, still validated for uniqueness only within that one mgmt's
+  inventory) is merged into one flat lookup by `DomainRouteMerger` — first
+  cluster in configured order wins a same-domain collision between two
+  operators, logged rather than silently flip-flopping between polls
+  (mgmt instances can't know about each other, so this can't be prevented
+  up front, only resolved deterministically). Access-gate approval lists,
+  the Discord chat bridge, and the ping MOTD/icon are all resolved
+  per-cluster too, via the same virtual-host-to-cluster lookup
+  (`resolveCluster`) — a player's Discord-bridged chat message reports to
+  *their* cluster's mgmt with the original unqualified world name, not the
+  proxy-internal qualified one; a `msg.world() == null` broadcast reaches
+  only that cluster's own connected players, not every cluster this proxy
+  happens to also serve.
+
+**Bedrock is unchanged from §7C** — still no per-cluster routing, same
+protocol limitation (RakNet has no SNI/hostname concept), still resolves
+to the configured primary cluster's own default world regardless of
+which domain/IP a Bedrock client used.
+
+**WireGuard `AllowedIPs` collision risk.** §7C's `peers.d/` mesh was
+designed for one operator's several home hosts feeding one mgmt, where
+picking non-overlapping tunnel/LAN ranges is one person's job. With
+genuinely independent operators sharing one VPS, two home LXD bridges
+landing on the same default subnet (`192.168.1.0/24` above all — an
+extremely common default) is a real, not theoretical, failure mode:
+WireGuard's crypto-routing table requires every peer's `AllowedIPs` on one
+interface to be disjoint, or traffic silently misroutes between tenants.
+`setup-wireguard.sh --role vps` now checks a new peer's `--allowed-ips`
+against every other already-configured peer's before writing it
+(`check_allowed_ips_overlap`, real `ipaddress`-module Python invoked from
+bash — falls back to a loud warning rather than blocking if `python3`
+isn't on `PATH`) and refuses to add it on any overlap, rather than
+silently misrouting one tenant's traffic into another's network.
+
+**What's real vs. unverified:** `ClusterConfig`, `ServerName`, and
+`DomainRouteMerger` are pure logic with a real Gradle test run
+(`ClusterConfigTest`, `ServerNameTest`, `DomainRouteMergerTest`), as is the
+full `FoliaRoutesSyncPlugin` refactor built on top of them (compiles and
+the whole existing proxy suite still passes, 62 tests total). The
+generated `Caddyfile`/`clusters.d/*.caddy` output was validated with a
+real `caddy validate` (Caddy 2.9.1) for both the empty-`clusters.d`
+default and a real two-cluster example, including confirming
+`add-cluster.sh` re-running for one `--id` leaves every other cluster's
+file byte-for-byte untouched. `setup-wireguard.sh`'s new overlap check was
+exercised with the same fake-`wg`-binary dry run §7C's mesh work used —
+confirmed it accepts two peers with disjoint LAN subnets, refuses a third
+whose subnet collides with an existing one (with a specific `CONFLICT:`
+line naming both peers), and doesn't false-positive when re-running an
+existing peer's own name with unchanged `--allowed-ips`. Not verified,
+same limitation as §7A/§7B/§7C: a real Java client actually connecting to
+two genuinely independent mgmt clusters through one live proxy instance,
+a real Discord chat bridge round-trip per cluster, or a real multi-peer
+WireGuard mesh spanning two truly separate operators' networks — no live
+infrastructure was reachable to test any of that in this environment.
+
+---
+
 ## 8. Snap Packaging Specifications
 
 ### A. `folia-nexa-mgmt` snap

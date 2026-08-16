@@ -207,17 +207,83 @@ connections always land on the cluster's single global default world,
 regardless of which domain/IP the client used. This is a protocol
 limitation, not a configuration gap — there's nothing to tune here.
 
+## Fanning one proxy out to multiple independent clusters
+
+The section above routes to different **hosts inside one mgmt's own
+inventory** — still one mgmt process, one operator. This is different and
+broader: **one VPS proxy serving N fully independent FoliaNexa clusters**
+(PLAN.md §7D) — separate mgmt processes, separate databases, potentially
+separate operators, each with its own WireGuard tunnel peer — so
+`{admin,play,api}.domain1.com` lands entirely on domain1's cluster and
+`{admin,play,api}.domain2.com` entirely on domain2's, with neither mgmt
+aware the other exists.
+
+Three things change from the single-cluster setup earlier in this doc:
+
+1. **A WireGuard peer per cluster.** Repeat Phase 3 once per cluster, each
+   with its own `--peer-name`:
+   ```bash
+   sudo ./deploy/vps/setup-wireguard.sh --role vps --peer-name domain1 \
+     --peer-public-key <domain1s-vps-pubkey> --allowed-ips <domain1-tunnel-ip>/32,<domain1-lan-subnet>
+   sudo ./deploy/vps/setup-wireguard.sh --role vps --peer-name domain2 \
+     --peer-public-key <domain2s-vps-pubkey> --allowed-ips <domain2-tunnel-ip>/32,<domain2-lan-subnet>
+   ```
+   `setup-wireguard.sh` refuses to add a peer whose `--allowed-ips`
+   overlaps an already-configured one — two independent operators' home
+   LXD bridges landing on the same default subnet (`192.168.1.0/24` above
+   all) is common enough to actually hit, not just a theoretical risk. If
+   it refuses, one side needs to renumber its LAN or you need a narrower
+   `--allowed-ips`.
+
+2. **A Caddy `clusters.d/` entry per cluster** (Phase 5 below) —
+   `add-cluster.sh --id domain1 ...` / `--id domain2 ...`, each pointed at
+   that cluster's own `--mgmt-upstream` (its tunnel address from step 1).
+
+3. **`folia-nexa-proxy`'s env config switches from single-cluster to
+   multi-cluster shape**, in place of the single `FOLIA_MGMT_URL`/
+   `FOLIA_MGMT_API_TOKEN` pair from Phase 4:
+   ```bash
+   FOLIA_MGMT_CLUSTER_IDS=domain1,domain2
+   FOLIA_MGMT_CLUSTER_DOMAIN1_URL=http://<domain1-tunnel-address>:8443
+   FOLIA_MGMT_CLUSTER_DOMAIN1_TOKEN=<domain1s-mgmt-api-token>
+   FOLIA_MGMT_CLUSTER_DOMAIN2_URL=http://<domain2-tunnel-address>:8443
+   FOLIA_MGMT_CLUSTER_DOMAIN2_TOKEN=<domain2s-mgmt-api-token>
+   FOLIA_MGMT_PRIMARY_CLUSTER=domain1   # backstops Bedrock + bare-IP Java connections
+   ```
+   Every registered Velocity server name is qualified with its cluster id
+   (`domain1__world-overworld`) so two clusters' same-named worlds never
+   collide; each cluster's own `hosts set-domains`-configured domains
+   (previous section) are merged into one lookup, first cluster listed
+   winning if two operators ever claim the same domain by mistake (logged
+   as a warning, not silently dropped). See `FoliaRoutesSyncPlugin`'s
+   javadoc for the complete env var reference.
+
+**Bedrock is unchanged** — still always lands on whichever cluster
+`FOLIA_MGMT_PRIMARY_CLUSTER` names, for the same RakNet-has-no-hostname
+reason as above.
+
 ## Phase 5: Caddy — TLS + admin/public-API edge
 
-Copy [`deploy/vps/Caddyfile`](../deploy/vps/Caddyfile) to the VPS, fill in
-`ADMIN_DOMAIN`/`API_DOMAIN`/`PLAY_DOMAIN`/`MGMT_UPSTREAM`/`ACME_EMAIL`
-(env vars or edit the file directly), then:
+Copy [`deploy/vps/Caddyfile`](../deploy/vps/Caddyfile) to the VPS, set
+`ACME_EMAIL` (env var or edit the file directly), then generate this
+cluster's admin/api/portal site blocks with `add-cluster.sh` — one call
+per cluster this proxy serves, each writing its own file under
+`clusters.d/` that the `Caddyfile` imports:
 
 ```bash
+cd deploy/vps
+./add-cluster.sh --id mycluster \
+  --admin-domain admin.example.com --api-domain api.example.com \
+  --play-domain play.example.com --mgmt-upstream <mgmt-tunnel-address>:8443
 sudo caddy validate --config Caddyfile --adapter caddyfile
 sudo cp Caddyfile /etc/caddy/Caddyfile
+sudo cp -r clusters.d /etc/caddy/
 sudo systemctl reload caddy
 ```
+
+(A single-cluster setup is just one `add-cluster.sh` call — see "Fanning
+one proxy out to multiple independent clusters" below for running several
+side by side.)
 
 `admin.<domain>` reverse-proxies mgmt's dashboard/API unchanged — still
 behind its existing bearer-token auth. `api.<domain>` only forwards
@@ -262,8 +328,14 @@ Verified in this repo's development (config-syntax and, where possible,
 real-tool checks — see the commit that introduced this doc for the exact
 commands run):
 
-- `deploy/vps/Caddyfile` — validated with a real `caddy validate` (Caddy
-  2.6.2), not just eyeballed.
+- `deploy/vps/Caddyfile` — validated with a real `caddy validate`, most
+  recently Caddy 2.9.1 after it switched from inline `admin`/`api`/`play`
+  blocks to `import clusters.d/*.caddy` (PLAN.md §7D, so more than one
+  cluster's site blocks can coexist) — confirmed both the empty-
+  `clusters.d` default (a Caddy warning, not an error) and a real
+  `add-cluster.sh`-generated two-cluster example validate cleanly, and
+  that re-running `add-cluster.sh` for one `--id` leaves every other
+  cluster's file untouched.
 - `deploy/vps/setup-wireguard.sh` — the original single-peer flow (both
   "vps" and "home" roles, the full two-pass key exchange) was run
   end-to-end against real `wireguard-tools`, producing configs that
@@ -280,7 +352,11 @@ commands run):
   handshakes across a real NAT, and `wg syncconf`'s claimed no-drop
   hot-reload of one new peer alongside an already-connected one isn't
   verified against a real `wg0` interface — that needs your real VPS and
-  home network(s).
+  home network(s). The newer `AllowedIPs` overlap check (PLAN.md §7D) was
+  exercised with that same fake-`wg` dry run: confirmed it accepts two
+  peers with disjoint LAN subnets, refuses a third whose subnet collides
+  with an existing one (naming both peers in the error), and doesn't
+  false-positive when re-running an existing peer's own name unchanged.
 - `mgmt/src/folia_mgmt/routers/stats.py` and `public_stats.py` — real
   pytest suite (`mgmt/tests/test_stats.py`, `test_public_stats.py`),
   and `portal/`'s three pages were loaded in a real headless browser
@@ -303,6 +379,15 @@ commands run):
   actually connecting with a specific hostname and landing on the right
   host's world — no live Velocity server or Minecraft client was available
   to test against in this environment.
+- Multi-cluster fan-out (PLAN.md §7D) — `ClusterConfig`, `ServerName`,
+  `DomainRouteMerger`, and the `FoliaRoutesSyncPlugin` refactor built on
+  them (per-cluster server-name qualification, merged domain routing,
+  per-cluster access-gate/chat/MOTD resolution) — real Gradle test run,
+  62 tests total. Not verified: a real Java client actually connecting to
+  two genuinely independent mgmt clusters through one live proxy and
+  landing on the correct one, or a real Discord chat bridge round-trip
+  scoped to just one cluster's players — no live infrastructure for
+  either in this environment.
 
 Not verified — needs your real VPS + home network:
 
@@ -327,3 +412,9 @@ Not verified — needs your real VPS + home network:
   (`Settings.public_api_cache_seconds` / `public_api_rate_limit_per_minute`
   in `mgmt/src/folia_mgmt/config.py`) are actually adequate under real
   traffic — tune once you have real numbers.
+- A real multi-peer WireGuard mesh spanning two (or more) *genuinely
+  separate operators'* networks, as opposed to one operator's several
+  home hosts (which is what the multi-peer work above actually
+  exercised) — including whether their real-world LAN/tunnel addressing
+  ends up colliding in practice the way the `AllowedIPs` overlap check
+  is designed to catch.

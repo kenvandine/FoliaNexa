@@ -12,3 +12,8 @@ out/
 
 # Built snap packages — build artifacts, not source
 *.snap
+
+# deploy/vps/add-cluster.sh's generated output — real operator domains/
+# WireGuard-tunnel addresses, not source (same reasoning as peers.d/,
+# which lives outside the repo entirely since it's keyed off --output).
+deploy/vps/clusters.d/*.caddy

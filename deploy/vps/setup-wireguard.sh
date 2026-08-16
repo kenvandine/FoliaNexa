@@ -49,6 +49,12 @@
 # LXD/mgmt-facing AllowedIPs beyond the placeholder default below — those
 # are host-specific decisions covered in docs/vps-edge-deployment.md, not
 # something this script should guess at.
+#
+# --role vps DOES refuse to add a peer whose --allowed-ips overlaps an
+# already-configured peer's, though (PLAN.md §7D) — WireGuard requires
+# disjoint AllowedIPs per peer on one interface, and two independent
+# operators' home networks landing on the same default LAN subnet
+# (192.168.1.0/24 above all) is a real, not theoretical, way to hit that.
 
 set -euo pipefail
 
@@ -124,6 +130,62 @@ EOF
 log()  { printf '==> %s\n' "$*"; }
 warn() { printf 'WARNING: %s\n' "$*" >&2; }
 die()  { printf 'ERROR: %s\n' "$*" >&2; exit 1; }
+
+# --role vps only: WireGuard's crypto-routing table requires every peer's
+# AllowedIPs on one interface to be disjoint — if two independent
+# operators' home networks are added as peers here (PLAN.md §7D: each
+# potentially a fully separate FoliaNexa cluster, not just another host
+# in the same mgmt's inventory) and their AllowedIPs overlap, traffic
+# either silently misroutes to the wrong tenant or the second peer fails
+# to add at all. This is a real risk, not a theoretical one: home LXD
+# bridges very commonly default to the same handful of RFC1918 ranges
+# (192.168.1.0/24 above all). $1 is the new peer's comma-separated
+# AllowedIPs; every other already-configured peer under $PEERS_DIR (any
+# stale entry for this same $PEER_NAME, about to be replaced, is
+# excluded) is checked against it.
+check_allowed_ips_overlap() {
+  local new_ips="$1"
+  local -a existing_entries=()
+  local f name ips
+
+  [[ -d "$PEERS_DIR" ]] || return 0
+  for f in "$PEERS_DIR"/*.conf; do
+    [[ -f "$f" ]] || continue
+    [[ "$(basename "$f")" == "$(basename "$PEER_FILE")" ]] && continue
+    name="$(basename "$f" .conf)"
+    ips="$(grep '^AllowedIPs' "$f" | sed 's/^AllowedIPs *= *//')"
+    [[ -n "$ips" ]] && existing_entries+=("$name=$ips")
+  done
+  [[ ${#existing_entries[@]} -eq 0 ]] && return 0
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    warn "python3 not found — skipping the AllowedIPs overlap check against ${#existing_entries[@]} existing peer(s)." \
+         "Verify by hand that '$new_ips' doesn't overlap any of them before bringing the tunnel up."
+    return 0
+  fi
+
+  python3 - "$PEER_NAME" "$new_ips" "${existing_entries[@]}" <<'PYEOF'
+import ipaddress
+import sys
+
+peer_name, new_ips_raw, *entries = sys.argv[1:]
+new_nets = [ipaddress.ip_network(c.strip(), strict=False) for c in new_ips_raw.split(",") if c.strip()]
+
+conflicts = []
+for entry in entries:
+    other_name, other_ips_raw = entry.split("=", 1)
+    other_nets = [ipaddress.ip_network(c.strip(), strict=False) for c in other_ips_raw.split(",") if c.strip()]
+    for a in new_nets:
+        for b in other_nets:
+            if a.overlaps(b):
+                conflicts.append(f"peer '{peer_name}' AllowedIPs {a} overlaps peer '{other_name}' AllowedIPs {b}")
+
+if conflicts:
+    for c in conflicts:
+        print(f"CONFLICT: {c}", file=sys.stderr)
+    sys.exit(1)
+PYEOF
+}
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -246,6 +308,8 @@ else
     read -r -p "Peer '$PEER_NAME' is already configured at $PEER_FILE — replace it? [y/N] " reply
     [[ "$reply" =~ ^[Yy]$ ]] || die "aborted"
   fi
+
+  check_allowed_ips_overlap "$ALLOWED_IPS" || die "refusing to add peer '$PEER_NAME' — AllowedIPs ($ALLOWED_IPS) overlaps an already-configured peer's on this same wg0 interface (see the CONFLICT line(s) above). WireGuard requires disjoint AllowedIPs per peer on one interface, or traffic silently misroutes between tenants — this is the most common way two independent operators' home networks collide (e.g. both defaulting to 192.168.1.0/24 for their LXD bridge). Pick a non-overlapping range, or renumber one side's LAN, and re-run with a corrected --allowed-ips."
 
   {
     echo "[Peer]"
