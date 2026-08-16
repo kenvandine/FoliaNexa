@@ -23,6 +23,7 @@ host.
 | `mgmt/src/folia_mgmt/datapacks.yaml` | Curated data pack catalog (e.g. Matcha) — same pattern as `catalog.yaml` but for vanilla data packs, staged into `<level-name>/datapacks/` instead of `plugins/`; see `datapack_catalog.py` | YAML |
 | `configs/luckperms/provision-mysql.sh` | Plain-LXD-container alternative to `db/` for operators who'd rather not add another snap | Bash |
 | `docs/game-master-howto.md` | Task-oriented guide: designing/deploying a minigame world and configuring the lobby (PLAN.md §14B) | Markdown |
+| `docs/pre-installation-checklist.md` | What to check/decide before running the Phase 0–9 bootstrap below for real — catalog placeholders that get silently skipped, required env vars, and which install steps are unverified in this repo's dev environment | Markdown |
 | `docs/plugin-dev/` | Three-part how-to series: dev environment setup, Folia-safe plugin architecture, submitting a plugin for catalog review | Markdown |
 | `.claude/skills/folia-plugin-scaffold/` | Claude Code skill that operationalizes `docs/plugin-dev/` — scaffolds and writes a real Folia/Paper plugin, from a description or a Modrinth mod/plugin link | Markdown + templates |
 | `.claude/skills/cluster-onboarding/` | Claude Code skill that operationalizes CLAUDE.md's bootstrap phases + `docs/vps-edge-deployment.md` into an interactive runbook for standing up the VPS edge, DNS, and trusting LXD hosts | Markdown |
