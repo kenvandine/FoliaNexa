@@ -7,13 +7,13 @@ description: |
   jar/plugins, runs the JVM, and serves local health/metrics for
   folia-nexa-mgmt to scrape. See PLAN.md §9.
 base: core24
-confinement: strict
+confinement: devmode
 grade: stable
 
 environment:
   WORLD_DIR: $SNAP_COMMON/world
-  JAVA_BIN: $SNAP/usr/lib/jvm/java-21-openjdk-amd64/bin/java
-  JAVA_HOME: $SNAP/usr/lib/jvm/java-21-openjdk-amd64
+  JAVA_BIN: $SNAP/usr/lib/jvm/java-25-openjdk-amd64/bin/java
+  JAVA_HOME: $SNAP/usr/lib/jvm/java-25-openjdk-amd64
   DEVLXD_SOCKET: /dev/lxd/sock
   FOLIA_NODE_HEALTH_PORT: '8123'
 
@@ -25,16 +25,55 @@ apps:
     restart-delay: 5s
     plugs: [network, network-bind]
     # /dev/lxd/sock is bind-mounted into every LXD container by the LXD
-    # daemon itself (not something this snap opts into) and recent snapd
-    # allows strictly-confined snaps to use it without a dedicated
-    # interface. NOT validated against a live built snap in this
-    # environment — if AppArmor denies the socket open, confinement will
-    # need `devmode` during bring-up or a bug filed against snapd's policy
-    # for this path.
+    # daemon itself (not something this snap opts into). Confirmed for
+    # real against a live built snap (snapd 2.76.2, core24): under
+    # `confinement: strict`, opening the socket fails with
+    # "httpx.ConnectError: [Errno 13] Permission denied" — there is no
+    # dedicated snapd interface for a guest container to reach its own
+    # devlxd socket (the "lxd"/"lxd-support" interfaces are for reaching
+    # the *host* LXD API from a snap, a different thing). `devmode`
+    # (see confinement: above) is the confirmed-working fallback the
+    # original version of this comment anticipated needing; revisit if
+    # snapd ever grows a real interface for this.
 
 parts:
   node:
     plugin: python
     source: .
+    # Java 25, not 21: confirmed for real that Minecraft 26.1+ (Folia's
+    # own versioning moved off the old 1.x scheme) refuses to boot on
+    # Java 21 — "Minecraft 26.1 and newer requires running the server
+    # with Java 25 or above." Older jar-versions (e.g. 1.21.4) run fine
+    # on a newer JDK than their minimum, so bundling 25 uniformly covers
+    # both without needing per-version JDK selection.
     stage-packages:
-      - openjdk-21-jre-headless
+      - openjdk-25-jre-headless
+    # openjdk-25-jre-headless's own cacerts is a symlink to the *absolute*
+    # host path /etc/ssl/certs/java/cacerts, populated by the
+    # ca-certificates-java package's postinst script — which stage-packages
+    # never runs (it only extracts files). Confirmed for real: launching a
+    # world from a base image without that package installed left the
+    # symlink target missing entirely, and the bundled Paper/Folia server
+    # jar's JVM crashed on its first outbound TLS connection with
+    # "InvalidAlgorithmParameterException: the trustAnchors parameter must
+    # be non-empty" — every world would hit this, not just this one.
+    # Fixed here rather than by documenting "remember to apt-get install
+    # ca-certificates-java on every base image": build-packages runs
+    # ca-certificates-java for real in the build environment (which does
+    # execute maintainer scripts, unlike stage-packages), and override-build
+    # copies that real, populated cacerts over the dangling symlink so the
+    # snap carries its own trust store and doesn't depend on whatever the
+    # LXD base image does or doesn't have installed. ca-certificates-java's
+    # postinst needs an actual `java`/`keytool` to generate the keystore
+    # against — also confirmed for real: without openjdk-25-jre-headless
+    # in build-packages too (stage-packages alone only populates the snap
+    # payload, it never installs anything onto the build environment's own
+    # OS), the postinst silently produces no cacerts file at all and this
+    # cp step fails with "No such file or directory".
+    build-packages:
+      - openjdk-25-jre-headless
+      - ca-certificates-java
+    override-build: |
+      craftctl default
+      cp /etc/ssl/certs/java/cacerts \
+        "$CRAFT_PART_INSTALL/usr/lib/jvm/java-25-openjdk-amd64/lib/security/cacerts"

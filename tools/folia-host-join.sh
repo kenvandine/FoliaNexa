@@ -7,7 +7,12 @@
 #   1. Confirms LXD is installed and initialized.
 #   2. Enables the LXD remote API (core.https_address) if not already set.
 #   3. Creates (or reuses) a quota-capped "folia" project, sized from
-#      detected CPU/memory unless overridden.
+#      detected CPU/memory unless overridden. Also makes sure that
+#      project's own "default" profile actually has a root disk + network
+#      device — features.profiles=true (LXD's default) gives every new
+#      project its own empty default profile, and without this step every
+#      container launch into it (including mgmt's own scheduler) fails
+#      with "No root device could be found."
 #   4. Generates a fresh, single-use LXD trust token scoped to that project.
 #   5. Calls POST /api/v1/hosts/enroll on folia-nexa-mgmt, authenticated with
 #      the join token from `folia-nexa-mgmt hosts create-join-token`, handing
@@ -157,6 +162,33 @@ else
     -c "restricted=true" \
     -c "restricted.containers.nesting=block"
   log "Project '$PROJECT' created"
+fi
+
+# --- Step 3b: ensure the project's own default profile is actually usable ---
+#
+# A project with features.profiles=true (LXD's default) gets its own
+# "default" profile, decoupled from the host's real default profile — and
+# it starts out with zero devices. Left alone, every container launch in
+# this project fails with "No root device could be found": both this
+# script's own smoke-test launches and, more importantly, mgmt's
+# scheduler (LXDClient.launch_container, which always passes
+# profiles=["default"]) — so world placement is silently broken on this
+# host until this runs, project-created-just-now or reused-from-before.
+# Mirror whatever pool/network the host's own real default profile uses,
+# so this doesn't hardcode a name that's wrong for hosts set up
+# differently (falls back to LXD's own conventional defaults if that
+# lookup comes up empty, e.g. a host with no "default" project profile).
+if ! lxc profile show default --project "$PROJECT" 2>/dev/null | grep -q "^  root:"; then
+  SRC_POOL="$(lxc profile show default --project default 2>/dev/null | awk '/pool:/{print $2; exit}')"
+  [[ -z "$SRC_POOL" ]] && SRC_POOL="default"
+  log "Project '$PROJECT''s default profile has no root disk device — adding one (pool: $SRC_POOL)"
+  lxc profile device add default root disk path=/ pool="$SRC_POOL" --project "$PROJECT"
+fi
+if ! lxc profile show default --project "$PROJECT" 2>/dev/null | grep -q "type: nic"; then
+  SRC_NETWORK="$(lxc profile show default --project default 2>/dev/null | awk '/network:/{print $2; exit}')"
+  [[ -z "$SRC_NETWORK" ]] && SRC_NETWORK="lxdbr0"
+  log "Project '$PROJECT''s default profile has no network device — adding one (network: $SRC_NETWORK)"
+  lxc profile device add default eth0 nic network="$SRC_NETWORK" --project "$PROJECT"
 fi
 
 # --- Step 4: generate a fresh LXD trust token -------------------------------

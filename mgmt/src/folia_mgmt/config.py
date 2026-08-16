@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import secrets
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -83,6 +84,24 @@ class Settings(BaseSettings):
     # another layer in front of that.
     public_api_cache_seconds: float = 30.0
     public_api_rate_limit_per_minute: int = 60
+
+    # Velocity "modern" forwarding secret, shared between folia-nexa-proxy
+    # and every world's paper-global.yml (see PLAN.md §7 and
+    # docs.papermc.io/velocity/player-information-forwarding). mgmt is the
+    # single source of truth — it already talks to both the proxy (routes
+    # polling) and every world (via node's devlxd config, scheduler.py) —
+    # generated once on first access and persisted, not operator-supplied,
+    # since nothing about its value is meaningful to a human.
+    @property
+    def velocity_forwarding_secret_path(self) -> Path:
+        return self.state_dir / "velocity-forwarding-secret"
+
+    def get_velocity_forwarding_secret(self) -> str:
+        path = self.velocity_forwarding_secret_path
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(secrets.token_urlsafe(32))
+        return path.read_text().strip()
 
     @property
     def db_path(self) -> Path:
