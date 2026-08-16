@@ -33,6 +33,11 @@ dependencies {
 
     testImplementation(platform("org.junit:junit-bom:5.10.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
+    // Gson itself is only compileOnly (transitively via velocity-api,
+    // genuinely bundled by Velocity at runtime — see DisplayJson's
+    // javadoc), which the test JVM doesn't get for free the way the
+    // production plugin does under Velocity.
+    testImplementation("com.google.code.gson:gson:2.13.2")
 }
 
 tasks.test {

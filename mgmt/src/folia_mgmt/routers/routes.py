@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+import base64
+import binascii
+import struct
+
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from folia_mgmt.auth import require_viewer
+from folia_mgmt.auth import require_operator, require_viewer, User
+from folia_mgmt.config import Settings
 from folia_mgmt.db import get_session
-from folia_mgmt.models import World, WorldPhase, WorldType
+from folia_mgmt.deps import settings_dependency
+from folia_mgmt.models import ProxyDisplay, World, WorldPhase, WorldType, utcnow
 
 router = APIRouter(prefix="/routes", tags=["routes"])
 
@@ -43,6 +49,22 @@ def _pick_default(worlds: list[World]) -> str | None:
     return overworlds[0] if overworlds else None
 
 
+class ForwardingSecretResponse(BaseModel):
+    secret: str
+
+
+@router.get(
+    "/forwarding-secret", response_model=ForwardingSecretResponse, dependencies=[Depends(require_viewer)]
+)
+def get_forwarding_secret(settings: Settings = Depends(settings_dependency)) -> ForwardingSecretResponse:
+    """The Velocity "modern" forwarding secret, shared with every world's
+    paper-global.yml (scheduler.py's _build_instance_config) so backend
+    servers trust identity forwarded by *this* proxy. Same viewer-role
+    auth as the route table itself — the proxy's existing service account
+    already has it."""
+    return ForwardingSecretResponse(secret=settings.get_velocity_forwarding_secret())
+
+
 @router.get("", response_model=RoutesResponse, dependencies=[Depends(require_viewer)])
 def get_routes(session: Session = Depends(get_session)) -> RoutesResponse:
     worlds = session.exec(
@@ -55,3 +77,64 @@ def get_routes(session: Session = Depends(get_session)) -> RoutesResponse:
         for w in routable
     ]
     return RoutesResponse(routes=routes)
+
+
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+
+
+def _validate_png_64x64(data: bytes) -> None:
+    """folia-routes-sync hands icon_png_base64 straight to Velocity's
+    Favicon, which requires an exact 64x64 PNG — reject anything else here
+    rather than let a bad upload silently fail to render for players."""
+    if data[:8] != _PNG_SIGNATURE or len(data) < 24 or data[12:16] != b"IHDR":
+        raise ValueError("not a valid PNG file")
+    width, height = struct.unpack(">II", data[16:24])
+    if (width, height) != (64, 64):
+        raise ValueError(f"icon must be exactly 64x64 pixels (got {width}x{height})")
+
+
+class DisplayResponse(BaseModel):
+    motd: str
+    icon_base64: str | None = None
+
+
+@router.get("/display", response_model=DisplayResponse, dependencies=[Depends(require_viewer)])
+def get_display(session: Session = Depends(get_session)) -> DisplayResponse:
+    """Polled by folia-routes-sync alongside the route table (PLAN.md §7)
+    to set the proxy's server-list MOTD/icon live via ProxyPingEvent — no
+    velocity.toml edit or proxy restart needed. Same viewer-role auth as
+    the rest of this router."""
+    display = session.get(ProxyDisplay, 1)
+    if display is None:
+        return DisplayResponse(motd=ProxyDisplay.model_fields["motd"].default)
+    return DisplayResponse(motd=display.motd, icon_base64=display.icon_png_base64)
+
+
+class UpdateDisplayRequest(BaseModel):
+    motd: str
+    icon_base64: str | None = None
+
+
+@router.put("/display", response_model=DisplayResponse, dependencies=[Depends(require_operator)])
+def update_display(
+    body: UpdateDisplayRequest, user: User = Depends(require_operator), session: Session = Depends(get_session)
+) -> DisplayResponse:
+    icon_base64 = body.icon_base64
+    if icon_base64:
+        try:
+            raw = base64.b64decode(icon_base64, validate=True)
+        except binascii.Error as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "icon_base64 is not valid base64") from exc
+        try:
+            _validate_png_64x64(raw)
+        except ValueError as exc:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    display = session.get(ProxyDisplay, 1) or ProxyDisplay(id=1)
+    display.motd = body.motd
+    display.icon_png_base64 = icon_base64 or None
+    display.updated_at = utcnow()
+    session.add(display)
+    session.commit()
+    session.refresh(display)
+    return DisplayResponse(motd=display.motd, icon_base64=display.icon_png_base64)

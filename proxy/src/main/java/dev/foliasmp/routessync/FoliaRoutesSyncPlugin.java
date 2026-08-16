@@ -6,11 +6,15 @@ import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.connection.LoginEvent;
 import com.velocitypowered.api.event.player.PlayerChooseInitialServerEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
+import com.velocitypowered.api.event.proxy.ProxyPingEvent;
 import com.velocitypowered.api.plugin.Plugin;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.proxy.server.ServerInfo;
+import com.velocitypowered.api.proxy.server.ServerPing;
+import com.velocitypowered.api.util.Favicon;
 import net.kyori.adventure.text.Component;
+import net.kyori.adventure.text.minimessage.MiniMessage;
 import org.slf4j.Logger;
 
 import java.net.InetSocketAddress;
@@ -60,6 +64,10 @@ public final class FoliaRoutesSyncPlugin {
     private final AtomicReference<String> defaultWorld = new AtomicReference<>();
     private final AtomicReference<Set<UUID>> approvedUuids = new AtomicReference<>(Set.of());
     private final AtomicBoolean accessGateEnabled = new AtomicBoolean(false);
+    // null until the first successful fetch — onProxyPing leaves Velocity's
+    // own velocity.toml/server-icon.png-derived ping response untouched
+    // while null, rather than overriding it with a placeholder.
+    private final AtomicReference<ProxyDisplay> display = new AtomicReference<>();
 
     @Inject
     public FoliaRoutesSyncPlugin(ProxyServer server, Logger logger) {
@@ -76,13 +84,28 @@ public final class FoliaRoutesSyncPlugin {
 
         MgmtRoutesClient routesClient = new MgmtRoutesClient(mgmtUrl, apiToken, Duration.ofSeconds(10));
         AccessGateClient accessGateClient = new AccessGateClient(mgmtUrl, apiToken, Duration.ofSeconds(10));
+        MgmtDisplayClient displayClient = new MgmtDisplayClient(mgmtUrl, apiToken, Duration.ofSeconds(10));
 
         logger.info("polling {} every {}s (access gate: {})", mgmtUrl, pollSeconds, accessGateEnabled.get() ? "enabled" : "disabled");
 
         server.getScheduler()
-                .buildTask(this, () -> pollAndReconcile(routesClient, accessGateClient))
+                .buildTask(this, () -> pollAndReconcile(routesClient, accessGateClient, displayClient))
                 .repeat(Duration.ofSeconds(pollSeconds))
                 .schedule();
+    }
+
+    @Subscribe
+    public void onProxyPing(ProxyPingEvent event) {
+        ProxyDisplay current = display.get();
+        if (current == null) {
+            return;
+        }
+        ServerPing.Builder builder = event.getPing().asBuilder();
+        builder.description(MiniMessage.miniMessage().deserialize(current.motd()));
+        if (current.iconBase64() != null) {
+            builder.favicon(new Favicon("data:image/png;base64," + current.iconBase64()));
+        }
+        event.setPing(builder.build());
     }
 
     @Subscribe
@@ -106,11 +129,12 @@ public final class FoliaRoutesSyncPlugin {
         ));
     }
 
-    private void pollAndReconcile(MgmtRoutesClient routesClient, AccessGateClient accessGateClient) {
+    private void pollAndReconcile(MgmtRoutesClient routesClient, AccessGateClient accessGateClient, MgmtDisplayClient displayClient) {
         reconcileRoutes(routesClient);
         if (accessGateEnabled.get()) {
             refreshApprovedUuids(accessGateClient);
         }
+        refreshDisplay(displayClient);
     }
 
     private void reconcileRoutes(MgmtRoutesClient client) {
@@ -156,6 +180,14 @@ public final class FoliaRoutesSyncPlugin {
             logger.debug("access gate: {} approved player(s)", latest.size());
         } catch (Exception e) {
             logger.warn("failed to fetch approved players from mgmt, keeping previous list: {}", e.getMessage());
+        }
+    }
+
+    private void refreshDisplay(MgmtDisplayClient client) {
+        try {
+            display.set(client.fetch());
+        } catch (Exception e) {
+            logger.warn("failed to fetch display config from mgmt, keeping previous motd/icon: {}", e.getMessage());
         }
     }
 

@@ -125,6 +125,7 @@
     <button data-tab="hosts" onclick="showTab('hosts')">Hosts</button>
     <button data-tab="plugins" onclick="showTab('plugins')">Plugins</button>
     <button data-tab="datapacks" onclick="showTab('datapacks')">Data Packs</button>
+    <button data-tab="display" onclick="showTab('display')">Display</button>
     <button data-tab="access" onclick="showTab('access')">Access Requests</button>
     <button data-tab="users" onclick="showTab('users')">Users</button>
   </nav>
@@ -213,9 +214,51 @@
       </div>
     </section>
 
+    <section id="panel-display" class="panel">
+      <div class="card">
+        <h2>Server list MOTD &amp; icon</h2>
+        <p class="hint">Shown in the multiplayer server list before joining. Polled by the proxy every few seconds — no restart needed.</p>
+        <form onsubmit="return saveDisplay(event)">
+          <div style="margin-bottom:0.7rem">
+            <label class="hint" style="display:block;margin-bottom:0.3rem">
+              MOTD — <a href="https://docs.advntr.dev/minimessage/format.html" target="_blank" rel="noopener">MiniMessage</a> formatting, e.g. <code>&lt;red&gt;</code>, <code>&lt;bold&gt;</code>, <code>&lt;gradient:#CC0000:#000000&gt;...&lt;/gradient&gt;</code>. Press Enter for a second line.
+            </label>
+            <textarea id="d-motd" rows="3" style="width:100%;font-family:monospace" required></textarea>
+          </div>
+          <div style="display:flex;gap:1.25rem;align-items:flex-start;margin-bottom:0.8rem">
+            <div>
+              <div class="hint" style="margin-bottom:0.3rem">Icon — any image, auto-cropped/resized to 64x64</div>
+              <input type="file" id="d-icon-file" accept="image/*" onchange="onDisplayIconSelected(event)">
+              <div style="margin-top:0.4rem">
+                <button type="button" class="btn ghost" onclick="clearDisplayIcon()">Remove icon</button>
+              </div>
+            </div>
+            <div>
+              <div class="hint" style="margin-bottom:0.3rem">Preview</div>
+              <canvas id="d-icon-canvas" width="64" height="64" style="width:64px;height:64px;border:1px solid var(--border);border-radius:6px;image-rendering:pixelated"></canvas>
+            </div>
+          </div>
+          <button class="btn" type="submit">Save</button>
+          <span id="display-saved" class="hint"></span>
+        </form>
+        <div id="display-error" class="error"></div>
+      </div>
+    </section>
+
     <section id="panel-access" class="panel">
       <div class="card">
-        <h2>Pending Discord access requests</h2>
+        <h2>Add a player directly</h2>
+        <p class="hint">Skips Discord entirely and approves immediately — use this if Discord OAuth/the bot isn't set up yet.</p>
+        <form class="inline" onsubmit="return addPlayerDirectly(event)">
+          <input id="ar-minecraft-username" placeholder="Minecraft username" required>
+          <button class="btn" type="submit">Add &amp; approve</button>
+        </form>
+        <div id="access-add-error" class="error"></div>
+      </div>
+
+      <div class="card">
+        <h2>Access requests</h2>
+        <p class="hint">Discord-authenticated requests (or players added directly above) — approved players are pushed to the proxy's access gate and any world with its whitelist enabled.</p>
         <table>
           <thead><tr><th>Discord user</th><th>Minecraft user</th><th>Status</th><th></th></tr></thead>
           <tbody id="access-body"></tbody>
@@ -338,7 +381,7 @@ function showTab(name) {
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
   document.getElementById('panel-' + name).classList.add('active');
   document.querySelector('nav button[data-tab="' + name + '"]').classList.add('active');
-  const loaders = { worlds: loadWorlds, hosts: loadHosts, plugins: loadCatalog, datapacks: loadDatapackCatalog, access: loadAccessRequests, users: loadUsers };
+  const loaders = { worlds: loadWorlds, hosts: loadHosts, plugins: loadCatalog, datapacks: loadDatapackCatalog, display: loadDisplay, access: loadAccessRequests, users: loadUsers };
   loaders[name]();
 }
 
@@ -521,6 +564,81 @@ async function toggleWhitelist(name, currentlyEnabled) {
   }
 }
 
+const displayState = { iconBase64: null };
+
+async function loadDisplay() {
+  const errorEl = document.getElementById('display-error');
+  errorEl.textContent = '';
+  try {
+    const d = await api('/routes/display');
+    document.getElementById('d-motd').value = d.motd;
+    displayState.iconBase64 = d.icon_base64;
+    drawDisplayIconPreview(d.icon_base64);
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+}
+
+function drawDisplayIconPreview(base64) {
+  const canvas = document.getElementById('d-icon-canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, 64, 64);
+  if (!base64) return;
+  const img = new Image();
+  img.onload = () => ctx.drawImage(img, 0, 0, 64, 64);
+  img.src = 'data:image/png;base64,' + base64;
+}
+
+function onDisplayIconSelected(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.getElementById('d-icon-canvas');
+      const ctx = canvas.getContext('2d');
+      ctx.clearRect(0, 0, 64, 64);
+      // Cover-fit: scale to fill the 64x64 square, cropping whichever
+      // dimension overhangs, so an arbitrary source image always ends up
+      // exactly 64x64 (mgmt rejects anything else).
+      const scale = Math.max(64 / img.width, 64 / img.height);
+      const w = img.width * scale, h = img.height * scale;
+      ctx.drawImage(img, (64 - w) / 2, (64 - h) / 2, w, h);
+      displayState.iconBase64 = canvas.toDataURL('image/png').split(',')[1];
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearDisplayIcon() {
+  displayState.iconBase64 = null;
+  document.getElementById('d-icon-file').value = '';
+  drawDisplayIconPreview(null);
+}
+
+async function saveDisplay(event) {
+  event.preventDefault();
+  const errorEl = document.getElementById('display-error');
+  const savedEl = document.getElementById('display-saved');
+  errorEl.textContent = '';
+  savedEl.textContent = '';
+  try {
+    await api('/routes/display', {
+      method: 'PUT',
+      body: JSON.stringify({
+        motd: document.getElementById('d-motd').value,
+        icon_base64: displayState.iconBase64,
+      }),
+    });
+    savedEl.textContent = 'Saved — the proxy picks this up within a few seconds.';
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+  return false;
+}
+
 async function loadHosts() {
   const hosts = await api('/hosts');
   const body = document.getElementById('hosts-body');
@@ -555,19 +673,22 @@ async function createJoinToken() {
 }
 
 async function loadAccessRequests() {
-  const requests = await api('/access-requests?status_filter=pending');
+  const requests = await api('/access-requests');
   const body = document.getElementById('access-body');
+  const pillClass = { approved: 'running', denied: 'crashed', pending: 'pending' };
   body.innerHTML = requests.map(r => `
     <tr>
       <td>${escapeHtml(r.discord_username)}</td>
       <td>${escapeHtml(r.minecraft_username || '—')}</td>
-      <td>${escapeHtml(r.status)}</td>
+      <td><span class="pill ${pillClass[r.status] || ''}">${escapeHtml(r.status)}</span></td>
       <td class="row-actions">
-        <button class="btn" onclick="decideAccessRequest(${r.id}, 'approve')">Approve</button>
-        <button class="btn danger" onclick="decideAccessRequest(${r.id}, 'deny')">Deny</button>
+        ${r.status === 'pending' ? `
+          <button class="btn" onclick="decideAccessRequest(${r.id}, 'approve')">Approve</button>
+          <button class="btn danger" onclick="decideAccessRequest(${r.id}, 'deny')">Deny</button>
+        ` : ''}
       </td>
     </tr>
-  `).join('') || '<tr><td colspan="4" class="hint">No pending requests.</td></tr>';
+  `).join('') || '<tr><td colspan="4" class="hint">No access requests yet.</td></tr>';
 }
 
 async function decideAccessRequest(id, action) {
@@ -575,6 +696,29 @@ async function decideAccessRequest(id, action) {
   if (action === 'deny') options.body = JSON.stringify({});
   await api('/access-requests/' + id + '/' + action, options);
   await loadAccessRequests();
+}
+
+async function addPlayerDirectly(event) {
+  event.preventDefault();
+  const errorEl = document.getElementById('access-add-error');
+  errorEl.textContent = '';
+  const username = document.getElementById('ar-minecraft-username').value.trim();
+  try {
+    await api('/access-requests', {
+      method: 'POST',
+      body: JSON.stringify({
+        discord_user_id: 'manual:' + username,
+        discord_username: username,
+        minecraft_username: username,
+        auto_approve: true,
+      }),
+    });
+    document.getElementById('ar-minecraft-username').value = '';
+    await loadAccessRequests();
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+  return false;
 }
 
 async function loadUsers() {

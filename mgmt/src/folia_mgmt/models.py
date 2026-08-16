@@ -187,6 +187,20 @@ class PlayerPlaytimeDaily(SQLModel, table=True):
     seconds: int = 0
 
 
+class ProxyDisplay(SQLModel, table=True):
+    """Singleton row (fixed id=1): the proxy's server-list MOTD and icon,
+    editable from the dashboard and polled live by folia-routes-sync
+    (PLAN.md §7) — no proxy restart needed. `motd` is a MiniMessage string
+    (the same markup Velocity's own velocity.toml `motd` key accepts);
+    `icon_png_base64` is a raw (no data-URL prefix) base64-encoded 64x64
+    PNG, or None to leave the proxy's baked-in server-icon.png alone."""
+
+    id: Optional[int] = Field(default=1, primary_key=True)
+    motd: str = "<#09add3>A Velocity Server"
+    icon_png_base64: Optional[str] = None
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
 class AccessRequest(SQLModel, table=True):
     """A Discord-authenticated request to join the network. PLAN.md §11C."""
 
