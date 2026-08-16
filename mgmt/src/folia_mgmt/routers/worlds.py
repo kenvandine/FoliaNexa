@@ -372,15 +372,28 @@ def delete_world(
     health_check: HealthCheck = Depends(get_health_check),
 ) -> WorldResponse:
     world = _get_world_or_404(session, name)
+    world_id = world.id
     world.phase = WorldPhase.draining
     world.updated_at = utcnow()
     session.add(world)
     session.commit()
     session.refresh(world)
+    draining_snapshot = _to_response(world)
 
     _reconcile_best_effort(session, lxd_client, health_check)
-    session.refresh(world)
-    return _to_response(world)
+
+    # teardown_world (scheduler.py) hard-deletes the row once its
+    # container is actually gone — freeing the name for reuse. Refreshing
+    # `world` here would raise on an object no longer in the DB, so check
+    # first: gone means report the pre-teardown snapshot with phase
+    # overridden to "deleted"; still there means teardown hasn't
+    # completed yet (e.g. the host was unreachable), so reflect its real
+    # current phase instead.
+    still_present = session.get(World, world_id)
+    if still_present is None:
+        return draining_snapshot.model_copy(update={"phase": WorldPhase.deleted.value})
+    session.refresh(still_present)
+    return _to_response(still_present)
 
 
 def _host_and_world(session: Session, name: str) -> tuple[World, Host]:

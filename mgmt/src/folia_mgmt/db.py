@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Generator
 from functools import lru_cache
 
@@ -9,6 +10,8 @@ from sqlmodel import Session, SQLModel, create_engine
 
 from folia_mgmt import models
 from folia_mgmt.config import Settings, get_settings
+
+logger = logging.getLogger(__name__)
 
 
 @lru_cache
@@ -65,10 +68,31 @@ def _add_missing_columns(engine) -> None:
                 conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {ddl_type}{default_clause}'))
 
 
+def _purge_soft_deleted_worlds(engine) -> None:
+    """One-time cleanup for rows left behind by teardown_world's old
+    behavior (scheduler.py used to set phase='deleted' and keep the row
+    forever, rather than actually deleting it) — World.name is a real
+    unique column, so a lingering deleted-phase row permanently blocked
+    reusing that world name. teardown_world hard-deletes for real now;
+    this just sweeps up whatever's already stuck from before that fix, on
+    every startup (a no-op once there's nothing left to sweep)."""
+    inspector = inspect(engine)
+    if not inspector.has_table("world"):
+        return
+    with engine.begin() as conn:
+        result = conn.execute(text("DELETE FROM world WHERE phase = 'deleted'"))
+        if result.rowcount:
+            logger.info(
+                "purged %d soft-deleted world row(s) left over from before teardown_world hard-deleted for real",
+                result.rowcount,
+            )
+
+
 def init_db(settings: Settings | None = None) -> None:
     engine = get_engine(settings)
     SQLModel.metadata.create_all(engine)
     _add_missing_columns(engine)
+    _purge_soft_deleted_worlds(engine)
 
 
 def get_session() -> Generator[Session, None, None]:

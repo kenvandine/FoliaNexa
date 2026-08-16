@@ -3,7 +3,7 @@ from __future__ import annotations
 from sqlalchemy import create_engine, inspect, text
 from sqlmodel import Session, select
 
-from folia_mgmt.db import _add_missing_columns
+from folia_mgmt.db import _add_missing_columns, _purge_soft_deleted_worlds
 from folia_mgmt.models import World, WorldType
 
 
@@ -60,3 +60,44 @@ def test_add_missing_columns_is_a_noop_on_a_current_schema(tmp_path):
 
     columns = {col["name"] for col in inspect(engine).get_columns("world")}
     assert "properties" in columns
+
+
+def test_purge_soft_deleted_worlds_removes_deleted_phase_rows(tmp_path):
+    from sqlmodel import SQLModel
+
+    from folia_mgmt.models import WorldPhase
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'stale.db'}")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(World(name="still-running", type=WorldType.overworld, cpu_cores=1, memory_gb=1))
+        session.add(
+            World(name="torn-down", type=WorldType.overworld, cpu_cores=1, memory_gb=1, phase=WorldPhase.deleted)
+        )
+        session.commit()
+
+    _purge_soft_deleted_worlds(engine)
+
+    with Session(engine) as session:
+        names = {w.name for w in session.exec(select(World)).all()}
+    assert names == {"still-running"}
+
+
+def test_purge_soft_deleted_worlds_is_a_noop_with_nothing_to_purge(tmp_path):
+    from sqlmodel import SQLModel
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'clean.db'}")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(World(name="still-running", type=WorldType.overworld, cpu_cores=1, memory_gb=1))
+        session.commit()
+
+    _purge_soft_deleted_worlds(engine)  # should not raise
+
+    with Session(engine) as session:
+        assert session.exec(select(World)).one().name == "still-running"
+
+
+def test_purge_soft_deleted_worlds_handles_missing_table(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'empty.db'}")
+    _purge_soft_deleted_worlds(engine)  # should not raise even with no tables at all

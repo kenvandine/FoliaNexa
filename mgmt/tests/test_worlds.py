@@ -98,6 +98,38 @@ def test_delete_world_tears_down_container(client, admin_token, operator_token, 
     assert ("node-a", "world-overworld") in fake_lxd.deleted
 
 
+def test_deleted_world_is_gone_not_just_soft_deleted(client, admin_token, operator_token, fake_lxd):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    client.delete("/api/v1/worlds/world-overworld", headers=auth_header(operator_token))
+
+    resp = client.get("/api/v1/worlds", headers=auth_header(operator_token))
+    assert "world-overworld" not in {w["name"] for w in resp.json()}
+
+
+def test_world_name_can_be_reused_after_deletion(client, admin_token, operator_token, fake_lxd):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    client.delete("/api/v1/worlds/world-overworld", headers=auth_header(operator_token))
+
+    resp = client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "minigame", "cpu_cores": 2, "memory_gb": 4},
+        headers=auth_header(operator_token),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["type"] == "minigame"
+    assert resp.json()["phase"] != "deleted"
+
+
 def test_snapshot_requires_placed_world(client, operator_token):
     client.post(
         "/api/v1/worlds",

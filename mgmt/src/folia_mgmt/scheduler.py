@@ -192,6 +192,18 @@ def finalize_provisioning(session: Session, lxd_client: LXDClient, world: World)
 
 
 def teardown_world(session: Session, lxd_client: LXDClient, world: World) -> None:
+    """Hard-deletes the row once its container (if it had one) is
+    actually gone — not a soft delete. World.name is a real unique DB
+    column, so leaving a phase=deleted row around forever would
+    permanently block an operator from ever reusing that world name.
+    Nothing else in this codebase queries WorldPhase.deleted rows
+    (allocated_capacity/select_host only care about *live* worlds, and
+    are written to tolerate a stray deleted-phase row if one ever exists
+    from an older DB, but don't rely on one existing) — the enum value
+    itself stays, since a container mid-teardown that fails here (LXD
+    unreachable) still needs *some* transient state, but success means
+    genuinely gone, not parked forever.
+    """
     if world.host_name and world.container_name:
         host = session.exec(select(Host).where(Host.name == world.host_name)).first()
         if host is not None:
@@ -200,8 +212,7 @@ def teardown_world(session: Session, lxd_client: LXDClient, world: World) -> Non
             except LXDError:
                 logger.exception("failed to delete container for world '%s', will retry", world.name)
                 return
-    world.phase = WorldPhase.deleted
-    session.add(world)
+    session.delete(world)
     session.commit()
 
 
