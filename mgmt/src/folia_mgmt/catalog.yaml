@@ -75,8 +75,8 @@
   category: lobby
   source: in-house
   version: "0.1.0"
-  download_url: "https://github.com/kenvandine/folianexa-plugins/releases/download/campus-lobby-v0.0.2/campus-lobby-0.1.0.jar"
-  sha256: "f7784c0004e6cb859a6d59b1c4a9b532ccc8b0ac45421b2f54afc1df42d0bca0"
+  download_url: "https://github.com/kenvandine/folianexa-plugins/releases/download/campus-lobby-v0.0.3/campus-lobby-0.1.0.jar"
+  sha256: "d6c801b24c5e258b17381f0a6a6f64d0cead8207c761568be2bedbb30588fe5a"
   homepage: "https://github.com/kenvandine/folianexa-plugins/tree/main/campus-lobby"
   verified: true
   notes: >
@@ -98,7 +98,18 @@
     real Folia 1.21.4 world (see the `lobby` world declared during
     cluster onboarding): loads without error, though the scene actually
     rendering correctly in-game (not just loading) hasn't been checked
-    with a real client.
+    with a real client. Re-released again as campus-lobby-v0.0.3
+    (2026-08-16, same day) — locks the built scene down to
+    campuslobby.admin editors only, clears the build area of leftover
+    terrain/entities first, disables mob spawning, clears/blocks player
+    inventory in the lobby, and sets the world spawn + a tight world
+    border around the finished scene. plugin.yml's own `version` field
+    is still 0.1.0 (unchanged), hence this entry's `version` staying
+    "0.1.0" too — campus-lobby-v0.0.x is this repo's release-tag
+    counter, not the plugin's own semver; downloaded directly and
+    confirmed sha256 matches this release's reported asset digest, and
+    confirmed folia-supported: true is still present. Not yet re-verified
+    live against a real Folia world.
 
 - id: HuskClaims
   category: claims
