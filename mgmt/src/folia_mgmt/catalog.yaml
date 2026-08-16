@@ -306,9 +306,9 @@
 - id: FoliaNexaStats
   category: analytics
   source: in-house
-  version: "0.0.3"
-  download_url: "https://github.com/kenvandine/folianexa-plugins/releases/download/folianexa-stats-v0.0.3/folianexa-stats-0.0.3.jar"
-  sha256: "740a144f00d0925e275769ed2fa765fceed3ef30d5b096a0e3373de03f12856a"
+  version: "0.0.4"
+  download_url: "https://github.com/kenvandine/folianexa-plugins/releases/download/folianexa-stats-v0.0.4/folianexa-stats-0.0.4.jar"
+  sha256: "29e7bacb3a80125489f7dab8a8aa93f0a59432c984f569065d5e067abd3e90ad"
   homepage: "https://github.com/kenvandine/folianexa-plugins/tree/main/folianexa-stats"
   verified: true
   default_for_all_worlds: true
@@ -326,11 +326,19 @@
     marked as supporting Folia!" — the code already used
     AsyncScheduler/RegionScheduler throughout, just missing
     folia-supported: true in plugin.yml (same bug CampusLobby had).
-    Fixed and re-released as v0.0.3 (2026-08-16) — this release also
-    finally stamps the jar's own internal version to match the release
-    tag (earlier releases reported "0.1.0" regardless of tag).
-    download_url/sha256 above downloaded directly and verified for
-    real; not yet re-verified live against a running Folia world.
+    Fixed and re-released as v0.0.3 (2026-08-16). Once that loaded for
+    real (on a world whose mgmt-api-token was also finally populated —
+    see this session's folianexa_stats.py), its reports still failed:
+    HttpMgmtClient's java.net.http.HttpClient defaults to attempting an
+    HTTP/2 "Upgrade: h2c" handshake even over plain http://, which
+    corrupted request framing against mgmt's uvicorn/h11 server —
+    intermittent "422 Field required, input: null" alternating with a
+    bare "400 Invalid HTTP request received," never a clean failure.
+    Fixed by pinning HTTP_1_1 explicitly, re-released as v0.0.4
+    (2026-08-16, same day). download_url/sha256 above downloaded
+    directly and verified for real; a real report from a live Folia
+    26.2 world reaching mgmt with a 200 (not 422/400) is what's
+    actually being confirmed right now, this being the fix for it.
 
 # Example in-house entry: demonstrates a catalog entry pointing at a
 # separate repository's releases rather than a third-party plugin host.
