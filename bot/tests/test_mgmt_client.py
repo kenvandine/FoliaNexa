@@ -95,6 +95,23 @@ async def test_create_access_request_sends_bedrock_uuid_when_given(mock_http):
     assert captured["body"]["minecraft_uuid"] == "00000000-0000-0000-0009-0009000000f4"
 
 
+async def test_relay_chat_sends_expected_body(mock_http):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"queued": True})
+
+    mock_http(handler)
+    client = MgmtClient("https://mgmt.example:8443", "tok-abc")
+    result = await client.relay_chat(channel_id="111", discord_username="somebody#0", message="hey")
+
+    assert captured["path"] == "/api/v1/chat/relay"
+    assert captured["body"] == {"channel_id": "111", "discord_username": "somebody#0", "message": "hey"}
+    assert result == {"queued": True}
+
+
 async def test_base_url_trailing_slash_is_stripped(mock_http):
     captured = {}
 

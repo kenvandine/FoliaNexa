@@ -126,6 +126,7 @@
     <button data-tab="plugins" onclick="showTab('plugins')">Plugins</button>
     <button data-tab="datapacks" onclick="showTab('datapacks')">Data Packs</button>
     <button data-tab="display" onclick="showTab('display')">Display</button>
+    <button data-tab="chat" onclick="showTab('chat')">Chat Bridge</button>
     <button data-tab="access" onclick="showTab('access')">Access Requests</button>
     <button data-tab="users" onclick="showTab('users')">Users</button>
   </nav>
@@ -278,6 +279,30 @@
       </div>
     </section>
 
+    <section id="panel-chat" class="panel">
+      <div class="card">
+        <h2>Discord chat bridge</h2>
+        <p class="hint">Bridges in-game chat with Discord, world-aware — a message can go to its own world's channel and/or one combined server-wide channel. Requires <code>folia-nexa-bot</code> running for the Discord&rarr;game direction (needs the <code>message_content</code> intent enabled); the proxy handles game&rarr;Discord on its own via plain webhooks.</p>
+        <form onsubmit="return saveChatConfig(event)">
+          <div style="margin-bottom:0.7rem">
+            <label class="hint" style="display:block;margin-bottom:0.3rem">Server-wide webhook URL (every world's chat goes here) — <a href="https://support.discord.com/hc/en-us/articles/228383668" target="_blank" rel="noopener">how to create one</a></label>
+            <input id="chat-server-wide-webhook" placeholder="https://discord.com/api/webhooks/..." style="width:100%">
+          </div>
+          <div style="margin-bottom:0.7rem">
+            <label class="hint" style="display:block;margin-bottom:0.3rem">Per-world webhooks — one <code>world-name=webhook-url</code> per line:</label>
+            <textarea id="chat-world-webhooks" rows="3" style="width:100%;font-family:monospace" placeholder="world-lobby=https://discord.com/api/webhooks/..."></textarea>
+          </div>
+          <div style="margin-bottom:0.7rem">
+            <label class="hint" style="display:block;margin-bottom:0.3rem">Inbound channels (Discord&rarr;game) — one <code>channel-id=world-name</code> per line, or <code>channel-id=*</code> to broadcast that channel to every world:</label>
+            <textarea id="chat-inbound-channels" rows="3" style="width:100%;font-family:monospace" placeholder="123456789012345678=world-lobby&#10;234567890123456789=*"></textarea>
+          </div>
+          <button class="btn" type="submit">Save</button>
+          <span id="chat-saved" class="hint"></span>
+        </form>
+        <div id="chat-error" class="error"></div>
+      </div>
+    </section>
+
     <section id="panel-access" class="panel">
       <div class="card">
         <h2>Add a player directly</h2>
@@ -416,7 +441,7 @@ function showTab(name) {
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
   document.getElementById('panel-' + name).classList.add('active');
   document.querySelector('nav button[data-tab="' + name + '"]').classList.add('active');
-  const loaders = { worlds: loadWorlds, hosts: loadHosts, plugins: loadCatalog, datapacks: loadDatapackCatalog, display: loadDisplay, access: loadAccessRequests, users: loadUsers };
+  const loaders = { worlds: loadWorlds, hosts: loadHosts, plugins: loadCatalog, datapacks: loadDatapackCatalog, display: loadDisplay, chat: loadChatConfig, access: loadAccessRequests, users: loadUsers };
   loaders[name]();
 }
 
@@ -777,6 +802,54 @@ async function saveDisplay(event) {
       }),
     });
     savedEl.textContent = 'Saved — the proxy picks this up within a few seconds.';
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+  return false;
+}
+
+function _parseKeyValueLines(text) {
+  const result = {};
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const eq = line.indexOf('=');
+    if (eq < 0) throw new Error(`invalid line (expected key=value): "${line}"`);
+    result[line.slice(0, eq).trim()] = line.slice(eq + 1).trim();
+  }
+  return result;
+}
+
+async function loadChatConfig() {
+  const errorEl = document.getElementById('chat-error');
+  errorEl.textContent = '';
+  try {
+    const c = await api('/chat/config');
+    document.getElementById('chat-server-wide-webhook').value = c.server_wide_webhook_url || '';
+    document.getElementById('chat-world-webhooks').value = Object.entries(c.world_webhook_urls)
+      .map(([k, v]) => `${k}=${v}`).join('\n');
+    document.getElementById('chat-inbound-channels').value = Object.entries(c.inbound_channels)
+      .map(([k, v]) => `${k}=${v}`).join('\n');
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+}
+
+async function saveChatConfig(event) {
+  event.preventDefault();
+  const errorEl = document.getElementById('chat-error');
+  const savedEl = document.getElementById('chat-saved');
+  errorEl.textContent = '';
+  savedEl.textContent = '';
+  try {
+    const server_wide_webhook_url = document.getElementById('chat-server-wide-webhook').value.trim() || null;
+    const world_webhook_urls = _parseKeyValueLines(document.getElementById('chat-world-webhooks').value);
+    const inbound_channels = _parseKeyValueLines(document.getElementById('chat-inbound-channels').value);
+    await api('/chat/config', {
+      method: 'PUT',
+      body: JSON.stringify({ server_wide_webhook_url, world_webhook_urls, inbound_channels }),
+    });
+    savedEl.textContent = 'Saved.';
   } catch (e) {
     errorEl.textContent = e.message;
   }

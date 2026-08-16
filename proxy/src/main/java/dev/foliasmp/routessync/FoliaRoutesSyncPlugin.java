@@ -4,10 +4,12 @@ import com.google.inject.Inject;
 import com.velocitypowered.api.event.ResultedEvent.ComponentResult;
 import com.velocitypowered.api.event.Subscribe;
 import com.velocitypowered.api.event.connection.LoginEvent;
+import com.velocitypowered.api.event.player.PlayerChatEvent;
 import com.velocitypowered.api.event.player.PlayerChooseInitialServerEvent;
 import com.velocitypowered.api.event.proxy.ProxyInitializeEvent;
 import com.velocitypowered.api.event.proxy.ProxyPingEvent;
 import com.velocitypowered.api.plugin.Plugin;
+import com.velocitypowered.api.proxy.Player;
 import com.velocitypowered.api.proxy.ProxyServer;
 import com.velocitypowered.api.proxy.server.RegisteredServer;
 import com.velocitypowered.api.proxy.server.ServerInfo;
@@ -68,6 +70,9 @@ public final class FoliaRoutesSyncPlugin {
     // own velocity.toml/server-icon.png-derived ping response untouched
     // while null, rather than overriding it with a placeholder.
     private final AtomicReference<ProxyDisplay> display = new AtomicReference<>();
+    // Set once in onProxyInitialize — onPlayerChat needs it outside the
+    // poll-cycle closure pollAndReconcile's other clients live in.
+    private final AtomicReference<ChatClient> chatClient = new AtomicReference<>();
 
     @Inject
     public FoliaRoutesSyncPlugin(ProxyServer server, Logger logger) {
@@ -85,13 +90,39 @@ public final class FoliaRoutesSyncPlugin {
         MgmtRoutesClient routesClient = new MgmtRoutesClient(mgmtUrl, apiToken, Duration.ofSeconds(10));
         AccessGateClient accessGateClient = new AccessGateClient(mgmtUrl, apiToken, Duration.ofSeconds(10));
         MgmtDisplayClient displayClient = new MgmtDisplayClient(mgmtUrl, apiToken, Duration.ofSeconds(10));
+        ChatClient chat = new ChatClient(mgmtUrl, apiToken, Duration.ofSeconds(10));
+        chatClient.set(chat);
 
         logger.info("polling {} every {}s (access gate: {})", mgmtUrl, pollSeconds, accessGateEnabled.get() ? "enabled" : "disabled");
 
         server.getScheduler()
-                .buildTask(this, () -> pollAndReconcile(routesClient, accessGateClient, displayClient))
+                .buildTask(this, () -> pollAndReconcile(routesClient, accessGateClient, displayClient, chat))
                 .repeat(Duration.ofSeconds(pollSeconds))
                 .schedule();
+    }
+
+    @Subscribe
+    public void onPlayerChat(PlayerChatEvent event) {
+        // Fire-and-forget on the scheduler's async pool — never block chat
+        // delivery on an mgmt round trip. Doesn't touch event.setResult at
+        // all: this only ever mirrors chat outward to Discord (PLAN.md
+        // §16), never filters or modifies what players actually see.
+        ChatClient client = chatClient.get();
+        if (client == null) {
+            return;
+        }
+        Player player = event.getPlayer();
+        String world = player.getCurrentServer().map(conn -> conn.getServerInfo().getName()).orElse(null);
+        if (world == null) {
+            return;
+        }
+        server.getScheduler().buildTask(this, () -> {
+            try {
+                client.report(world, player.getUsername(), event.getMessage());
+            } catch (Exception e) {
+                logger.debug("failed to report chat message to mgmt: {}", e.getMessage());
+            }
+        }).schedule();
     }
 
     @Subscribe
@@ -129,12 +160,45 @@ public final class FoliaRoutesSyncPlugin {
         ));
     }
 
-    private void pollAndReconcile(MgmtRoutesClient routesClient, AccessGateClient accessGateClient, MgmtDisplayClient displayClient) {
+    private void pollAndReconcile(
+            MgmtRoutesClient routesClient, AccessGateClient accessGateClient, MgmtDisplayClient displayClient, ChatClient chat) {
         reconcileRoutes(routesClient);
         if (accessGateEnabled.get()) {
             refreshApprovedUuids(accessGateClient);
         }
         refreshDisplay(displayClient);
+        deliverPendingChat(chat);
+    }
+
+    private void deliverPendingChat(ChatClient client) {
+        List<PendingChatMessage> pending;
+        try {
+            pending = client.fetchPending();
+        } catch (Exception e) {
+            logger.debug("failed to fetch pending chat from mgmt: {}", e.getMessage());
+            return;
+        }
+        for (PendingChatMessage msg : pending) {
+            Component component = MiniMessage.miniMessage().deserialize(
+                    "<gray>[Discord] <bold>" + escapeMiniMessage(msg.author()) + "</bold>: "
+                            + escapeMiniMessage(msg.message()) + "</gray>"
+            );
+            if (msg.world() == null) {
+                server.getAllPlayers().forEach(p -> p.sendMessage(component));
+            } else {
+                server.getServer(msg.world()).ifPresent(rs -> rs.getPlayersConnected().forEach(p -> p.sendMessage(component)));
+            }
+        }
+    }
+
+    // A Discord username/message could itself contain MiniMessage tag
+    // syntax ("<red>") — escape it so it's shown literally rather than
+    // parsed as formatting. Adventure's MiniMessage ships a real escaper
+    // for exactly this (deserializing untrusted text); using it here
+    // instead of hand-rolled escaping keeps this correct across whatever
+    // tag syntax MiniMessage itself supports.
+    private static String escapeMiniMessage(String text) {
+        return MiniMessage.miniMessage().escapeTags(text);
     }
 
     private void reconcileRoutes(MgmtRoutesClient client) {

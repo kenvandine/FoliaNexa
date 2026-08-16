@@ -22,6 +22,20 @@ class MgmtClient:
             resp.raise_for_status()
             return resp.json()
 
+    async def relay_chat(self, *, channel_id: str, discord_username: str, message: str) -> dict:
+        """POST /api/v1/chat/relay (PLAN.md §16) — called for every guild
+        message the bot sees; mgmt decides whether channel_id is actually
+        bridge-configured (routers/chat.py), the bot doesn't need its own
+        copy of that mapping."""
+        async with httpx.AsyncClient(base_url=self._base_url, timeout=self._timeout) as client:
+            resp = await client.post(
+                "/api/v1/chat/relay",
+                headers=self._headers(),
+                json={"channel_id": channel_id, "discord_username": discord_username, "message": message},
+            )
+            resp.raise_for_status()
+            return resp.json()
+
     async def create_access_request(
         self,
         *,

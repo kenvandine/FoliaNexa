@@ -16,6 +16,7 @@ from folia_mgmt.lxd_client import LXDClient
 from folia_mgmt.routers import (
     access_requests,
     auth,
+    chat,
     datapacks,
     hosts,
     plugins,
@@ -69,6 +70,9 @@ def create_app() -> FastAPI:
     # routers/public_stats.py's TTLCache docstring for why.
     app.state.public_stats_cache = public_stats.TTLCache()
     app.state.public_stats_rate_limiter = public_stats.RateLimiter()
+    # In-process-only inbound chat queue — see routers/chat.py's module
+    # docstring for why this doesn't need a DB table.
+    app.state.chat_pending = []
 
     app.include_router(auth.router, prefix="/api/v1")
     app.include_router(hosts.router, prefix="/api/v1")
@@ -80,6 +84,7 @@ def create_app() -> FastAPI:
     app.include_router(datapacks.router, prefix="/api/v1")
     app.include_router(stats.router, prefix="/api/v1")
     app.include_router(public_stats.router, prefix="/api/v1")
+    app.include_router(chat.router, prefix="/api/v1")
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

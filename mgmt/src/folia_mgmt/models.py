@@ -215,6 +215,35 @@ class ProxyDisplay(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
+class ChatBridgeConfig(SQLModel, table=True):
+    """Singleton row (fixed id=1): Discord chat-bridge configuration.
+    PLAN.md §16 — see routers/chat.py's module docstring for the full
+    outbound/inbound design (why this exists instead of installing
+    DiscordSRV per-world: DiscordSRV has no concept of "which world" in a
+    multi-server Velocity network, this does).
+
+    world_webhook_urls: world name -> Discord webhook URL, for that
+    world's own channel. server_wide_webhook_url: one webhook that gets
+    every world's chat, regardless of world_webhook_urls. A message can
+    go to both (its own world's channel and the combined one) — outbound
+    delivery POSTs to whichever of the two are configured for that world,
+    not either/or.
+
+    inbound_channels: Discord channel id -> world name, or "*" for a
+    channel whose messages broadcast to every connected player network-
+    wide rather than just one world's players. Keyed by channel id (a
+    Discord snowflake string) since that's what folia-nexa-bot's
+    on_message handler actually has; nothing here needs the channel's
+    human-readable name.
+    """
+
+    id: Optional[int] = Field(default=1, primary_key=True)
+    server_wide_webhook_url: Optional[str] = None
+    world_webhook_urls: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
+    inbound_channels: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
 class AccessRequest(SQLModel, table=True):
     """A Discord-authenticated request to join the network. PLAN.md §11C."""
 

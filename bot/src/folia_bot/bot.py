@@ -1,7 +1,8 @@
 """folia-nexa-bot entry point. PLAN.md §16.
 
-Three slash commands, all backed by folia-nexa-mgmt's REST API — this bot
-never touches mgmt's DB or LXD directly:
+Three slash commands, plus a chat-relay message listener, all backed by
+folia-nexa-mgmt's REST API — this bot never touches mgmt's DB or LXD
+directly:
 
 - `/status` — declared worlds and their phase/host, from GET /api/v1/worlds.
 - `/request-access <minecraft_username> [minecraft_uuid]` — an in-Discord
@@ -17,6 +18,13 @@ never touches mgmt's DB or LXD directly:
 - `/leaderboard` — an explicit stub. There's no analytics store backing
   it yet (PLAN.md §16's Future Expansion), and saying so beats a missing
   command or fabricated numbers.
+- `on_message` — the Discord->game half of the chat bridge (mgmt's
+  routers/chat.py has the full design). Relays every guild message it
+  sees to POST /api/v1/chat/relay unconditionally; mgmt decides whether
+  that channel is actually configured as a bridge channel, so this file
+  never needs its own copy of that mapping. Requires the privileged
+  `message_content` intent, enabled both here and in the Discord
+  Developer Portal for this application.
 
 Configuration, environment variables:
   DISCORD_BOT_TOKEN (required), FOLIA_MGMT_URL (required),
@@ -68,6 +76,12 @@ def build_client() -> discord.Client:
     guild_id_raw = os.environ.get("DISCORD_GUILD_ID")
 
     intents = discord.Intents.default()
+    # Privileged intent — must also be enabled for this application in the
+    # Discord Developer Portal, not just here. Needed for on_message below
+    # (the chat bridge's Discord->game direction, PLAN.md §16) to actually
+    # see message.content; every other intent this bot uses is already
+    # covered by Intents.default().
+    intents.message_content = True
     client = discord.Client(intents=intents)
     tree = app_commands.CommandTree(client)
 
@@ -118,6 +132,25 @@ def build_client() -> discord.Client:
 
         outcome = "approved! You can join now." if result.get("status") == "approved" else "submitted and pending review."
         await interaction.followup.send(f"Access request for `{minecraft_username}` {outcome}", ephemeral=True)
+
+    @client.event
+    async def on_message(message: discord.Message) -> None:
+        # Relays every guild message unconditionally and lets mgmt decide
+        # whether the channel is actually chat-bridge-configured
+        # (routers/chat.py) — this bot never holds its own copy of that
+        # mapping, matching the "never touches mgmt's DB directly" design
+        # everywhere else in this file. message.author.bot excludes this
+        # bot's own relayed-from-Discord messages if it ever posts through
+        # a regular message rather than a webhook, and other bots'
+        # messages generally — avoids relay loops.
+        if message.author.bot or message.guild is None or not message.content:
+            return
+        try:
+            await mgmt.relay_chat(
+                channel_id=str(message.channel.id), discord_username=str(message.author), message=message.content
+            )
+        except Exception:
+            logger.exception("failed to relay chat message to mgmt")
 
     @client.event
     async def on_ready() -> None:
