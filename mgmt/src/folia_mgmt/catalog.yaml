@@ -100,12 +100,18 @@
   version: "1.5.10"
   download_url: null
   sha256: null
-  homepage: "https://github.com/WiIIiam278/HuskClaims"
+  homepage: "https://william278.net/project/huskclaims"
   verified: false
   notes: >
-    Release 1.5.10 exists on GitHub but publishes no release binary
-    asset there — likely distributed via Modrinth/Hangar/Polymart
-    instead. Resolve a real download_url before using this entry.
+    Checked 2026-08-16: this is now a paid plugin (£9.99 per
+    william278.net's own project page), distributed only through
+    SpigotMC/Polymart/BuiltByBit purchase gates — not on Modrinth or
+    Hangar. Its GitHub releases (github.com/WiIIiam278/HuskClaims,
+    e.g. tag v1.5.10) carry no uploaded jar asset, only the automatic
+    source-code archives. Same category as ItemsAdder: license-gated,
+    won't ever get a plain public download_url. If you want claims for
+    the survival world, budget for a real purchase (and self-hosting the
+    jar afterward) or swap in a free alternative.
 
 - id: Vault-Unlocked
   category: economy
@@ -160,12 +166,25 @@
 - id: HuskHomes
   category: navigation
   source: external
-  version: "unknown"
-  download_url: null
-  sha256: null
-  homepage: "https://github.com/WiIIiam278/HuskHomes2"
-  verified: false
-  notes: "Placeholder — same distribution caveat as HuskClaims (likely Modrinth/Hangar, not a GitHub release asset)."
+  version: "4.11"
+  download_url: "https://cdn.modrinth.com/data/J6U9o3JG/versions/MznzQDLE/HuskHomes-Paper-4.11.jar"
+  sha256: "4040f6b653f5fae0f030ecd98e93c3b7db34ddf361da9a5d2141e483c3eabaa3"
+  homepage: "https://modrinth.com/plugin/huskhomes"
+  verified: true
+  notes: >
+    Verified 2026-08-16 via Modrinth's API (api.modrinth.com/v2/project/
+    huskhomes/version) — unlike HuskClaims, HuskHomes is free and
+    published directly on Modrinth. This build (4.11, released
+    2026-08-14, the current stable — not one of the same day's
+    4.11-<hash> alpha/dev builds) declares support for Minecraft
+    1.20.1-1.21.11 across the folia/paper/spigot loaders, which covers
+    this cluster's default engine version (1.21.4, see `worlds create
+    --version`'s default in cli.py). Modrinth only publishes sha1/sha512
+    for this file, not sha256 (same situation as the Matcha datapack
+    entry) — downloaded the exact download_url above directly and
+    computed sha256 from the real bytes; the sha1 of that download
+    (7d2a7e393a25ff4bcf60a95900b8f9e3749f3e5d) matches Modrinth's own
+    API-reported hash for this file, confirming the download is genuine.
 
 - id: HuskPortals
   category: navigation

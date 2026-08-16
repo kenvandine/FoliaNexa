@@ -13,21 +13,35 @@ of mid-run tonight.
 - **Most of the survival world's plugin list has no real download yet.**
   `configs/worlds/create-survival.sh` declares 14 `--plugin` entries;
   9 of them (`HuskClaims`, `Vault-Unlocked`, `AxAuctions`, `AuraSkills`,
-  `ItemsAdder`, `MythicMobs`, `HuskHomes`, `HuskPortals`,
-  `SimpleVoiceChat`, `DiscordSRV`) are `download_url: null` placeholders
-  in `mgmt/src/folia_mgmt/catalog.yaml`. A plugin with no `download_url`
-  is **silently skipped** in the generated manifest — not an error, not
-  a warning in the CLI. Only `LuckPerms`, `Spark`, `BlueMap`, and
-  `FoliaNexaStats` will actually land in that world's `plugins/` folder
-  as-is. Same story for `SkyWarsReloaded`/`BedWars1058` on both minigame
-  worlds — both fully placeholder, so those two worlds will boot with
-  **zero** minigame logic until you resolve real URLs.
+  `ItemsAdder`, `MythicMobs`, `HuskPortals`, `SimpleVoiceChat`,
+  `DiscordSRV`) are `download_url: null` placeholders in
+  `mgmt/src/folia_mgmt/catalog.yaml`. A plugin with no `download_url` is
+  **silently skipped** in the generated manifest — not an error, not a
+  warning in the CLI. Only `LuckPerms`, `Spark`, `BlueMap`, `HuskHomes`
+  (verified 2026-08-16, see below), and `FoliaNexaStats` will actually
+  land in that world's `plugins/` folder as-is. Same story for
+  `SkyWarsReloaded`/`BedWars1058` on both minigame worlds — both fully
+  placeholder, so those two worlds will boot with **zero** minigame
+  logic until you resolve real URLs.
   - Decide tonight: run `create-all.sh` anyway (accept an unfinished
     plugin loadout to first confirm the pipeline end-to-end), or fill in
     real `download_url`/`sha256` values first via
     `plugin-catalog-override.yaml` in mgmt's state dir. `folia-nexa-mgmt
     plugins list` / `plugins show <id>` will tell you which ids are
     still `verified: false`.
+- **`HuskClaims` is a paid plugin, checked for real 2026-08-16** —
+  £9.99 via SpigotMC/Polymart/BuiltByBit purchase gates (william278.net's
+  own project page confirms the pricing), not on Modrinth/Hangar, and
+  its GitHub releases carry no uploaded jar (only the automatic source
+  archives). Same category as `ItemsAdder`: it will never get a plain
+  public `download_url`. If claims matter for tonight's survival world,
+  budget for buying a license and self-hosting the jar, or drop it from
+  `create-survival.sh` and pick a free alternative.
+- **`HuskHomes` is now real** — verified 2026-08-16 directly against
+  Modrinth's API and re-downloaded/sha256'd for real (`catalog.yaml`'s
+  entry has the details). It's free, unlike `HuskClaims`, and the pinned
+  build (4.11) supports this cluster's default engine version (1.21.4).
+  One fewer plugin to worry about in the list above.
 - **`ItemsAdder` will never get a plain URL** — it's SpigotMC
   license-gated. Either drop it from `create-survival.sh` or plan to
   self-host a licensed copy.
