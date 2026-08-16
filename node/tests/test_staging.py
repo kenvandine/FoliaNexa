@@ -134,6 +134,30 @@ def test_sync_world_config_writes_operator_properties_plus_required_baseline(tmp
     assert "online-mode=false" in content
 
 
+def test_sync_world_config_preserves_paper_managed_keys_not_touched_by_overrides(tmp_path):
+    # Simulates a world that's already booted at least once — Paper writes
+    # many keys of its own (difficulty, motd, view-distance, ...) that
+    # this codebase never templates and must not clobber on a later sync.
+    (tmp_path / "server.properties").write_text(
+        "online-mode=false\ndifficulty=normal\nmotd=A Minecraft Server\nview-distance=10\n"
+    )
+    client = httpx.Client(transport=httpx.MockTransport(_handler))
+    sync_world_config(
+        tmp_path,
+        _assignment(
+            plugins_manifest_url=None,
+            server_properties_url="https://artifacts.internal/api/v1/worlds/world-nether/server-properties-manifest",
+        ),
+        client=client,
+    )
+    content = (tmp_path / "server.properties").read_text()
+    assert "difficulty=normal" in content
+    assert "motd=A Minecraft Server" in content
+    assert "view-distance=10" in content
+    assert "allow-flight=true" in content  # the new override from _handler
+    assert "online-mode=false" in content
+
+
 def test_sync_world_config_without_server_properties_url_still_writes_required_baseline(tmp_path):
     client = httpx.Client(transport=httpx.MockTransport(_handler))
     sync_world_config(tmp_path, _assignment(plugins_manifest_url=None), client=client)

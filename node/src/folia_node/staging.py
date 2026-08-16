@@ -56,10 +56,28 @@ LEVEL_NAME = "world"
 _REQUIRED_PROPERTIES = {"online-mode": "false"}
 
 
+def _read_server_properties(path: Path) -> dict[str, str]:
+    if not path.exists():
+        return {}
+    props = {}
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        props[key.strip()] = value.strip()
+    return props
+
+
 def _write_server_properties(world_dir: Path, overrides: dict[str, str]) -> None:
-    merged = {**overrides, **_REQUIRED_PROPERTIES}
+    # Merge, never replace outright — Paper writes dozens of its own keys
+    # into this file beyond first boot (difficulty, motd, view-distance,
+    # ...) that this codebase never templates and has no business
+    # clobbering just because an operator changed one unrelated property.
+    path = world_dir / "server.properties"
+    merged = {**_read_server_properties(path), **overrides, **_REQUIRED_PROPERTIES}
     lines = [f"{key}={value}" for key, value in sorted(merged.items())]
-    (world_dir / "server.properties").write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n")
 
 
 def _write_paper_global_config(world_dir: Path, forwarding_secret: str) -> None:
