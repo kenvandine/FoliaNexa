@@ -171,6 +171,7 @@
   sha256: "4040f6b653f5fae0f030ecd98e93c3b7db34ddf361da9a5d2141e483c3eabaa3"
   homepage: "https://github.com/WiIIiam278/HuskHomes"
   verified: true
+  default_for_all_worlds: true
   notes: >
     Verified 2026-08-16 — downloaded from Modrinth's CDN and sha256'd
     directly (Modrinth's API only publishes sha1/sha512 for this file,
@@ -179,7 +180,13 @@
     cross-server; reuses the same LuckPerms MySQL instance (Phase 6,
     configs/luckperms/provision-mysql.sh or folia-nexa-db) rather than
     needing a second database. Modrinth tags this build with the
-    "folia" loader explicitly.
+    "folia" loader explicitly. default_for_all_worlds: true per operator
+    request — NOTE this only stages the jar; unlike LuckPerms (see
+    luckperms.py), mgmt does not yet template/push HuskHomes' own
+    config.yml with the shared MySQL credentials, so on every world it
+    currently runs standalone (SQLite-per-world, no cross-server /tpa)
+    until that sync is built — tracked as a follow-up, same shape as
+    sync_luckperms_configs.
 
 - id: HuskPortals
   category: navigation
@@ -302,6 +309,7 @@
   sha256: "30dbe9a7562c3f0648d279c918a67f00cf3deee42c1780ffb8ed6911286ee6dc"
   homepage: "https://github.com/kenvandine/folianexa-plugins/tree/main/folianexa-stats"
   verified: true
+  default_for_all_worlds: true
   notes: >
     Feeds the public player hub (portal/, PLAN.md §7A) — reports
     kills/deaths/blocks-mined/playtime to POST /api/v1/stats/report

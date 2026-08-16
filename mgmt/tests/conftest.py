@@ -26,6 +26,7 @@ class FakeLXDClient:
         self.pushed_files: dict[tuple[str, str, str], bytes] = {}  # (host_name, container, path) -> content
         self.migrations: list[tuple[str, str, str]] = []  # (source_host, container, target_host)
         self.fail_migrate_for: set[str] = set()
+        self.updated_config: dict[tuple[str, str], dict] = {}  # (host_name, container) -> last config pushed
 
     def redeem_trust_token(self, address: str, project: str, trust_token: str):
         if trust_token == "bad-token":
@@ -55,6 +56,9 @@ class FakeLXDClient:
 
     def restart_container(self, host, name):
         self.restarted.append((host.name, name))
+
+    def update_config(self, host, name, config):
+        self.updated_config[(host.name, name)] = config
 
     def snapshot_container(self, host, name, snapshot_name):
         self.snapshots.append((host.name, name, snapshot_name))

@@ -17,7 +17,7 @@ from folia_mgmt.deps import get_health_check, get_lxd_client, get_uuid_resolver,
 from folia_mgmt.lxd_client import LXDClient, LXDError
 from folia_mgmt.models import Host, HostStatus, World, WorldPhase, WorldType, utcnow
 from folia_mgmt.plugin_catalog import load_catalog
-from folia_mgmt.scheduler import HealthCheck, allocated_capacity, reconcile
+from folia_mgmt.scheduler import HealthCheck, allocated_capacity, reconcile, _node_config
 
 logger = logging.getLogger(__name__)
 
@@ -31,6 +31,7 @@ class CreateWorldRequest(BaseModel):
     version: str = "1.21.4"
     plugins: list[str] = []
     datapacks: list[str] = []
+    properties: dict[str, str] = {}
     cpu_cores: int
     memory_gb: int
     placement_labels: dict[str, str] = {}
@@ -45,6 +46,7 @@ class WorldResponse(BaseModel):
     version: str
     plugins: list[str]
     datapacks: list[str]
+    properties: dict[str, str]
     cpu_cores: int
     memory_gb: int
     placement_labels: dict[str, str]
@@ -64,6 +66,7 @@ def _to_response(world: World) -> WorldResponse:
         version=world.version,
         plugins=world.plugins,
         datapacks=world.datapacks,
+        properties=world.properties,
         cpu_cores=world.cpu_cores,
         memory_gb=world.memory_gb,
         placement_labels=world.placement_labels,
@@ -137,6 +140,47 @@ def _validate_datapacks(datapacks: list[str], settings: Settings) -> None:
         )
 
 
+# server.properties keys folia_node.staging either writes unconditionally
+# itself (online-mode) or assumes a fixed value for elsewhere in the
+# codebase (level-name — see staging.py's LEVEL_NAME comment on why data
+# pack staging can't handle a custom one), plus the rcon.* keys reserved
+# for when mgmt actually wires up RCON. An operator-set value for any of
+# these would either be silently overwritten (online-mode) or break
+# something non-obvious (level-name), so reject them outright rather than
+# accept-and-ignore.
+_PROTECTED_PROPERTIES = {"online-mode", "level-name", "server-port", "enable-rcon", "rcon.password", "rcon.port"}
+
+
+def _validate_properties(properties: dict[str, str]) -> None:
+    protected = _PROTECTED_PROPERTIES & properties.keys()
+    if protected:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            f"these server.properties keys are managed by folia-nexa-mgmt/node, not operator-settable: "
+            f"{', '.join(sorted(protected))}",
+        )
+    for key, value in properties.items():
+        if not key or "=" in key or "\n" in key:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"invalid server.properties key: {key!r}")
+        if "\n" in value:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"invalid server.properties value for {key!r}")
+
+
+def _with_default_plugins(plugins: list[str], settings: Settings) -> list[str]:
+    """Every world gets every catalog entry flagged
+    default_for_all_worlds=true (e.g. FoliaNexaStats, HuskHomes) whether or
+    not it was explicitly requested — order: explicit selections first
+    (in the order given), then any missing defaults appended, so an
+    operator's own ordering isn't disturbed. Only called once public_url
+    is already known to be set (both call sites validate plugins first)."""
+    defaults = [entry.id for entry in load_catalog(settings) if entry.default_for_all_worlds]
+    merged = list(plugins)
+    for plugin_id in defaults:
+        if plugin_id not in merged:
+            merged.append(plugin_id)
+    return merged
+
+
 @router.post("", response_model=WorldResponse, dependencies=[Depends(require_operator)])
 def create_world(
     body: CreateWorldRequest,
@@ -147,16 +191,23 @@ def create_world(
 ) -> WorldResponse:
     if session.exec(select(World).where(World.name == body.name)).first():
         raise HTTPException(status.HTTP_409_CONFLICT, f"world '{body.name}' already exists")
-    _validate_plugins(body.plugins, settings)
+    # Merge in cluster-wide default plugins *before* validating, not after
+    # — so a cluster with no FOLIA_MGMT_PUBLIC_URL configured fails loudly
+    # here rather than silently creating a world that claims a default
+    # plugin it can never actually fetch.
+    plugins = _with_default_plugins(body.plugins, settings)
+    _validate_plugins(plugins, settings)
     _validate_datapacks(body.datapacks, settings)
+    _validate_properties(body.properties)
 
     world = World(
         name=body.name,
         type=body.type,
         engine=body.engine,
         version=body.version,
-        plugins=body.plugins,
+        plugins=plugins,
         datapacks=body.datapacks,
+        properties=body.properties,
         cpu_cores=body.cpu_cores,
         memory_gb=body.memory_gb,
         placement_labels=body.placement_labels,
@@ -176,6 +227,83 @@ def create_world(
 @router.get("", response_model=list[WorldResponse], dependencies=[Depends(require_viewer)])
 def list_worlds(session: Session = Depends(get_session)) -> list[WorldResponse]:
     return [_to_response(w) for w in session.exec(select(World)).all()]
+
+
+class UpdateWorldRequest(BaseModel):
+    # None means "leave unchanged" for each field — an explicit [] / {}
+    # means "clear it", same convention as AccessUpdateRequest below.
+    plugins: list[str] | None = None
+    datapacks: list[str] | None = None
+    properties: dict[str, str] | None = None
+
+
+@router.patch("/{name}", response_model=WorldResponse, dependencies=[Depends(require_operator)])
+def update_world(
+    name: str,
+    body: UpdateWorldRequest,
+    session: Session = Depends(get_session),
+    lxd_client: LXDClient = Depends(get_lxd_client),
+    settings: Settings = Depends(settings_dependency),
+) -> WorldResponse:
+    """Edits an already-declared world's plugins/datapacks/server.properties.
+    Takes effect on the world's *next restart* — folia-nexa-node only
+    re-syncs this config at its own startup (folia_node.staging), not
+    live, and this endpoint doesn't restart the container itself (a
+    world mid-restart loses whoever's currently playing on it, so that's
+    an explicit separate action — see POST /{name}/restart).
+
+    Cluster-wide default plugins (default_for_all_worlds in the catalog)
+    are re-merged in on every update, same as at creation — an operator
+    can't accidentally drop FoliaNexaStats/HuskHomes by editing plugins
+    without them in the list.
+    """
+    world = _get_world_or_404(session, name)
+
+    if body.plugins is not None:
+        plugins = _with_default_plugins(body.plugins, settings)
+        _validate_plugins(plugins, settings)
+        world.plugins = plugins
+    if body.datapacks is not None:
+        _validate_datapacks(body.datapacks, settings)
+        world.datapacks = body.datapacks
+    if body.properties is not None:
+        _validate_properties(body.properties)
+        world.properties = body.properties
+    world.updated_at = utcnow()
+    session.add(world)
+    session.commit()
+    session.refresh(world)
+
+    if world.host_name and world.container_name:
+        host = session.exec(select(Host).where(Host.name == world.host_name)).first()
+        if host is not None:
+            try:
+                lxd_client.update_config(host, world.container_name, _node_config(world, settings))
+            except LXDError:
+                logger.exception(
+                    "world '%s' updated in mgmt's DB but failed to push config to its container — "
+                    "it'll stay out of sync until this is retried",
+                    name,
+                )
+
+    return _to_response(world)
+
+
+@router.post("/{name}/restart", dependencies=[Depends(require_operator)])
+def restart_world(
+    name: str,
+    session: Session = Depends(get_session),
+    lxd_client: LXDClient = Depends(get_lxd_client),
+) -> dict[str, str]:
+    """Restarts a world's container so it picks up config pushed by
+    PATCH /{name} (new/changed plugins, datapacks, or server.properties)
+    — folia-nexa-node only re-syncs that config at its own startup."""
+    world, host = _host_and_world(session, name)
+    try:
+        lxd_client.restart_container(host, world.container_name)
+    except LXDError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    return {"restarted": world.container_name}
 
 
 @router.delete("/{name}", response_model=WorldResponse, dependencies=[Depends(require_operator)])
@@ -371,6 +499,20 @@ def get_plugins_manifest(
             continue
         manifest.append({"name": entry.id, "url": entry.download_url})
     return manifest
+
+
+@router.get("/{name}/server-properties-manifest")
+def get_server_properties_manifest(name: str, session: Session = Depends(get_session)) -> dict[str, str]:
+    """What folia-nexa-node fetches to reconcile server.properties on every
+    (re)start — same reasoning as get_plugins_manifest above (deliberately
+    unauthenticated, node has no mgmt credential). Only ever contains
+    operator-set overrides (_validate_properties already rejects the
+    protected keys node manages itself); node is responsible for merging
+    this over its own required baseline, not the other way around, so a
+    world with no overrides at all just gets an empty object here.
+    """
+    world = _get_world_or_404(session, name)
+    return world.properties
 
 
 @router.get("/{name}/datapacks-manifest")

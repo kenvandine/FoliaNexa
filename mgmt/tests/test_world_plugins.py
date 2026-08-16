@@ -46,7 +46,9 @@ def test_create_world_accepts_catalog_plugins(client, operator_token):
         headers=auth_header(operator_token),
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["plugins"] == ["LuckPerms", "Spark"]
+    # FoliaNexaStats/HuskHomes are catalog defaults (default_for_all_worlds)
+    # and get appended after the explicit selections regardless of request.
+    assert resp.json()["plugins"] == ["LuckPerms", "Spark", "FoliaNexaStats", "HuskHomes"]
 
 
 def test_create_world_with_plugins_requires_public_url(client, operator_token, app):
@@ -67,7 +69,13 @@ def test_create_world_with_plugins_requires_public_url(client, operator_token, a
         del app.dependency_overrides[settings_dependency]
 
 
-def test_create_world_without_plugins_does_not_need_public_url(client, operator_token, app):
+def test_create_world_with_no_explicit_plugins_still_needs_public_url_for_catalog_defaults(
+    client, operator_token, app
+):
+    # FoliaNexaStats/HuskHomes (default_for_all_worlds) get merged in even
+    # for a request with an empty plugins list, so public_url ends up
+    # required for every world now, not just ones that explicitly ask for
+    # plugins — see _with_default_plugins' docstring in routers/worlds.py.
     from folia_mgmt.config import Settings
     from folia_mgmt.deps import settings_dependency
 
@@ -79,7 +87,8 @@ def test_create_world_without_plugins_does_not_need_public_url(client, operator_
             json={"name": "world-lobby", "type": "lobby", "cpu_cores": 1, "memory_gb": 1},
             headers=auth_header(operator_token),
         )
-        assert resp.status_code == 200, resp.text
+        assert resp.status_code == 400, resp.text
+        assert "FOLIA_MGMT_PUBLIC_URL" in resp.json()["detail"]
     finally:
         del app.dependency_overrides[settings_dependency]
 
@@ -103,7 +112,7 @@ def test_plugins_manifest_generated_from_catalog(client, admin_token, operator_t
     assert resp.status_code == 200, resp.text
     manifest = resp.json()
     names = {entry["name"] for entry in manifest}
-    assert names == {"LuckPerms", "Spark"}
+    assert names == {"LuckPerms", "Spark", "FoliaNexaStats", "HuskHomes"}
     for entry in manifest:
         assert entry["url"].startswith("http")
 
@@ -136,10 +145,14 @@ def test_plugins_manifest_skips_entries_with_no_download_url(client, admin_token
     )
     resp = client.get("/api/v1/worlds/world-overworld/plugins-manifest")
     names = {entry["name"] for entry in resp.json()}
-    assert names == {"LuckPerms"}  # HuskClaims silently dropped, not a 500
+    # HuskClaims silently dropped, not a 500 — FoliaNexaStats/HuskHomes
+    # still present as catalog defaults.
+    assert names == {"LuckPerms", "FoliaNexaStats", "HuskHomes"}
 
 
-def test_plugins_manifest_empty_for_world_without_plugins(client, admin_token, operator_token, fake_lxd):
+def test_plugins_manifest_has_only_catalog_defaults_for_world_without_explicit_plugins(
+    client, admin_token, operator_token, fake_lxd
+):
     _enroll_host(client, admin_token)
     client.post(
         "/api/v1/worlds",
@@ -148,7 +161,8 @@ def test_plugins_manifest_empty_for_world_without_plugins(client, admin_token, o
     )
     resp = client.get("/api/v1/worlds/world-lobby/plugins-manifest")
     assert resp.status_code == 200
-    assert resp.json() == []
+    names = {entry["name"] for entry in resp.json()}
+    assert names == {"FoliaNexaStats", "HuskHomes"}
 
 
 def test_plugins_manifest_404s_for_unknown_world(client):

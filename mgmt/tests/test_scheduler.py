@@ -247,11 +247,14 @@ def test_sync_whitelisted_worlds_skips_non_whitelisted_and_non_running():
     assert lxd.pushed == {}
 
 
-def test_node_config_omits_manifest_url_without_plugins():
+def test_node_config_sets_manifest_url_even_without_plugins():
+    # The URL is stable regardless of current list content — see
+    # _node_config's docstring — so a later PATCH adding plugins to a
+    # previously plugin-less world doesn't need a fresh config push.
     world = World(name="w", type=WorldType.lobby, cpu_cores=1, memory_gb=1)
     settings = Settings(public_url="https://mgmt.example:8443")
     config = _node_config(world, settings)
-    assert "user.folia.plugins-manifest-url" not in config
+    assert config["user.folia.plugins-manifest-url"] == "https://mgmt.example:8443/api/v1/worlds/w/plugins-manifest"
     assert config["user.folia.jar-url"] == f"{settings.artifacts_base_url}/{world.engine}/{world.version}/{world.engine}.jar"
 
 
@@ -272,11 +275,13 @@ def test_node_config_sets_manifest_url_when_plugins_and_public_url_present():
     )
 
 
-def test_node_config_omits_datapacks_manifest_url_without_datapacks():
+def test_node_config_sets_datapacks_manifest_url_even_without_datapacks():
     world = World(name="w", type=WorldType.lobby, cpu_cores=1, memory_gb=1)
     settings = Settings(public_url="https://mgmt.example:8443")
     config = _node_config(world, settings)
-    assert "user.folia.datapacks-manifest-url" not in config
+    assert (
+        config["user.folia.datapacks-manifest-url"] == "https://mgmt.example:8443/api/v1/worlds/w/datapacks-manifest"
+    )
 
 
 def test_node_config_omits_datapacks_manifest_url_without_public_url():
@@ -294,3 +299,20 @@ def test_node_config_sets_datapacks_manifest_url_when_datapacks_and_public_url_p
         config["user.folia.datapacks-manifest-url"]
         == "https://mgmt.example:8443/api/v1/worlds/world-overworld/datapacks-manifest"
     )
+
+
+def test_node_config_sets_server_properties_manifest_url_when_public_url_present():
+    world = World(name="world-overworld", type=WorldType.overworld, cpu_cores=4, memory_gb=8)
+    settings = Settings(public_url="https://mgmt.example:8443/")
+    config = _node_config(world, settings)
+    assert (
+        config["user.folia.server-properties-manifest-url"]
+        == "https://mgmt.example:8443/api/v1/worlds/world-overworld/server-properties-manifest"
+    )
+
+
+def test_node_config_omits_server_properties_manifest_url_without_public_url():
+    world = World(name="w", type=WorldType.overworld, cpu_cores=4, memory_gb=8)
+    settings = Settings(public_url=None)
+    config = _node_config(world, settings)
+    assert "user.folia.server-properties-manifest-url" not in config

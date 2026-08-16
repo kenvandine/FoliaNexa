@@ -16,7 +16,7 @@ from pathlib import Path
 from folia_node.devlxd import DevLXDClient, DevLXDError
 from folia_node.health import AgentState, start_health_server
 from folia_node.runner import JVMRunner, build_java_command
-from folia_node.staging import ensure_staged
+from folia_node.staging import ensure_staged, sync_world_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -42,6 +42,10 @@ def main() -> None:
     logger.info("health server up on :%d for world '%s'", health_port, assignment.world_name)
 
     jar_path = ensure_staged(world_dir, assignment)
+    # Unlike ensure_staged, always runs — picks up any plugins/datapacks/
+    # server.properties edit made via PATCH /worlds/{name} since this
+    # world's container last started (PLAN.md §9).
+    sync_world_config(world_dir, assignment)
 
     while True:
         command = build_java_command(java_bin, jar_path, memory_gb=_detect_memory_gb())

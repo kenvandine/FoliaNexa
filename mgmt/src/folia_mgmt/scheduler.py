@@ -85,6 +85,19 @@ def _node_config(world: World, settings: Settings) -> dict[str, str]:
     datapacks-manifest-url is the same pattern again, one catalog over
     (datapack_catalog.py) — see routers/worlds.py's get_datapacks_manifest
     and folia_node.staging for where node stages the result.
+    server-properties-manifest-url is the same pattern a third time, for
+    World.properties — see get_server_properties_manifest.
+
+    All three manifest URLs are set whenever public_url is configured,
+    regardless of whether the underlying list/dict is currently empty
+    (each manifest endpoint just returns an empty result in that case) —
+    that keeps the URL itself stable across a world's lifetime, so
+    folia_node.staging can always re-fetch it on every agent restart to
+    pick up a later PATCH /worlds/{name} edit, rather than needing a
+    config push just because a previously-empty list gained its first
+    entry. A world *placed* before this manifest existed at all still
+    needs one push_config call to pick up the key in the first place —
+    see routers/worlds.py's update_world.
     """
     base = settings.artifacts_base_url.rstrip("/")
     config = {
@@ -93,14 +106,19 @@ def _node_config(world: World, settings: Settings) -> dict[str, str]:
         "user.folia.jar-engine": world.engine,
         "user.folia.jar-version": world.version,
         "user.folia.jar-url": f"{base}/{world.engine}/{world.version}/{world.engine}.jar",
+        # Every world needs this, not just ones behind a specific proxy —
+        # folia-nexa-node writes it into config/paper-global.yml so this
+        # backend trusts identity forwarded by folia-nexa-proxy's Velocity
+        # "modern" forwarding (PLAN.md §7, routers/routes.py's matching
+        # /forwarding-secret endpoint the proxy itself polls).
+        "user.folia.velocity-forwarding-secret": settings.get_velocity_forwarding_secret(),
     }
-    if world.plugins and settings.public_url:
-        config["user.folia.plugins-manifest-url"] = (
-            f"{settings.public_url.rstrip('/')}/api/v1/worlds/{world.name}/plugins-manifest"
-        )
-    if world.datapacks and settings.public_url:
-        config["user.folia.datapacks-manifest-url"] = (
-            f"{settings.public_url.rstrip('/')}/api/v1/worlds/{world.name}/datapacks-manifest"
+    if settings.public_url:
+        public_url = settings.public_url.rstrip("/")
+        config["user.folia.plugins-manifest-url"] = f"{public_url}/api/v1/worlds/{world.name}/plugins-manifest"
+        config["user.folia.datapacks-manifest-url"] = f"{public_url}/api/v1/worlds/{world.name}/datapacks-manifest"
+        config["user.folia.server-properties-manifest-url"] = (
+            f"{public_url}/api/v1/worlds/{world.name}/server-properties-manifest"
         )
     return config
 

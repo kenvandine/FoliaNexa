@@ -181,6 +181,26 @@ class LXDClient:
                 self._wait_operation(client, start.json())
             return metadata
 
+    def update_config(self, host: Host, name: str, config: dict[str, str]) -> None:
+        """Merges `config` into an already-launched instance's `user.*`
+        config keys via LXD's PATCH (partial update — unlike PUT, doesn't
+        require resending the full instance definition). Used to push new/
+        changed `user.folia.*` keys (PLAN.md §9) to a world that was
+        already placed before a config change, e.g. adding
+        server-properties-manifest-url to a world launched before that key
+        existed. Takes effect on the container's next restart — folia-nexa-
+        node only reads devlxd config at its own startup, not live."""
+        with self._client_for(host) as client:
+            resp = client.patch(
+                f"/1.0/instances/{name}",
+                params={"project": host.project},
+                json={"config": config},
+            )
+            if resp.status_code not in (200, 202):
+                raise LXDError(f"config update of '{name}' on '{host.name}' failed: {resp.text}")
+            if resp.status_code == 202:
+                self._wait_operation(client, resp.json())
+
     def restart_container(self, host: Host, name: str) -> None:
         with self._client_for(host) as client:
             resp = client.put(

@@ -28,8 +28,20 @@ class WorldAssignment:
     jar_url: str
     plugins_manifest_url: str | None = None
     datapacks_manifest_url: str | None = None
+    # PLAN.md §2/§9 — server.properties overrides (routers/worlds.py's
+    # PATCH /worlds/{name}), re-fetched and reconciled on every agent
+    # start, not just first boot — see folia_node.staging.sync_world_config.
+    server_properties_url: str | None = None
     jar_engine: str = "folia"
     jar_version: str = "1.21.4"
+    # Velocity "modern" forwarding secret (PLAN.md §7) — every world mgmt
+    # places gets one (scheduler.py's _node_config), required to actually
+    # accept connections from folia-nexa-proxy rather than rejecting them
+    # with "Backend server is online-mode!". Optional here (not in the
+    # required-key check in get_world_assignment below) only so existing
+    # constructor call sites/tests that predate this field don't need to
+    # pass it.
+    velocity_forwarding_secret: str | None = None
 
 
 class DevLXDClient:
@@ -83,6 +95,8 @@ class DevLXDClient:
             jar_url=jar_url,
             plugins_manifest_url=config.get("user.folia.plugins-manifest-url"),
             datapacks_manifest_url=config.get("user.folia.datapacks-manifest-url"),
+            server_properties_url=config.get("user.folia.server-properties-manifest-url"),
             jar_engine=config.get("user.folia.jar-engine", "folia"),
             jar_version=config.get("user.folia.jar-version", "1.21.4"),
+            velocity_forwarding_secret=config.get("user.folia.velocity-forwarding-secret"),
         )

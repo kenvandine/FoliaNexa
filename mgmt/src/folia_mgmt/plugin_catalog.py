@@ -42,6 +42,11 @@ class PluginEntry(BaseModel):
     homepage: str | None = None
     verified: bool = False
     notes: str | None = None
+    # If true, every world gets this plugin whether or not it was
+    # explicitly requested (routers/worlds.py's _with_default_plugins) —
+    # for cluster-wide baseline plugins like FoliaNexaStats/HuskHomes
+    # rather than per-world opt-in ones.
+    default_for_all_worlds: bool = False
 
 
 def _load_yaml_entries(path: Path) -> list[PluginEntry]:

@@ -84,6 +84,12 @@ class World(SQLModel, table=True):
     version: str = "1.21.4"
     plugins: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     datapacks: list[str] = Field(default_factory=list, sa_column=Column(JSON))
+    # server.properties overrides, applied on top of the required baseline
+    # keys folia_node.staging always writes itself (online-mode=false etc.)
+    # — those aren't operator-settable, see _validate_properties. Synced to
+    # a running world on every folia-nexa-node (re)start, not just first
+    # boot — see GET /worlds/{name}/server-properties-manifest.
+    properties: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
 
     cpu_cores: int
     memory_gb: int
