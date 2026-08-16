@@ -74,9 +74,9 @@
 - id: CampusLobby
   category: lobby
   source: in-house
-  version: "0.1.0"
-  download_url: "https://github.com/kenvandine/folianexa-plugins/releases/download/campus-lobby-v0.0.3/campus-lobby-0.1.0.jar"
-  sha256: "d6c801b24c5e258b17381f0a6a6f64d0cead8207c761568be2bedbb30588fe5a"
+  version: "0.0.4"
+  download_url: "https://github.com/kenvandine/folianexa-plugins/releases/download/campus-lobby-v0.0.4/campus-lobby-0.0.4.jar"
+  sha256: "282404739b712d8ca25166dda8a0e73ba911a54ece546671772773bef993ddca"
   homepage: "https://github.com/kenvandine/folianexa-plugins/tree/main/campus-lobby"
   verified: true
   notes: >
@@ -85,31 +85,22 @@
     Tunnel-style mural, student-union/library facades) into a lobby
     world. Source lives in the sibling folianexa-plugins repo (campus-
     lobby/), not this one — see the "In-house plugin source" note in this
-    repo's CLAUDE.md. Release campus-lobby-v0.0.1 (2026-08-15) loaded on a
-    real Folia 1.21.4 server and failed outright: "Could not load plugin
-    'CampusLobby v0.1.0' as it is not marked as supporting Folia!" — the
-    code already used RegionScheduler/GlobalRegionScheduler throughout
-    (verified by reading SceneBuilder/CampusLobbyListener), just missing
-    `folia-supported: true` in plugin.yml. Fixed and re-released as
-    campus-lobby-v0.0.2 (2026-08-16, same day) — this entry's
-    download_url/sha256 point at that release; downloaded directly and
-    confirmed sha256 matches GitHub's own reported asset digest, and
-    confirmed the jar now has folia-supported: true. Verified live on a
-    real Folia 1.21.4 world (see the `lobby` world declared during
-    cluster onboarding): loads without error, though the scene actually
-    rendering correctly in-game (not just loading) hasn't been checked
-    with a real client. Re-released again as campus-lobby-v0.0.3
-    (2026-08-16, same day) — locks the built scene down to
-    campuslobby.admin editors only, clears the build area of leftover
-    terrain/entities first, disables mob spawning, clears/blocks player
-    inventory in the lobby, and sets the world spawn + a tight world
-    border around the finished scene. plugin.yml's own `version` field
-    is still 0.1.0 (unchanged), hence this entry's `version` staying
-    "0.1.0" too — campus-lobby-v0.0.x is this repo's release-tag
-    counter, not the plugin's own semver; downloaded directly and
-    confirmed sha256 matches this release's reported asset digest, and
-    confirmed folia-supported: true is still present. Not yet re-verified
-    live against a real Folia world.
+    repo's CLAUDE.md. Release history: v0.0.1 (2026-08-15) failed to load
+    on Folia at all (missing folia-supported: true in plugin.yml despite
+    the code already being Folia-safe); v0.0.2 fixed that and was
+    confirmed loading on a real Folia 1.21.4 world; v0.0.3 locked the
+    built scene to campuslobby.admin editors, cleared leftover terrain/
+    entities, disabled mob spawning, blocked player inventory in the
+    lobby, and set the world spawn + a tight world border — plugin.yml's
+    own version field stayed 0.1.0 through both of those (release-tag
+    counter, not the plugin's real semver). Updated to v0.0.4
+    (2026-08-16) via the dashboard's plugin-catalog editor (operator
+    override), then synced into this bundled entry — this is the first
+    release where plugin.yml's own version field actually moved (to
+    0.0.4, matching the tag), confirmed by inspecting the jar directly;
+    download_url/sha256 downloaded and verified for real, folia-
+    supported: true still present. Not yet re-verified live against a
+    real Folia world at this specific version.
 
 - id: HuskClaims
   category: claims
