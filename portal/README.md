@@ -57,8 +57,13 @@ loaded in a real headless Chromium against it (screenshots checked by
 hand) — confirming the recently-active/all-players grids, the leaderboard
 sort order, the player profile's stat tiles, and the playtime heatmap all
 render correctly from real API responses, not just that the JSON contracts
-match (which `mgmt/tests/test_public_stats.py` also covers). Not verified:
-Crafatar's avatar CDN actually rendering — this sandbox has no route to
-the public internet, so avatar `<img>` tags render blank here; the
-`<img src>` URLs themselves are correct and this is expected to work
-wherever this is actually deployed with real internet access.
+match (which `mgmt/tests/test_public_stats.py` also covers). Avatars are
+now self-hosted (`GET /api/v1/public/players/{uuid}/avatar`,
+`mgmt/src/folia_mgmt/avatar.py`) rather than pointing at crafatar.com — a
+2026-08-16 outage there (Cloudflare 521 on every UUID, confirmed via
+direct testing, not something specific to any one player) broke every
+avatar on the portal at once, since it was the one piece of this page
+depending on a third party outside this project's control. mgmt now
+fetches the player's real skin from Mojang's session server and renders
+the face itself with Pillow, falling back to a flat placeholder image if
+Mojang can't be reached rather than ever serving a broken `<img>`.

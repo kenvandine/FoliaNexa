@@ -85,6 +85,33 @@ def test_leaderboard_response_is_cached(client, operator_token, app, monkeypatch
     assert third["entries"][0]["username"] == "Alice"
 
 
+def test_get_player_avatar_returns_png(client, monkeypatch):
+    from folia_mgmt.routers import public_stats
+
+    monkeypatch.setattr(public_stats, "get_player_avatar", lambda uuid, size=64: b"fake-png-bytes")
+
+    resp = client.get("/api/v1/public/players/some-uuid/avatar")
+    assert resp.status_code == 200
+    assert resp.headers["content-type"] == "image/png"
+    assert resp.content == b"fake-png-bytes"
+    assert "max-age" in resp.headers["cache-control"]
+
+
+def test_get_player_avatar_respects_size_param(client, monkeypatch):
+    from folia_mgmt.routers import public_stats
+
+    seen_sizes = []
+
+    def fake_get_player_avatar(uuid, size=64):
+        seen_sizes.append(size)
+        return b"fake-png-bytes"
+
+    monkeypatch.setattr(public_stats, "get_player_avatar", fake_get_player_avatar)
+
+    client.get("/api/v1/public/players/some-uuid/avatar", params={"size": 128})
+    assert seen_sizes == [128]
+
+
 def test_public_rate_limit_enforced(client, app):
     # Drop the limit to something the test can exceed in a handful of calls.
     from folia_mgmt import deps

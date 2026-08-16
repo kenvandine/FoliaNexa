@@ -19,13 +19,20 @@ from datetime import datetime
 from typing import Callable, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from folia_mgmt.avatar import get_player_avatar
 from folia_mgmt.config import Settings
 from folia_mgmt.db import get_session
 from folia_mgmt.deps import settings_dependency
 from folia_mgmt.models import PlayerPlaytimeDaily, PlayerProfile, PlayerStat
+
+# Longer-lived than the leaderboard/profile cache — skins change rarely
+# (a player editing their Mojang skin), so there's no reason to re-fetch
+# and re-render on the same ~short TTL as stats that update every minute.
+AVATAR_CACHE_SECONDS = 3600
 
 T = TypeVar("T")
 
@@ -192,3 +199,22 @@ def get_player(
     # compute() returns normally, so a player who shows up moments later
     # isn't stuck behind a stale miss for the rest of the TTL window.
     return cache.get_or_set(("player", uuid), settings.public_api_cache_seconds, compute)
+
+
+@router.get("/players/{uuid}/avatar")
+def get_player_avatar_route(
+    uuid: str,
+    size: int = Query(default=64, ge=8, le=256),
+    cache: TTLCache = Depends(_get_cache),
+) -> Response:
+    # get_player_avatar never raises (falls back to a placeholder PNG
+    # internally) — see avatar.py — so there's no error path to handle
+    # here beyond what TTLCache.get_or_set already does.
+    png_bytes = cache.get_or_set(
+        ("avatar", uuid, size), AVATAR_CACHE_SECONDS, lambda: get_player_avatar(uuid, size=size)
+    )
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": f"public, max-age={AVATAR_CACHE_SECONDS}"},
+    )

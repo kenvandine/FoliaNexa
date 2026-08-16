@@ -223,10 +223,13 @@ commands run):
   against a real running `folia-nexa-mgmt` instance seeded with real
   data through the actual ingestion API — leaderboard sorting, the
   player-profile stat tiles, and the playtime heatmap all confirmed
-  rendering correctly from real API responses. Not verified: Crafatar
-  avatar images actually loading (this development environment has no
-  route to the public internet) — the `<img src>` URLs are correct and
-  expected to work wherever this is deployed with real internet access.
+  rendering correctly from real API responses. Avatars are self-hosted
+  (`GET /api/v1/public/players/{uuid}/avatar`,
+  `mgmt/src/folia_mgmt/avatar.py` — fetches the player's real skin from
+  Mojang's session server and renders the face with Pillow) rather than
+  depending on a third-party CDN, after a real 2026-08-16 outage at
+  crafatar.com (the previous provider) broke every avatar on the portal
+  simultaneously.
 - The proxy relocation requires **no code changes** to
   `FoliaRoutesSyncPlugin`/`RouteDiff` — confirmed by inspection and the
   fact that the existing 24-test proxy suite (unchanged) is exactly what

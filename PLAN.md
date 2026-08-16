@@ -268,18 +268,22 @@ portal).
 
 **Public player-hub API (`GET /api/v1/public/*`,
 `mgmt/src/folia_mgmt/routers/public_stats.py`):** leaderboards, player
-profiles, and playtime heatmaps — deliberately unauthenticated, same
-rationale as `/plugins-manifest` in §14: everything it returns is already
-meant to be public. This is the first mgmt surface designed to take real
-internet traffic, so it carries its own in-process TTL cache and per-IP
-rate limit (`Settings.public_api_cache_seconds` /
+profiles, playtime heatmaps, and player-face avatars — deliberately
+unauthenticated, same rationale as `/plugins-manifest` in §14: everything
+it returns is already meant to be public. This is the first mgmt surface
+designed to take real internet traffic, so it carries its own in-process
+TTL cache and per-IP rate limit (`Settings.public_api_cache_seconds` /
 `public_api_rate_limit_per_minute`) as defense in depth under whatever
 Caddy adds in front. Fed by a new ingestion endpoint (`POST
 /api/v1/stats/report`, operator-role token, `routers/stats.py`) that a new
-in-house plugin — catalog id `FoliaNexaStats`, still a placeholder
-pending its first real release — reports to periodically via
-`AsyncScheduler`, softdepending on `AuraSkills`/`AxAuctions` for two
-extra stat keys when either is present on a world.
+in-house plugin — catalog id `FoliaNexaStats`, released and deployed —
+reports to periodically via `AsyncScheduler`, softdepending on
+`AuraSkills`/`AxAuctions` for two extra stat keys when either is present
+on a world. Avatars (`GET /public/players/{uuid}/avatar`) are rendered by
+mgmt itself (`avatar.py`, Pillow) from the player's real skin fetched off
+Mojang's session server — self-hosted rather than proxying a third-party
+CDN, after crafatar.com (the originally-planned provider, see §16) had a
+real outage that broke every avatar on the portal at once.
 
 This is a deliberately scoped-down v1 of §16's original "Public Community
 & Analytics Portal" vision below — see that section for what's still
@@ -763,11 +767,16 @@ SummonVoidRifts:
 v1 of this vision (SQLite instead of Postgres/ClickHouse, no Redis, no
 WebSocket live-push, a plain static `portal/` instead of a Next.js/Astro
 `world (type: portal)`). Read §7A for what actually exists today; this
-section remains the aspirational full vision beyond that v1 — Crafatar 3D
-avatar galleries did make it into v1 (it's a free third-party CDN, no
-backend cost), but the rest below (live WebSocket presence, a real
-event-sourced Postgres/ClickHouse store, the portal running as an
-LXD-scheduled world of its own) is still unbuilt.
+section remains the aspirational full vision beyond that v1 — 2D face
+avatars did make it into v1, though self-hosted rather than via a
+third-party CDN as originally planned here (`GET
+/api/v1/public/players/{uuid}/avatar`, `mgmt/src/folia_mgmt/avatar.py` —
+crafatar.com, the CDN this section originally named, had a real
+multi-hour outage on 2026-08-16 that broke every avatar on the portal
+simultaneously, which is what prompted rendering them from Mojang skin
+data directly instead). The rest below (live WebSocket presence, a real
+event-sourced Postgres/ClickHouse store, 3D avatar rendering, the portal
+running as an LXD-scheduled world of its own) is still unbuilt.
 
 Unaffected by the orchestration refactor above — still an asynchronous telemetry portal fed by proxy/world events, now simply pointed at whichever containers the scheduler happens to be running:
 

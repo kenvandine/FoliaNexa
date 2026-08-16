@@ -25,9 +25,14 @@ async function apiGet(path) {
 }
 
 function avatarUrl(uuid) {
-  // Crafatar is a free, public Minecraft-avatar rendering service — no
-  // backend work needed for this. See PLAN.md §16/§7A.
-  return `https://crafatar.com/avatars/${encodeURIComponent(uuid)}?size=64&overlay`;
+  // Self-hosted, rendered by mgmt from the player's real Mojang skin
+  // (mgmt/src/folia_mgmt/avatar.py) — previously this pointed at
+  // crafatar.com, a free third-party avatar service, but that's an
+  // outside dependency with its own uptime this project doesn't control
+  // (confirmed down, Cloudflare 521, on 2026-08-16 — every avatar on the
+  // portal broke at once). mgmt falls back to a placeholder image itself
+  // if the skin can't be resolved, so this URL is never actually broken.
+  return `${API_BASE}/players/${encodeURIComponent(uuid)}/avatar?size=64`;
 }
 
 function formatPlaytime(seconds) {
