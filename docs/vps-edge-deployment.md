@@ -77,32 +77,57 @@ subdomain and Caddy never touches it. Bedrock clients connect straight to
 the VPS's public IP on `:19132/udp` — Bedrock has no DNS-based SRV
 equivalent, so there's no separate record needed for it, PLAN.md §7B.)
 
-## Phase 3: WireGuard tunnel
+## Phase 3: WireGuard tunnel mesh
 
 Run [`deploy/vps/setup-wireguard.sh`](../deploy/vps/setup-wireguard.sh) on
-**both** ends — the VPS, and the same home box that already runs LXD
-(no new hardware needed). See that script's own `--help` and
+**both** ends — the VPS, and each home box that already runs LXD (no new
+hardware needed; one LXD host is enough to start, more can join later, see
+below). See that script's own `--help` and
 [`deploy/vps/README.md`](../deploy/vps/README.md) for the full two-pass
-key-exchange flow; in short:
+key-exchange flow; in short, for a first home host named `node-a`:
 
 ```bash
 # On the VPS:
-sudo ./deploy/vps/setup-wireguard.sh --role vps
-# -> prints the VPS's public key
+sudo ./deploy/vps/setup-wireguard.sh --role vps --peer-name node-a
+# -> prints the VPS's public key (generated once, reused for every peer)
 
-# On the home LXD host:
+# On node-a:
 sudo ./deploy/vps/setup-wireguard.sh --role home \
   --peer-public-key <vps-pubkey-from-above> \
   --peer-endpoint <vps-public-ip>:51820
-# -> writes home's full config, prints home's own public key
+# -> writes node-a's full config, prints node-a's own public key
 
 # Back on the VPS, finish the exchange:
-sudo ./deploy/vps/setup-wireguard.sh --role vps \
-  --peer-public-key <home-pubkey-from-above>
+sudo ./deploy/vps/setup-wireguard.sh --role vps --peer-name node-a \
+  --peer-public-key <node-a-pubkey-from-above> \
+  --allowed-ips <node-a-tunnel-ip>/32   # e.g. 10.66.0.2/32
 
 # On both:
 sudo systemctl enable --now wg-quick@wg0
 ```
+
+**Adding a second (or third, ...) home LXD host to the mesh later** is the
+same flow with a new `--peer-name` and a distinct `--address` on that
+host's own `--role home` run (e.g. `10.66.0.3/24` for a second host,
+`10.66.0.4/24` for a third):
+
+```bash
+sudo ./deploy/vps/setup-wireguard.sh --role vps --peer-name node-b
+# on node-b:
+sudo ./deploy/vps/setup-wireguard.sh --role home --address 10.66.0.3/24 \
+  --peer-public-key <vps-pubkey> --peer-endpoint <vps-public-ip>:51820
+# back on the VPS:
+sudo ./deploy/vps/setup-wireguard.sh --role vps --peer-name node-b \
+  --peer-public-key <node-b-pubkey> --allowed-ips 10.66.0.3/32
+sudo wg syncconf wg0 <(wg-quick strip wg0)   # hot-apply, doesn't drop node-a's session
+```
+
+Each home host's `[Peer]` stanza on the VPS lives in its own file under
+`peers.d/` next to `wg0.conf` — adding or updating one host's entry never
+touches any other's (see the script's own header comment for the full
+mechanics). This is what makes per-host [hostname-based routing](#hostname-based-routing-to-different-hosts)
+below actually reachable: each `Host` mgmt knows about can have its own
+tunnel-scoped `AllowedIPs`, not just "the whole home LAN."
 
 The home side always dials out to the VPS and keeps the NAT mapping alive
 (`PersistentKeepalive`) — this is the entire trick for needing no inbound
@@ -115,10 +140,11 @@ ping 10.66.0.2   # from the VPS, should reach home
 ```
 
 **Scope what the VPS can actually reach.** The script's default
-`AllowedIPs` on the VPS side only routes to the home peer's own tunnel
-address — add mgmt's real LAN address and your LXD hosts' bridge subnet
-once you know them (re-run the script with `--allowed-ips`, or edit
-`/etc/wireguard/wg0.conf` directly and `wg syncconf`). Do **not** add the
+`AllowedIPs` on the VPS side only routes to that one home peer's own
+tunnel address — add mgmt's real LAN address and that host's LXD bridge
+subnet once you know them (re-run the script with `--peer-name <that-host>
+--allowed-ips ...`, or edit that peer's file under `peers.d/` directly and
+`wg syncconf`). Do **not** add the
 LXD hosts' own `:8443` remote-API subnet — mgmt is the only thing that
 should ever reach that, and PLAN.md already requires it stay off any
 internet-adjacent path. On the home box, enable forwarding and scope it
@@ -153,6 +179,33 @@ Confirm a real Minecraft client can join through the VPS's public IP with
 this whole setup exists to deliver. If the snap was built with Bedrock
 support (PLAN.md §7B — bundled by default), a Bedrock client should be
 able to join the same way on `:19132/udp`, no separate relocation step.
+
+## Hostname-based routing to different hosts
+
+If your mesh has more than one home LXD host (Phase 3), you can point
+different public domains at different hosts instead of everyone landing on
+the same cluster-wide default (PLAN.md §7C). Each domain resolves to
+*that host's* own default world — a running `lobby`, else an `overworld`,
+same "lobby as hub" preference PLAN.md §14B already uses globally, just
+scoped per host:
+
+```bash
+folia-nexa-mgmt hosts set-domains node-a smp.example.com
+folia-nexa-mgmt hosts set-domains node-b creative.example.com
+```
+
+Add a DNS record for each domain pointed at the VPS's public IP (or reuse
+`play.<domain>`-style records from Phase 2 — Minecraft's hostname isn't
+Caddy-routed, so any A/CNAME record works). `folia-nexa-proxy` picks this
+up on its next poll (`FOLIA_ROUTES_POLL_SECONDS`, default 5s) — no proxy
+restart needed, matching every other route change in this project.
+
+**This only works for Java clients.** Bedrock/console/mobile clients
+connect over RakNet, which has no hostname/SNI concept at all — Geyser has
+no way to know which domain a Bedrock player "typed," so Bedrock
+connections always land on the cluster's single global default world,
+regardless of which domain/IP the client used. This is a protocol
+limitation, not a configuration gap — there's nothing to tune here.
 
 ## Phase 5: Caddy — TLS + admin/public-API edge
 
@@ -211,12 +264,23 @@ commands run):
 
 - `deploy/vps/Caddyfile` — validated with a real `caddy validate` (Caddy
   2.6.2), not just eyeballed.
-- `deploy/vps/setup-wireguard.sh` — run end-to-end against real
-  `wireguard-tools` (both the "vps" and "home" roles, across the two-pass
-  key exchange), producing configs that `wg-quick strip` parses without
-  error. Not run against two real machines actually establishing a live
-  UDP handshake across a real NAT — that needs your real VPS and home
-  network.
+- `deploy/vps/setup-wireguard.sh` — the original single-peer flow (both
+  "vps" and "home" roles, the full two-pass key exchange) was run
+  end-to-end against real `wireguard-tools`, producing configs that
+  `wg-quick strip` parses without error. The newer multi-peer `peers.d`
+  mechanics on `--role vps` (adding/updating one home host's `[Peer]`
+  stanza without disturbing another's, regenerating `wg0.conf` from
+  `[Interface]` + every file in `peers.d/`) were exercised with a fake
+  `wg` binary standing in for key generation, not real `wireguard-tools` —
+  no `wg` binary was available in the environment this was added in.
+  Confirmed by that dry run: two peers added in sequence both survive in
+  the final `wg0.conf`, re-running with an existing `--peer-name` replaces
+  only that peer's block, and `--role home` is byte-for-byte unchanged.
+  Not run against two-plus real machines actually establishing live UDP
+  handshakes across a real NAT, and `wg syncconf`'s claimed no-drop
+  hot-reload of one new peer alongside an already-connected one isn't
+  verified against a real `wg0` interface — that needs your real VPS and
+  home network(s).
 - `mgmt/src/folia_mgmt/routers/stats.py` and `public_stats.py` — real
   pytest suite (`mgmt/tests/test_stats.py`, `test_public_stats.py`),
   and `portal/`'s three pages were loaded in a real headless browser
@@ -229,8 +293,16 @@ commands run):
   expected to work wherever this is deployed with real internet access.
 - The proxy relocation requires **no code changes** to
   `FoliaRoutesSyncPlugin`/`RouteDiff` — confirmed by inspection and the
-  fact that the existing 24-test proxy suite (unchanged) is exactly what
-  would catch a regression here.
+  fact that the existing proxy test suite (35 tests as of hostname-based
+  routing, PLAN.md §7C) is exactly what would catch a regression here.
+- Hostname-based routing (`Host.domains`, `GET /api/v1/routes`'s `domains`
+  map, `FoliaRoutesSyncPlugin`'s `VirtualHostRouter`) — real pytest suite
+  on the mgmt side (`test_hosts.py`, `test_routes.py`) and a real Gradle
+  test run on the proxy side (`RoutesJsonTest`, `VirtualHostRouterTest`,
+  `MgmtRoutesClientTest`). Not verified: a real Java Minecraft client
+  actually connecting with a specific hostname and landing on the right
+  host's world — no live Velocity server or Minecraft client was available
+  to test against in this environment.
 
 Not verified — needs your real VPS + home network:
 

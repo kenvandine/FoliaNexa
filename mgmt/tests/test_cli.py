@@ -156,6 +156,21 @@ def test_hosts_drain(tmp_path, monkeypatch, mock_http):
     assert "draining 'node-a'" in result.output
 
 
+def test_hosts_set_domains(tmp_path, monkeypatch, mock_http):
+    _seed_login(tmp_path, monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/hosts/node-a/domains"
+        assert request.method == "PUT"
+        assert json.loads(request.content) == {"domains": ["smp.example.com"]}
+        return httpx.Response(200, json={})
+
+    mock_http(handler)
+    result = runner.invoke(cli.app, ["hosts", "set-domains", "node-a", "smp.example.com"])
+    assert result.exit_code == 0, result.output
+    assert "smp.example.com" in result.output
+
+
 def test_worlds_create_sends_plugins_and_labels(tmp_path, monkeypatch, mock_http):
     _seed_login(tmp_path, monkeypatch)
 

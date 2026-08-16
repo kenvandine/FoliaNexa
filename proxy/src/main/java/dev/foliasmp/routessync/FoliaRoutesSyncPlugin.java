@@ -18,6 +18,7 @@ import java.time.Duration;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -58,6 +59,7 @@ public final class FoliaRoutesSyncPlugin {
     private final ProxyServer server;
     private final Logger logger;
     private final AtomicReference<String> defaultWorld = new AtomicReference<>();
+    private final AtomicReference<Map<String, String>> domainRoutes = new AtomicReference<>(Map.of());
     private final AtomicReference<Set<UUID>> approvedUuids = new AtomicReference<>(Set.of());
     private final AtomicBoolean accessGateEnabled = new AtomicBoolean(false);
 
@@ -87,11 +89,10 @@ public final class FoliaRoutesSyncPlugin {
 
     @Subscribe
     public void onChooseInitialServer(PlayerChooseInitialServerEvent event) {
-        String world = defaultWorld.get();
-        if (world == null) {
-            return;
-        }
-        server.getServer(world).ifPresent(event::setInitialServer);
+        Optional<String> virtualHost = event.getPlayer().getVirtualHost().map(InetSocketAddress::getHostString);
+        VirtualHostRouter.resolve(domainRoutes.get(), virtualHost, defaultWorld.get())
+                .flatMap(server::getServer)
+                .ifPresent(event::setInitialServer);
     }
 
     @Subscribe
@@ -116,7 +117,9 @@ public final class FoliaRoutesSyncPlugin {
     private void reconcileRoutes(MgmtRoutesClient client) {
         List<Route> desired;
         try {
-            desired = client.fetch();
+            MgmtRoutesClient.RoutesFetch fetched = client.fetch();
+            desired = fetched.routes();
+            domainRoutes.set(fetched.domainRoutes());
         } catch (Exception e) {
             logger.warn("failed to fetch routes from mgmt, keeping current server list: {}", e.getMessage());
             return;

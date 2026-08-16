@@ -68,6 +68,11 @@ class Host(SQLModel, table=True):
     cert_fingerprint: Optional[str] = None
     server_cert_pem: Optional[str] = None  # pinned at enrollment time, PLAN.md §3
     labels: dict = Field(default_factory=dict, sa_column=Column(JSON))
+    # Public hostnames that route to this host's default world (lobby, else
+    # overworld) via the proxy's virtual-host lookup, PLAN.md §7C. Stored
+    # lowercased; uniqueness across hosts is enforced in routers/hosts.py,
+    # not at the DB level.
+    domains: list[str] = Field(default_factory=list, sa_column=Column(JSON))
     capacity_cpu_cores: int
     capacity_memory_gb: int
     status: HostStatus = HostStatus.online

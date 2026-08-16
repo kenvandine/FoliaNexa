@@ -27,7 +27,7 @@ host.
 | `.claude/skills/folia-plugin-scaffold/` | Claude Code skill that operationalizes `docs/plugin-dev/` — scaffolds and writes a real Folia/Paper plugin, from a description or a Modrinth mod/plugin link | Markdown + templates |
 | `.claude/skills/cluster-onboarding/` | Claude Code skill that operationalizes CLAUDE.md's bootstrap phases + `docs/vps-edge-deployment.md` into an interactive runbook for standing up the VPS edge, DNS, and trusting LXD hosts | Markdown |
 | `portal/` | Public player hub (leaderboards, profiles, playtime heatmaps) — static site, no build step, deployed to the VPS edge (PLAN.md §7A) | HTML/CSS/vanilla JS |
-| `deploy/vps/` | WireGuard tunnel + Caddy config for the VPS edge (PLAN.md §7A) — see `docs/vps-edge-deployment.md` | Bash, Caddyfile, WireGuard config templates |
+| `deploy/vps/` | WireGuard tunnel mesh (multi-home-host capable, PLAN.md §7A/§7C) + Caddy config for the VPS edge — see `docs/vps-edge-deployment.md` | Bash, Caddyfile, WireGuard config templates |
 
 In-house plugin source doesn't live in this repo — it's in the sibling
 [`folianexa-plugins`](https://github.com/kenvandine/folianexa-plugins)
@@ -62,7 +62,7 @@ unverified; only the build step is confirmed.
 ## Running the test suites
 
 ```bash
-# mgmt (Python) — 167 tests
+# mgmt (Python) — 180 tests
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
@@ -74,7 +74,7 @@ cd node && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 cd bot && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
-# proxy (Java) — 24 tests, real Gradle + real velocity-api jar
+# proxy (Java) — 35 tests, real Gradle + real velocity-api jar
 cd proxy && ./gradlew test   # needs a JDK 21+ on PATH, or JAVA_HOME set
 ```
 
@@ -165,6 +165,22 @@ Confirm it worked:
 ```bash
 folia-nexa-mgmt hosts list
 ```
+
+Repeat for as many hosts as the cluster needs. If you want different public
+domains to route to different hosts (PLAN.md §7C — e.g. one host's survival
+cluster on `smp.example.com`, another host's on `creative.example.com`),
+assign them once each host is trusted:
+
+```bash
+folia-nexa-mgmt hosts set-domains <host-name> <domain> [<domain> ...]
+```
+
+A domain routes to that host's own default world (its running `lobby`,
+else `overworld` — same preference §14B already uses cluster-wide, just
+scoped per host); see `docs/vps-edge-deployment.md`'s "Hostname-based
+routing to different hosts" section for the full walkthrough, including
+why this only works for Java clients (Bedrock has no hostname concept to
+route on).
 
 ### Phase 4 — build and install `folia-nexa-node`'s base image
 
@@ -345,10 +361,12 @@ Full walkthrough: [`docs/vps-edge-deployment.md`](docs/vps-edge-deployment.md).
 Supporting config lives in [`deploy/vps/`](deploy/vps/). Short version:
 
 ```bash
-# On the VPS and the home LXD host (two-pass key exchange, see the doc):
-sudo ./deploy/vps/setup-wireguard.sh --role vps
+# On the VPS and the home LXD host (two-pass key exchange, see the doc).
+# --peer-name identifies this home host — add more later the same way,
+# each getting its own entry without disturbing others already configured.
+sudo ./deploy/vps/setup-wireguard.sh --role vps --peer-name node-a
 sudo ./deploy/vps/setup-wireguard.sh --role home --peer-public-key <...> --peer-endpoint <vps-ip>:51820
-sudo ./deploy/vps/setup-wireguard.sh --role vps --peer-public-key <...>
+sudo ./deploy/vps/setup-wireguard.sh --role vps --peer-name node-a --peer-public-key <...> --allowed-ips <...>
 sudo systemctl enable --now wg-quick@wg0   # both ends
 
 # On the VPS: relocate folia-nexa-proxy here (FOLIA_MGMT_URL now points
@@ -448,11 +466,26 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   instance seeded with real data, confirming leaderboard sorting, the
   player profile, and the playtime heatmap all render correctly.
   `deploy/vps/Caddyfile` — validated with real `caddy validate`.
-  `deploy/vps/setup-wireguard.sh` — run end-to-end with real
-  `wireguard-tools` across its full two-pass key-exchange flow,
-  producing configs `wg-quick strip` parses cleanly. See
-  `docs/vps-edge-deployment.md`'s own "what's real vs. unverified"
-  section for the full breakdown.
+  `deploy/vps/setup-wireguard.sh` — its original single-peer flow was run
+  end-to-end with real `wireguard-tools` across the full two-pass
+  key-exchange flow, producing configs `wg-quick strip` parses cleanly.
+  See `docs/vps-edge-deployment.md`'s own "what's real vs. unverified"
+  section for the full breakdown, including the newer multi-peer
+  `peers.d` mechanics below.
+- Hostname-based virtual routing (PLAN.md §7C): `Host.domains`,
+  `PUT /api/v1/hosts/{name}/domains`, and `GET /api/v1/routes`'s new
+  `domains` map — real pytest suite (`mgmt/tests/test_hosts.py`,
+  `test_routes.py`, `test_cli.py`). The proxy's `VirtualHostRouter`,
+  `RoutesJson`'s domain-map parsing, and `MgmtRoutesClient`'s combined
+  fetch — real Gradle test run (`proxy/./gradlew test`, 35 tests total,
+  up from 24). `deploy/vps/setup-wireguard.sh`'s new multi-peer `peers.d`
+  mechanics on `--role vps` — exercised with a fake `wg` binary standing
+  in for key generation (no real `wireguard-tools` in the environment
+  this was added in); confirmed two peers added in sequence both survive
+  in the regenerated `wg0.conf`, and re-running with an existing
+  `--peer-name` replaces only that peer's block without touching others.
+  `--role home` is byte-for-byte unchanged from its previously-verified
+  behavior.
 
 Written against documented API contracts but **not** exercised against
 live infrastructure:
@@ -491,6 +524,17 @@ live infrastructure:
   GeyserMC download URLs the new part uses resolve to real jars whose
   sha256 matches GeyserMC's own build-metadata API, and the optional
   `Floodgate` catalog entry's `download_url`/`sha256` the same way.
+- Hostname-based virtual routing (PLAN.md §7C): a real Java Minecraft
+  client actually connecting with a specific hostname and landing on the
+  right host's default world — no live Velocity server or Minecraft
+  client was reachable to test against in this environment (same
+  limitation as §7A/§7B above). Per design, Bedrock clients never get
+  per-domain routing at all — RakNet carries no hostname/SNI, so this
+  isn't something to "verify later," it's a protocol ceiling. A real
+  multi-peer WireGuard mesh (more than one home LXD host, each with its
+  own `[Peer]` entry actually handshaking with the VPS) — `wg` itself
+  wasn't available to test the new `peers.d` file-layout mechanics
+  against, only a fake stand-in (see above).
 
 If you're picking up this project to actually run it: those are the
 places to validate first, roughly in that order.

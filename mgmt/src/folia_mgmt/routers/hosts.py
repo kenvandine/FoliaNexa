@@ -62,6 +62,7 @@ class HostResponse(BaseModel):
     project: str
     status: str
     labels: dict[str, str]
+    domains: list[str]
     capacity_cpu_cores: int
     capacity_memory_gb: int
     allocated_cpu_cores: int
@@ -81,6 +82,7 @@ def _to_response(host: Host, session: Session) -> HostResponse:
         project=host.project,
         status=host.status.value,
         labels=host.labels,
+        domains=host.domains,
         capacity_cpu_cores=host.capacity_cpu_cores,
         capacity_memory_gb=host.capacity_memory_gb,
         allocated_cpu_cores=sum(w.cpu_cores for w in placed),
@@ -148,6 +150,49 @@ def drain_host(name: str, session: Session = Depends(get_session)) -> HostRespon
     if host is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"no such host '{name}'")
     host.status = HostStatus.draining
+    session.add(host)
+    session.commit()
+    session.refresh(host)
+    return _to_response(host, session)
+
+
+class DomainsUpdateRequest(BaseModel):
+    domains: list[str]
+
+
+def _normalize_domain(raw: str) -> str:
+    domain = raw.strip().lower()
+    if domain.endswith("."):
+        domain = domain[:-1]
+    return domain
+
+
+@router.put("/{name}/domains", response_model=HostResponse, dependencies=[Depends(require_operator)])
+def set_host_domains(
+    name: str, body: DomainsUpdateRequest, session: Session = Depends(get_session)
+) -> HostResponse:
+    """Full-replace the set of public hostnames that route to this host's
+    default world via the proxy (PLAN.md §7C). A domain can only belong to
+    one host at a time — enforced here, not at the DB level, since SQLite's
+    JSON column can't carry a uniqueness constraint on list membership."""
+    host = session.exec(select(Host).where(Host.name == name)).first()
+    if host is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"no such host '{name}'")
+
+    domains = [_normalize_domain(d) for d in body.domains]
+    if any(not d for d in domains):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "domains cannot be empty strings")
+
+    other_hosts = session.exec(select(Host).where(Host.name != name)).all()
+    for other in other_hosts:
+        conflict = set(domains) & set(other.domains)
+        if conflict:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                f"domain(s) already assigned to host '{other.name}': {', '.join(sorted(conflict))}",
+            )
+
+    host.domains = domains
     session.add(host)
     session.commit()
     session.refresh(host)
