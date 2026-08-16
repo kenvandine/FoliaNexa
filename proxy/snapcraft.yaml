@@ -45,6 +45,7 @@ parts:
 
   velocity-runtime:
     plugin: nil
+    source: .
     stage-packages:
       - openjdk-21-jre-headless
     override-build: |
@@ -56,6 +57,77 @@ parts:
       DOWNLOAD_URL=$(curl -sf "https://fill.papermc.io/v3/projects/velocity/versions/${CRAFT_PROJECT_VERSION}/builds" \
         | python3 -c "import json,sys; print(json.load(sys.stdin)[-1]['downloads']['server:default']['url'])")
       curl -sf -o $CRAFT_PART_INSTALL/velocity.jar "$DOWNLOAD_URL"
+
+      # A from-scratch velocity.toml: Velocity itself would happily
+      # generate one with defaults on its own first launch, but its
+      # default is player-info-forwarding-mode = "NONE", which — confirmed
+      # for real against a live cluster — makes every backend connection
+      # fail outright with "IllegalStateException: Backend server is
+      # online-mode!" the moment a world's paper-global.yml is configured
+      # to expect "modern" forwarding (folia_node.staging writes exactly
+      # that). Shipping a corrected template avoids ever having Velocity's
+      # own NONE-by-default win a race against this snap's actual
+      # requirements. forwarding-secret-file's *contents* still come from
+      # mgmt at every run-velocity.sh startup, not from this template —
+      # see the forwarding.secret handling below.
+      cat << 'EOF' > $CRAFT_PART_INSTALL/velocity.toml
+      config-version = "2.8"
+      bind = "0.0.0.0:25565"
+      motd = "<bold><gradient:#CC0000:#8C1D18>Sullivan SMP</gradient></bold>\n<red>▶</red> <bold><white>GO PACK!</white></bold> <red>◀</red> <dark_gray>•</dark_gray> <gray>NC State Wolfpack SMP</gray>"
+      show-max-players = 500
+      online-mode = true
+      force-key-authentication = true
+      prevent-client-proxy-connections = false
+      player-info-forwarding-mode = "modern"
+      forwarding-secret-file = "forwarding.secret"
+      announce-forge = false
+      kick-existing-players = false
+      ping-passthrough = "DISABLED"
+      sample-players-in-ping = false
+      enable-player-address-logging = true
+
+      [packet-limiter]
+      interval = 7
+      packets-per-second = -1
+      bytes-per-second = -1
+      decompressed-bytes-per-second = 5242880
+
+      [servers]
+      # folia-routes-sync registers/unregisters real backends at runtime via
+      # Velocity's own API (PLAN.md §7) -- entries here are never read for
+      # that purpose, only Velocity's own requirement that the file parse.
+      try = []
+
+      [forced-hosts]
+
+      [advanced]
+      compression-threshold = 256
+      compression-level = -1
+      login-ratelimit = 3000
+      connection-timeout = 5000
+      read-timeout = 30000
+      haproxy-protocol = false
+      tcp-fast-open = false
+      bungee-plugin-message-channel = true
+      show-ping-requests = false
+      failover-on-unexpected-server-disconnect = true
+      announce-proxy-commands = true
+      log-command-executions = false
+      log-player-connections = true
+      accepts-transfers = false
+      enable-reuse-port = false
+      command-rate-limit = 50
+      forward-commands-if-rate-limited = true
+      kick-after-rate-limited-commands = 0
+      tab-complete-rate-limit = 10
+      kick-after-rate-limited-tab-completes = 0
+
+      [query]
+      enabled = false
+      port = 25565
+      map = "Velocity"
+      show-plugins = false
+      EOF
 
       mkdir -p $CRAFT_PART_INSTALL/bin
       cat << 'EOF' > $CRAFT_PART_INSTALL/bin/run-velocity.sh
@@ -73,6 +145,7 @@ parts:
       # doesn't want Bedrock support can just delete those two jars from
       # $PROXY_DIR/plugins/ once, post-install, and it'll stick.
       [ -f velocity.jar ] || cp "$SNAP/velocity.jar" velocity.jar
+      [ -f velocity.toml ] || cp "$SNAP/velocity.toml" velocity.toml
       for jar in "$SNAP"/plugins/*.jar; do
         [ -f "plugins/$(basename "$jar")" ] || cp "$jar" "plugins/"
       done
@@ -83,9 +156,34 @@ parts:
       # provided, not shipped with the snap.
       [ -f config.env ] && source config.env
 
+      # forwarding.secret is proxy-managed sync state, not operator config
+      # like velocity.toml above — it must exactly match what mgmt hands
+      # every world (folia_node.staging writes the same value into
+      # paper-global.yml), so this always overwrites it on a successful
+      # fetch rather than seeding it once and leaving it to drift. A failed
+      # fetch (mgmt unreachable at boot) leaves whatever's already on disk
+      # alone rather than deleting a working secret. fetch-forwarding-
+      # secret.py (bundled below) uses python3's own urllib rather than
+      # curl: confirmed for real that curl isn't on PATH under this snap's
+      # strict confinement ("command not found"), even though it's freely
+      # available at build time (this override-build uses it above) —
+      # python3 is reachable at runtime here, curl isn't staged as part of
+      # the payload. A real script file rather than inline `python3 -c`
+      # here too: this heredoc is itself nested inside override-build's own
+      # YAML block scalar, and a third layer of indented multi-line Python
+      # inside that stopped being legible or safely editable.
+      if [ -n "${FOLIA_MGMT_URL:-}" ] && [ -n "${FOLIA_MGMT_API_TOKEN:-}" ]; then
+        SECRET="$(python3 "$SNAP/bin/fetch-forwarding-secret.py" 2>/dev/null || true)"
+        if [ -n "$SECRET" ]; then
+          printf '%s' "$SECRET" > forwarding.secret
+        fi
+      fi
+
       exec java -Xms1G -Xmx2G -XX:+UseG1GC -jar velocity.jar
       EOF
       chmod +x $CRAFT_PART_INSTALL/bin/run-velocity.sh
+
+      cp "$CRAFT_PART_SRC/fetch-forwarding-secret.py" $CRAFT_PART_INSTALL/bin/fetch-forwarding-secret.py
 
   # Geyser-Velocity (Bedrock<->Java protocol translation) + floodgate-
   # velocity (lets unlinked/non-premium Bedrock/Xbox accounts join) —
@@ -105,7 +203,19 @@ parts:
     override-build: |
       set -e
       mkdir -p $CRAFT_PART_INSTALL/plugins
-      curl -sf -o $CRAFT_PART_INSTALL/plugins/Geyser-Velocity.jar \
+      # -L is required: these URLs 302-redirect to the actual versioned
+      # build (e.g. .../versions/2.11.1/builds/1223/downloads/velocity).
+      # curl -f only fails on >=400 responses, so without -L it silently
+      # saves the empty 302 body and exits 0 — a real bug caught by an
+      # actual snapcraft build + runtime plugin load, not just a HEAD
+      # check: both jars loaded as 0 bytes and Velocity rejected them
+      # with "Did not find a valid velocity-plugin.json." The explicit
+      # size check below is a second line of defense against the same
+      # failure mode recurring silently.
+      curl -sfL -o $CRAFT_PART_INSTALL/plugins/Geyser-Velocity.jar \
         https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/velocity
-      curl -sf -o $CRAFT_PART_INSTALL/plugins/floodgate-velocity.jar \
+      curl -sfL -o $CRAFT_PART_INSTALL/plugins/floodgate-velocity.jar \
         https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/velocity
+      for jar in Geyser-Velocity.jar floodgate-velocity.jar; do
+        [ -s "$CRAFT_PART_INSTALL/plugins/$jar" ] || { echo "ERROR: $jar downloaded empty"; exit 1; }
+      done
