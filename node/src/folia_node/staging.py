@@ -3,17 +3,20 @@ for this world. PLAN.md §9 step 2.
 
 Two separate concerns, on purpose:
 
-- `ensure_staged`: first-boot-only setup (jar download, EULA acceptance)
-  — idempotent via the `.staged` marker, so a node-agent restart never
-  re-downloads an already-staged world's jar. Re-running this after first
-  boot would be actively wrong (re-fetching a possibly-different engine
-  jar out from under an existing world save).
-- `sync_world_config`: plugins/datapacks/server.properties reconciliation
-  against mgmt's current manifests — runs on *every* agent start,
-  including the first one, so a PATCH /worlds/{name} edit (routers/
-  worlds.py) actually takes effect the next time the world's container
-  restarts, not just at initial creation. Safe to re-run any number of
-  times; each call reflects the manifests' current content, nothing more.
+- `ensure_staged`: first-boot-only setup (EULA acceptance, paper-
+  global.yml) — idempotent via the `.staged` marker, so a node-agent
+  restart never redoes it. Also does the world's very first jar
+  download.
+- `sync_world_config`: reconciliation against mgmt's current manifests/
+  cluster config — runs on *every* agent start, including the first
+  one, so a PATCH /worlds/{name} edit or a cluster-wide Minecraft
+  version change (routers/cluster.py's migrate action) actually takes
+  effect the next time the world's container restarts, not just at
+  initial creation. Safe to re-run any number of times; each call
+  reflects current server-side state, nothing more. This *does* include
+  re-downloading server.jar itself when the cluster's target engine/
+  version has moved on (see JAR_VERSION_MARKER) — deliberately not
+  first-boot-only, unlike everything else ensure_staged handles.
 """
 
 from __future__ import annotations
@@ -29,6 +32,15 @@ logger = logging.getLogger(__name__)
 
 JAR_FILENAME = "server.jar"
 STAGED_MARKER = ".staged"
+# Records which engine:version is currently staged as server.jar, so
+# sync_world_config can tell a real version change (mgmt's cluster-wide
+# MinecraftVersionConfig, PLAN.md §9 — see routers/cluster.py's migrate
+# action) apart from "nothing to do." Confirmed the hard way: before this
+# existed, a world's jar was only ever fetched once, at first boot ever —
+# a client on a newer Minecraft version than whatever a world happened to
+# first boot with simply couldn't connect, with no way to fix it short of
+# deleting the world and recreating it from scratch.
+JAR_VERSION_MARKER = ".jar-version"
 
 # Vanilla/Paper/Folia's default level-name ("world" in server.properties)
 # — this codebase doesn't template server.properties at all (the server
@@ -154,13 +166,41 @@ def _reconcile_manifest_dir(client: httpx.Client, manifest_url: str, target_dir:
         _download(client, url, dest)
 
 
+def _jar_identity(assignment: WorldAssignment) -> str:
+    return f"{assignment.jar_engine}:{assignment.jar_version}"
+
+
+def _reconcile_jar(client: httpx.Client, world_dir: Path, assignment: WorldAssignment) -> None:
+    """Re-downloads server.jar if the cluster's engine/version has moved
+    on since this world last staged one — see JAR_VERSION_MARKER's own
+    comment. A brand new world's first-ever download already happens in
+    ensure_staged, which also writes this marker, so this is a no-op
+    immediately afterward in the same agent startup; an *existing* world
+    that predates this marker existing at all gets treated as stale
+    (redownloads once, harmlessly, even if the version happens to already
+    match) rather than trying to guess — simpler and self-healing after
+    exactly one redundant download.
+    """
+    marker = world_dir / JAR_VERSION_MARKER
+    desired = _jar_identity(assignment)
+    current = marker.read_text().strip() if marker.exists() else None
+    if current == desired:
+        return
+    logger.info("world '%s' engine/version is now %s (was %s), re-staging jar", assignment.world_name, desired, current)
+    _download(client, assignment.jar_url, world_dir / JAR_FILENAME)
+    marker.write_text(desired)
+
+
 def sync_world_config(world_dir: Path, assignment: WorldAssignment, client: httpx.Client | None = None) -> None:
-    """Reconciles plugins/, <level-name>/datapacks/, and server.properties
-    against mgmt's current manifests. Called on every agent start (see
-    agent.py) — never gated by STAGED_MARKER, unlike ensure_staged."""
+    """Reconciles the server jar, plugins/, <level-name>/datapacks/, and
+    server.properties against mgmt's current manifests/cluster config.
+    Called on every agent start (see agent.py) — never gated by
+    STAGED_MARKER, unlike ensure_staged's first-boot-only setup."""
     owns_client = client is None
     client = client or httpx.Client(timeout=60.0, follow_redirects=True)
     try:
+        _reconcile_jar(client, world_dir, assignment)
+
         if assignment.plugins_manifest_url:
             _reconcile_manifest_dir(client, assignment.plugins_manifest_url, world_dir / "plugins", ".jar")
 
@@ -234,6 +274,7 @@ def ensure_staged(
         if assignment.velocity_forwarding_secret:
             _write_paper_global_config(world_dir, assignment.velocity_forwarding_secret)
 
+        (world_dir / JAR_VERSION_MARKER).write_text(_jar_identity(assignment))
         marker.write_text("ok")
     finally:
         if owns_client:

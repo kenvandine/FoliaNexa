@@ -26,10 +26,12 @@ hosts_app = typer.Typer(help="Manage trusted LXD hosts")
 worlds_app = typer.Typer(help="Manage worlds")
 plugins_app = typer.Typer(help="Browse the curated plugin catalog")
 datapacks_app = typer.Typer(help="Browse the curated data pack catalog")
+cluster_app = typer.Typer(help="Cluster-wide settings")
 app.add_typer(hosts_app, name="hosts")
 app.add_typer(worlds_app, name="worlds")
 app.add_typer(plugins_app, name="plugins")
 app.add_typer(datapacks_app, name="datapacks")
+app.add_typer(cluster_app, name="cluster")
 
 _CLI_CONFIG_PATH = Path.home() / ".config" / "folia-nexa-mgmt" / "cli.json"
 
@@ -150,10 +152,12 @@ def worlds_create(
     datapack: list[str] = typer.Option(
         [], "--datapack", help="datapack catalog id, repeatable — see 'folia-nexa-mgmt datapacks list'"
     ),
-    engine: str = typer.Option("folia", "--engine"),
-    version: str = typer.Option("1.21.4", "--version"),
     mgmt_url: str | None = None,
 ) -> None:
+    # No --engine/--version here: every world in a cluster runs the same
+    # Minecraft engine/version (see 'folia-nexa-mgmt cluster
+    # minecraft-version') — a world can't pick its own anymore, since it
+    # shares one proxy and one lobby with everything else.
     memory_gb = _parse_memory_gb(memory)
     placement_labels = dict(item.split("=", 1) for item in labels)
     with _client(mgmt_url) as client:
@@ -162,8 +166,6 @@ def worlds_create(
             json={
                 "name": name,
                 "type": type,
-                "engine": engine,
-                "version": version,
                 "plugins": plugin,
                 "datapacks": datapack,
                 "cpu_cores": cpu,
@@ -247,6 +249,47 @@ def datapacks_show(datapack_id: str, mgmt_url: str | None = None) -> None:
         p = resp.json()
     for key in ("id", "category", "source", "version", "download_url", "sha256", "homepage", "verified", "notes"):
         typer.echo(f"{key}: {p.get(key)}")
+
+
+@cluster_app.command("minecraft-version")
+def cluster_minecraft_version(mgmt_url: str | None = None) -> None:
+    """Shows the single Minecraft engine/version every world in this
+    cluster runs — every world shares one proxy and one lobby, so they
+    all have to speak the same protocol version."""
+    with _client(mgmt_url) as client:
+        resp = client.get("/api/v1/cluster/minecraft-version")
+        _fail_on_error(resp)
+        body = resp.json()
+    typer.echo(f"{body['engine']} {body['version']}")
+
+
+@cluster_app.command("set-minecraft-version")
+def cluster_set_minecraft_version(
+    version: str, engine: str = typer.Option("folia", "--engine"), mgmt_url: str | None = None
+) -> None:
+    """Sets the cluster-wide target. Doesn't touch any already-placed
+    world by itself — run 'migrate-minecraft-version' to actually roll
+    it out."""
+    with _client(mgmt_url) as client:
+        resp = client.put("/api/v1/cluster/minecraft-version", json={"engine": engine, "version": version})
+        _fail_on_error(resp)
+    typer.echo(f"cluster target is now {engine} {version} (new worlds only — see 'migrate-minecraft-version')")
+
+
+@cluster_app.command("migrate-minecraft-version")
+def cluster_migrate_minecraft_version(mgmt_url: str | None = None) -> None:
+    """Pushes the cluster's current engine/version to every running
+    world and restarts it so folia-nexa-node re-downloads the right jar.
+    Worlds that aren't currently running are skipped, not errored — they
+    pick up the current version whenever they're next placed."""
+    with _client(mgmt_url) as client:
+        resp = client.post("/api/v1/cluster/minecraft-version/migrate")
+        _fail_on_error(resp)
+        body = resp.json()
+    typer.echo(f"migrating running worlds to {body['engine']} {body['version']}:")
+    for r in body["results"]:
+        status = "migrated" if r["migrated"] else f"skipped ({r['detail']})"
+        typer.echo(f"  {r['world']:<20} {status}")
 
 
 if __name__ == "__main__":

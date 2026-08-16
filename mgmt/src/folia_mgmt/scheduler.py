@@ -19,7 +19,7 @@ from folia_mgmt.access_apply import apply_whitelist
 from folia_mgmt.config import Settings, get_settings
 from folia_mgmt.luckperms import apply_luckperms_config
 from folia_mgmt.lxd_client import LXDClient, LXDError, extract_ipv4
-from folia_mgmt.models import Host, HostStatus, World, WorldPhase
+from folia_mgmt.models import Host, HostStatus, MinecraftVersionConfig, World, WorldPhase
 
 logger = logging.getLogger(__name__)
 
@@ -70,12 +70,16 @@ def select_host(session: Session, world: World) -> Host | None:
     return best
 
 
-def _node_config(world: World, settings: Settings) -> dict[str, str]:
+def _node_config(session: Session, world: World, settings: Settings) -> dict[str, str]:
     """`user.folia.*` instance config — this is what folia-nexa-node reads
     off the devlxd socket to learn its assignment. PLAN.md §9.
 
-    jar-url still comes from an external artifacts host (the engine jar
-    is real binary weight mgmt shouldn't be in the business of serving).
+    jar-engine/jar-version/jar-url come from the cluster-wide
+    MinecraftVersionConfig singleton, not World.engine/World.version —
+    see that model's own docstring for why every world has to run the
+    same version regardless of what created it declared. jar-url itself
+    still points at an external artifacts host (the engine jar is real
+    binary weight mgmt shouldn't be in the business of serving).
     plugins-manifest-url comes from mgmt's own API instead — it's
     generated live from the plugin catalog (PLAN.md §14), so there's no
     hand-authored manifest file to keep in sync with a world's plugins
@@ -99,13 +103,14 @@ def _node_config(world: World, settings: Settings) -> dict[str, str]:
     needs one push_config call to pick up the key in the first place —
     see routers/worlds.py's update_world.
     """
+    mc = session.get(MinecraftVersionConfig, 1) or MinecraftVersionConfig()
     base = settings.artifacts_base_url.rstrip("/")
     config = {
         "user.folia.world-name": world.name,
         "user.folia.world-type": world.type.value,
-        "user.folia.jar-engine": world.engine,
-        "user.folia.jar-version": world.version,
-        "user.folia.jar-url": f"{base}/{world.engine}/{world.version}/{world.engine}.jar",
+        "user.folia.jar-engine": mc.engine,
+        "user.folia.jar-version": mc.version,
+        "user.folia.jar-url": f"{base}/{mc.engine}/{mc.version}/{mc.engine}.jar",
         # Every world needs this, not just ones behind a specific proxy —
         # folia-nexa-node writes it into config/paper-global.yml so this
         # backend trusts identity forwarded by folia-nexa-proxy's Velocity
@@ -152,7 +157,7 @@ def place_world(
             DEFAULT_IMAGE_ALIAS,
             cpu_cores=world.cpu_cores,
             memory_gb=world.memory_gb,
-            config=_node_config(world, settings),
+            config=_node_config(session, world, settings),
             snapshot_schedule=world.snapshot_schedule,
             snapshot_expiry=world.snapshot_expiry,
         )

@@ -16,7 +16,7 @@ from folia_mgmt.datapack_catalog import load_catalog as load_datapack_catalog
 from folia_mgmt.db import get_session
 from folia_mgmt.deps import get_health_check, get_lxd_client, get_uuid_resolver, settings_dependency
 from folia_mgmt.lxd_client import LXDClient, LXDError
-from folia_mgmt.models import Host, HostStatus, World, WorldPhase, WorldType, utcnow
+from folia_mgmt.models import Host, HostStatus, MinecraftVersionConfig, World, WorldPhase, WorldType, utcnow
 from folia_mgmt.plugin_catalog import load_catalog
 from folia_mgmt.rcon import RconError, execute_rcon_command
 from folia_mgmt.scheduler import HealthCheck, allocated_capacity, reconcile, _node_config
@@ -35,8 +35,6 @@ router = APIRouter(prefix="/worlds", tags=["worlds"])
 class CreateWorldRequest(BaseModel):
     name: str
     type: WorldType
-    engine: str = "folia"
-    version: str = "1.21.4"
     plugins: list[str] = []
     datapacks: list[str] = []
     properties: dict[str, str] = {}
@@ -217,11 +215,12 @@ def create_world(
     _validate_datapacks(body.datapacks, settings)
     _validate_properties(body.properties)
 
+    mc = session.get(MinecraftVersionConfig, 1) or MinecraftVersionConfig()
     world = World(
         name=body.name,
         type=body.type,
-        engine=body.engine,
-        version=body.version,
+        engine=mc.engine,
+        version=mc.version,
         plugins=plugins,
         datapacks=body.datapacks,
         properties=body.properties,
@@ -297,7 +296,7 @@ def update_world(
         host = session.exec(select(Host).where(Host.name == world.host_name)).first()
         if host is not None:
             try:
-                lxd_client.update_config(host, world.container_name, _node_config(world, settings))
+                lxd_client.update_config(host, world.container_name, _node_config(session, world, settings))
             except LXDError:
                 logger.exception(
                     "world '%s' updated in mgmt's DB but failed to push config to its container — "

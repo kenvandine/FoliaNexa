@@ -134,6 +134,20 @@
 
     <section id="panel-worlds" class="panel">
       <div class="card">
+        <h2>Minecraft version</h2>
+        <p class="hint">Cluster-wide, not per-world — every world shares one proxy and one lobby (players hop between them), so they all have to speak the same protocol version. A client on a newer version than the cluster's target simply can't connect to any world, not just one.</p>
+        <form class="inline" onsubmit="return saveMinecraftVersion(event)">
+          <input id="mc-engine" placeholder="engine (e.g. folia)" style="width:9rem" required>
+          <input id="mc-version" placeholder="version (e.g. 26.2)" style="width:9rem" required>
+          <button class="btn" type="submit">Save</button>
+          <button type="button" class="btn ghost" onclick="migrateMinecraftVersion()">Migrate running worlds to this version</button>
+        </form>
+        <p class="hint">Saving only changes the target for <em>new</em> worlds. "Migrate" pushes it to every currently-running world and restarts each one so it re-downloads the right jar.</p>
+        <div id="mc-version-error" class="error"></div>
+        <div id="mc-version-saved" class="hint"></div>
+      </div>
+
+      <div class="card">
         <h2>Declare a world</h2>
         <form class="inline" onsubmit="return createWorld(event)">
           <input id="w-name" placeholder="world-nether" required>
@@ -479,7 +493,57 @@ function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 }
 
+async function loadMinecraftVersion() {
+  try {
+    const mc = await api('/cluster/minecraft-version');
+    document.getElementById('mc-engine').value = mc.engine;
+    document.getElementById('mc-version').value = mc.version;
+  } catch (e) {
+    document.getElementById('mc-version-error').textContent = e.message;
+  }
+}
+
+async function saveMinecraftVersion(event) {
+  event.preventDefault();
+  const errorEl = document.getElementById('mc-version-error');
+  const savedEl = document.getElementById('mc-version-saved');
+  errorEl.textContent = '';
+  savedEl.textContent = '';
+  try {
+    await api('/cluster/minecraft-version', {
+      method: 'PUT',
+      body: JSON.stringify({
+        engine: document.getElementById('mc-engine').value.trim(),
+        version: document.getElementById('mc-version').value.trim(),
+      }),
+    });
+    savedEl.textContent = 'Saved — new worlds will use this. Existing worlds need "Migrate" below.';
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+  return false;
+}
+
+async function migrateMinecraftVersion() {
+  const errorEl = document.getElementById('mc-version-error');
+  const savedEl = document.getElementById('mc-version-saved');
+  errorEl.textContent = '';
+  savedEl.textContent = '';
+  const engine = document.getElementById('mc-engine').value.trim();
+  const version = document.getElementById('mc-version').value.trim();
+  if (!confirm(`Migrate every running world to ${engine} ${version}? Each one restarts — players on it will be briefly disconnected.`)) return;
+  try {
+    const result = await api('/cluster/minecraft-version/migrate', { method: 'POST' });
+    const lines = result.results.map(r => `${r.world}: ${r.migrated ? 'migrated' : 'skipped (' + r.detail + ')'}`);
+    savedEl.textContent = lines.length ? lines.join('; ') : 'No running worlds to migrate.';
+    await loadWorlds();
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+}
+
 async function loadWorlds() {
+  loadMinecraftVersion();
   const errorEl = document.getElementById('worlds-error');
   errorEl.textContent = '';
   try {

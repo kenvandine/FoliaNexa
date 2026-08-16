@@ -50,6 +50,66 @@ def test_ensure_staged_downloads_jar_and_accepts_eula(tmp_path):
     assert not (tmp_path / "server.properties").exists()
 
 
+def test_ensure_staged_writes_jar_version_marker(tmp_path):
+    client = httpx.Client(transport=httpx.MockTransport(_handler))
+    ensure_staged(tmp_path, _assignment(jar_engine="folia", jar_version="1.21.4"), client=client)
+    assert (tmp_path / ".jar-version").read_text() == "folia:1.21.4"
+
+
+def test_sync_world_config_does_not_redownload_jar_when_version_unchanged(tmp_path):
+    client = httpx.Client(transport=httpx.MockTransport(_handler))
+    ensure_staged(tmp_path, _assignment(jar_engine="folia", jar_version="1.21.4"), client=client)
+
+    def failing_handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url).endswith("folia.jar"):
+            raise AssertionError("should not re-download the jar when the version hasn't changed")
+        return _handler(request)
+
+    client2 = httpx.Client(transport=httpx.MockTransport(failing_handler))
+    sync_world_config(tmp_path, _assignment(jar_engine="folia", jar_version="1.21.4"), client=client2)
+    assert (tmp_path / "server.jar").read_bytes() == JAR_BYTES
+
+
+def test_sync_world_config_redownloads_jar_when_cluster_version_changes(tmp_path):
+    # The actual bug this was built to fix: a client on a newer Minecraft
+    # version couldn't connect because the world's jar was only ever
+    # fetched once, at first boot, with no way to pick up a later
+    # cluster-wide version bump (routers/cluster.py's migrate action).
+    client = httpx.Client(transport=httpx.MockTransport(_handler))
+    ensure_staged(tmp_path, _assignment(jar_engine="folia", jar_version="1.21.4"), client=client)
+    assert (tmp_path / "server.jar").read_bytes() == JAR_BYTES
+
+    def new_version_handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url).endswith("26.2/folia.jar"):
+            return httpx.Response(200, content=b"new-version-jar-bytes")
+        return _handler(request)
+
+    client2 = httpx.Client(transport=httpx.MockTransport(new_version_handler))
+    sync_world_config(
+        tmp_path,
+        _assignment(
+            jar_engine="folia",
+            jar_version="26.2",
+            jar_url="https://artifacts.internal/folia/26.2/folia.jar",
+            plugins_manifest_url=None,
+        ),
+        client=client2,
+    )
+    assert (tmp_path / "server.jar").read_bytes() == b"new-version-jar-bytes"
+    assert (tmp_path / ".jar-version").read_text() == "folia:26.2"
+
+
+def test_sync_world_config_redownloads_jar_once_when_marker_predates_this_feature(tmp_path):
+    # Simulates a world staged before JAR_VERSION_MARKER existed at all —
+    # treated as stale and redownloaded once rather than guessed at, even
+    # though the version happens to already match.
+    (tmp_path / "server.jar").write_bytes(b"old-jar-with-no-marker")
+    client = httpx.Client(transport=httpx.MockTransport(_handler))
+    sync_world_config(tmp_path, _assignment(jar_engine="folia", jar_version="1.21.4", plugins_manifest_url=None), client=client)
+    assert (tmp_path / "server.jar").read_bytes() == JAR_BYTES
+    assert (tmp_path / ".jar-version").read_text() == "folia:1.21.4"
+
+
 def test_ensure_staged_skips_redownload_when_marker_present(tmp_path):
     call_count = 0
 

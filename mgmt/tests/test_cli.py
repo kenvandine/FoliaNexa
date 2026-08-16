@@ -182,8 +182,6 @@ def test_worlds_create_sends_plugins_and_labels(tmp_path, monkeypatch, mock_http
     assert captured["body"] == {
         "name": "world-survival",
         "type": "overworld",
-        "engine": "folia",
-        "version": "1.21.4",
         "plugins": ["LuckPerms", "HuskClaims"],
         "datapacks": [],
         "cpu_cores": 6,

@@ -254,23 +254,23 @@ def test_patch_backfills_rcon_password_for_world_declared_before_it_existed(clie
     assert world.rcon_password
 
 
-def test_node_config_includes_rcon_password_when_set():
+def test_node_config_includes_rcon_password_when_set(db_session):
     from folia_mgmt.config import Settings
     from folia_mgmt.models import World, WorldType
     from folia_mgmt.scheduler import _node_config
 
     world = World(name="w", type=WorldType.overworld, cpu_cores=4, memory_gb=8, rcon_password="s3cr3t")
-    config = _node_config(world, Settings(public_url=None))
+    config = _node_config(db_session, world, Settings(public_url=None))
     assert config["user.folia.rcon-password"] == "s3cr3t"
 
 
-def test_node_config_omits_rcon_password_when_unset():
+def test_node_config_omits_rcon_password_when_unset(db_session):
     from folia_mgmt.config import Settings
     from folia_mgmt.models import World, WorldType
     from folia_mgmt.scheduler import _node_config
 
     world = World(name="w", type=WorldType.overworld, cpu_cores=4, memory_gb=8)
-    config = _node_config(world, Settings(public_url=None))
+    config = _node_config(db_session, world, Settings(public_url=None))
     assert "user.folia.rcon-password" not in config
 
 

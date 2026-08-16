@@ -17,6 +17,7 @@ from folia_mgmt.routers import (
     access_requests,
     auth,
     chat,
+    cluster,
     datapacks,
     hosts,
     plugins,
@@ -85,6 +86,7 @@ def create_app() -> FastAPI:
     app.include_router(stats.router, prefix="/api/v1")
     app.include_router(public_stats.router, prefix="/api/v1")
     app.include_router(chat.router, prefix="/api/v1")
+    app.include_router(cluster.router, prefix="/api/v1")
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:

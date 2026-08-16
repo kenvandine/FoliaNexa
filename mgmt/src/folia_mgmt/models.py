@@ -215,6 +215,29 @@ class ProxyDisplay(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utcnow)
 
 
+class MinecraftVersionConfig(SQLModel, table=True):
+    """Singleton row (fixed id=1): the single Minecraft engine+version
+    every world in this cluster runs. PLAN.md §9 — deliberately cluster-
+    wide, not per-world: every world shares one Velocity proxy and
+    (PLAN.md §14B) one lobby that routes players between them, so they
+    all need to speak the same protocol version — a client on a newer
+    version simply cannot connect to an older backend at all, regardless
+    of which world it targets.
+
+    scheduler.py's _node_config resolves every world's jar-url/jar-
+    engine/jar-version from this row, not from World.engine/World.version
+    — those per-world columns still exist (display/history only now; see
+    routers/cluster.py's migrate action, which updates them to match
+    after actually rolling a version out) but are never read to decide
+    what a world actually runs.
+    """
+
+    id: Optional[int] = Field(default=1, primary_key=True)
+    engine: str = "folia"
+    version: str = "26.2"
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
 class ChatBridgeConfig(SQLModel, table=True):
     """Singleton row (fixed id=1): Discord chat-bridge configuration.
     PLAN.md §16 — see routers/chat.py's module docstring for the full
