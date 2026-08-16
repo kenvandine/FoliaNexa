@@ -75,24 +75,30 @@
   category: lobby
   source: in-house
   version: "0.1.0"
-  download_url: null
-  sha256: null
+  download_url: "https://github.com/kenvandine/folianexa-plugins/releases/download/campus-lobby-v0.0.2/campus-lobby-0.1.0.jar"
+  sha256: "f7784c0004e6cb859a6d59b1c4a9b532ccc8b0ac45421b2f54afc1df42d0bca0"
   homepage: "https://github.com/kenvandine/folianexa-plugins/tree/main/campus-lobby"
-  verified: false
+  verified: true
   notes: >
     Procedurally builds an NC State Wolfpack-themed scene (Brickyard
     plaza, Memorial Belltower, wolf-mascot statue, Free Expression
     Tunnel-style mural, student-union/library facades) into a lobby
     world. Source lives in the sibling folianexa-plugins repo (campus-
     lobby/), not this one — see the "In-house plugin source" note in this
-    repo's CLAUDE.md. Source builds and its 8-test JUnit suite passes for
-    real (cd campus-lobby &&
-    ./gradlew build in that repo), but no release has been cut yet, so
-    download_url is still null — see that repo's README and
-    docs/plugin-dev/03-submitting-for-review.md §3.6 for what's left
-    before a world can actually declare --plugin CampusLobby: tag a
-    release, publish the jar, sha256 it, and fill in this entry's
-    download_url/sha256/verified.
+    repo's CLAUDE.md. Release campus-lobby-v0.0.1 (2026-08-15) loaded on a
+    real Folia 1.21.4 server and failed outright: "Could not load plugin
+    'CampusLobby v0.1.0' as it is not marked as supporting Folia!" — the
+    code already used RegionScheduler/GlobalRegionScheduler throughout
+    (verified by reading SceneBuilder/CampusLobbyListener), just missing
+    `folia-supported: true` in plugin.yml. Fixed and re-released as
+    campus-lobby-v0.0.2 (2026-08-16, same day) — this entry's
+    download_url/sha256 point at that release; downloaded directly and
+    confirmed sha256 matches GitHub's own reported asset digest, and
+    confirmed the jar now has folia-supported: true. Verified live on a
+    real Folia 1.21.4 world (see the `lobby` world declared during
+    cluster onboarding): loads without error, though the scene actually
+    rendering correctly in-game (not just loading) hasn't been checked
+    with a real client.
 
 - id: HuskClaims
   category: claims
@@ -160,12 +166,20 @@
 - id: HuskHomes
   category: navigation
   source: external
-  version: "unknown"
-  download_url: null
-  sha256: null
-  homepage: "https://github.com/WiIIiam278/HuskHomes2"
-  verified: false
-  notes: "Placeholder — same distribution caveat as HuskClaims (likely Modrinth/Hangar, not a GitHub release asset)."
+  version: "4.11"
+  download_url: "https://cdn.modrinth.com/data/J6U9o3JG/versions/MznzQDLE/HuskHomes-Paper-4.11.jar"
+  sha256: "4040f6b653f5fae0f030ecd98e93c3b7db34ddf361da9a5d2141e483c3eabaa3"
+  homepage: "https://github.com/WiIIiam278/HuskHomes"
+  verified: true
+  notes: >
+    Verified 2026-08-16 — downloaded from Modrinth's CDN and sha256'd
+    directly (Modrinth's API only publishes sha1/sha512 for this file,
+    same caveat as the Matcha data pack entry). /home, /warp, /tpa
+    across the whole Velocity network — needs a MySQL backend to work
+    cross-server; reuses the same LuckPerms MySQL instance (Phase 6,
+    configs/luckperms/provision-mysql.sh or folia-nexa-db) rather than
+    needing a second database. Modrinth tags this build with the
+    "folia" loader explicitly.
 
 - id: HuskPortals
   category: navigation
@@ -210,12 +224,23 @@
 - id: DiscordSRV
   category: chat-bridge
   source: external
-  version: "unknown"
-  download_url: null
-  sha256: null
+  version: "1.30.5"
+  download_url: "https://cdn.modrinth.com/data/UmLGoGij/versions/ATlquwiT/DiscordSRV-Build-1.30.5.jar"
+  sha256: "ef2fa1f2eb146c7c77412b7190a7dd33f1fc91282683fe45407739554c8aefef"
   homepage: "https://github.com/DiscordSRV/DiscordSRV"
-  verified: false
-  notes: "Placeholder, not independently verified."
+  verified: true
+  notes: >
+    Verified 2026-08-16 — downloaded from Modrinth's CDN and sha256'd
+    directly. Two-way Discord<->in-game chat bridge, role sync, join/
+    leave/death event relay, admin commands from Discord. Folia support
+    landed in 1.27.0; this build (1.30.5) tags the "folia" loader
+    explicitly on Modrinth. Runs per-world (it's a Paper plugin, not a
+    Velocity one) — install it on one hub/social world rather than
+    every world, or multiple instances will each try to relay the same
+    Discord channel. Needs its own bot token (a separate Discord
+    application from folia-nexa-bot's, configured in its own
+    config.yml — mgmt doesn't template or manage this plugin's config
+    the way it does LuckPerms').
 
 - id: Floodgate
   category: bedrock-bridge
