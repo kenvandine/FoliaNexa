@@ -158,6 +158,23 @@ def test_sync_world_config_preserves_paper_managed_keys_not_touched_by_overrides
     assert "online-mode=false" in content
 
 
+def test_sync_world_config_enables_rcon_when_password_present(tmp_path):
+    client = httpx.Client(transport=httpx.MockTransport(_handler))
+    sync_world_config(tmp_path, _assignment(plugins_manifest_url=None, rcon_password="s3cr3t"), client=client)
+    content = (tmp_path / "server.properties").read_text()
+    assert "enable-rcon=true" in content
+    assert "rcon.port=25575" in content
+    assert "rcon.password=s3cr3t" in content
+
+
+def test_sync_world_config_omits_rcon_when_no_password(tmp_path):
+    client = httpx.Client(transport=httpx.MockTransport(_handler))
+    sync_world_config(tmp_path, _assignment(plugins_manifest_url=None), client=client)
+    content = (tmp_path / "server.properties").read_text()
+    assert "enable-rcon" not in content
+    assert "rcon." not in content
+
+
 def test_sync_world_config_without_server_properties_url_still_writes_required_baseline(tmp_path):
     client = httpx.Client(transport=httpx.MockTransport(_handler))
     sync_world_config(tmp_path, _assignment(plugins_manifest_url=None), client=client)

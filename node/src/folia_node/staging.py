@@ -45,15 +45,27 @@ LEVEL_NAME = "world"
 
 # Written unconditionally, after any operator-supplied properties are
 # merged in — never operator-overridable (routers/worlds.py's
-# _validate_properties rejects "online-mode" outright, this is just
-# defense in depth against that invariant ever slipping). Without this, a
-# world behind folia-nexa-proxy's Velocity refuses the connection outright
-# with "IllegalStateException: Backend server is online-mode!" — Paper
-# won't accept a proxied connection from a server it hasn't been told to
-# trust. This plus the matching proxies.velocity block in paper-global.yml
-# below is what Paper's own docs call "modern" forwarding:
+# _validate_properties rejects these keys outright, this is just defense
+# in depth against that invariant ever slipping).
+#
+# online-mode=false: without this, a world behind folia-nexa-proxy's
+# Velocity refuses the connection outright with "IllegalStateException:
+# Backend server is online-mode!" — Paper won't accept a proxied
+# connection from a server it hasn't been told to trust. This plus the
+# matching proxies.velocity block in paper-global.yml below is what
+# Paper's own docs call "modern" forwarding:
 # https://docs.papermc.io/velocity/player-information-forwarding/
-_REQUIRED_PROPERTIES = {"online-mode": "false"}
+#
+# enable-rcon/rcon.port/rcon.password: only turned on when mgmt actually
+# handed this world an RCON password (assignment.rcon_password) — a world
+# placed before RCON existed just doesn't get these keys at all, rather
+# than turning on RCON with no real secret. rcon.port is fixed at
+# Minecraft's conventional 25575, matching routers/worlds.py's RCON_PORT.
+def _required_properties(assignment: WorldAssignment) -> dict[str, str]:
+    required = {"online-mode": "false"}
+    if assignment.rcon_password:
+        required.update({"enable-rcon": "true", "rcon.port": "25575", "rcon.password": assignment.rcon_password})
+    return required
 
 
 def _read_server_properties(path: Path) -> dict[str, str]:
@@ -69,13 +81,13 @@ def _read_server_properties(path: Path) -> dict[str, str]:
     return props
 
 
-def _write_server_properties(world_dir: Path, overrides: dict[str, str]) -> None:
+def _write_server_properties(world_dir: Path, overrides: dict[str, str], assignment: WorldAssignment) -> None:
     # Merge, never replace outright — Paper writes dozens of its own keys
     # into this file beyond first boot (difficulty, motd, view-distance,
     # ...) that this codebase never templates and has no business
     # clobbering just because an operator changed one unrelated property.
     path = world_dir / "server.properties"
-    merged = {**_read_server_properties(path), **overrides, **_REQUIRED_PROPERTIES}
+    merged = {**_read_server_properties(path), **overrides, **_required_properties(assignment)}
     lines = [f"{key}={value}" for key, value in sorted(merged.items())]
     path.write_text("\n".join(lines) + "\n")
 
@@ -177,11 +189,11 @@ def sync_world_config(world_dir: Path, assignment: WorldAssignment, client: http
                 # to start correctly.
                 logger.warning("failed to fetch server-properties-manifest, keeping current server.properties")
                 if not (world_dir / "server.properties").exists():
-                    _write_server_properties(world_dir, {})
+                    _write_server_properties(world_dir, {}, assignment)
             else:
-                _write_server_properties(world_dir, overrides)
+                _write_server_properties(world_dir, overrides, assignment)
         elif not (world_dir / "server.properties").exists():
-            _write_server_properties(world_dir, {})
+            _write_server_properties(world_dir, {}, assignment)
     finally:
         if owns_client:
             client.close()

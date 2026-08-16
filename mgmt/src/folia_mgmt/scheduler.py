@@ -113,6 +113,13 @@ def _node_config(world: World, settings: Settings) -> dict[str, str]:
         # /forwarding-secret endpoint the proxy itself polls).
         "user.folia.velocity-forwarding-secret": settings.get_velocity_forwarding_secret(),
     }
+    if world.rcon_password:
+        # See World.rcon_password's own comment for why this rides along
+        # here instead of server-properties-manifest — folia_node.staging
+        # turns this into enable-rcon/rcon.port/rcon.password in
+        # server.properties, required-baseline style, never operator-
+        # settable (routers/worlds.py's _PROTECTED_PROPERTIES).
+        config["user.folia.rcon-password"] = world.rcon_password
     if settings.public_url:
         public_url = settings.public_url.rstrip("/")
         config["user.folia.plugins-manifest-url"] = f"{public_url}/api/v1/worlds/{world.name}/plugins-manifest"

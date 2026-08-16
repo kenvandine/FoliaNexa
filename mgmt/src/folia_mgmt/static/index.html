@@ -196,6 +196,15 @@
         </div>
         <div id="world-edit-error" class="error"></div>
         <div id="world-edit-saved" class="hint"></div>
+
+        <div style="margin-top:1rem;padding-top:0.8rem;border-top:1px solid var(--border)">
+          <div class="hint" style="margin-bottom:0.3rem">Run a live command via RCON (instant — no restart; only works while the world is running, and only for things Minecraft lets you change live, e.g. <code>gamerule</code>, <code>difficulty</code>, <code>whitelist</code>, <code>op</code> — server.properties keys like <code>allow-flight</code> above still need a restart):</div>
+          <form class="inline" onsubmit="return runRconCommand(event)">
+            <input id="edit-rcon-command" placeholder="gamerule doDaylightCycle false" style="flex:1;min-width:16rem">
+            <button class="btn" type="submit">Run</button>
+          </form>
+          <pre id="edit-rcon-output" class="hint" style="white-space:pre-wrap;margin-top:0.4rem"></pre>
+        </div>
       </div>
     </section>
 
@@ -506,6 +515,8 @@ function openWorldEdit(name) {
     .map(([k, v]) => `${k}=${v}`).join('\n');
   document.getElementById('world-edit-error').textContent = '';
   document.getElementById('world-edit-saved').textContent = '';
+  document.getElementById('edit-rcon-command').value = '';
+  document.getElementById('edit-rcon-output').textContent = '';
   document.getElementById('world-edit-card').style.display = 'block';
   document.getElementById('world-edit-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
@@ -564,6 +575,26 @@ async function restartWorldEdit() {
   } catch (e) {
     errorEl.textContent = e.message;
   }
+}
+
+async function runRconCommand(event) {
+  event.preventDefault();
+  const outputEl = document.getElementById('edit-rcon-output');
+  const name = state.editingWorld;
+  if (!name) return false;
+  const command = document.getElementById('edit-rcon-command').value.trim();
+  if (!command) return false;
+  outputEl.textContent = 'Running…';
+  try {
+    const result = await api('/worlds/' + encodeURIComponent(name) + '/rcon', {
+      method: 'POST',
+      body: JSON.stringify({ command }),
+    });
+    outputEl.textContent = result.response || '(no output)';
+  } catch (e) {
+    outputEl.textContent = 'Error: ' + e.message;
+  }
+  return false;
 }
 
 async function loadCatalog() {

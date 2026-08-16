@@ -32,6 +32,10 @@ class WorldAssignment:
     # PATCH /worlds/{name}), re-fetched and reconciled on every agent
     # start, not just first boot — see folia_node.staging.sync_world_config.
     server_properties_url: str | None = None
+    # See mgmt's World.rcon_password/scheduler._node_config — delivered
+    # via devlxd config, same channel as velocity_forwarding_secret below,
+    # never over HTTP.
+    rcon_password: str | None = None
     jar_engine: str = "folia"
     jar_version: str = "1.21.4"
     # Velocity "modern" forwarding secret (PLAN.md §7) — every world mgmt
@@ -96,6 +100,7 @@ class DevLXDClient:
             plugins_manifest_url=config.get("user.folia.plugins-manifest-url"),
             datapacks_manifest_url=config.get("user.folia.datapacks-manifest-url"),
             server_properties_url=config.get("user.folia.server-properties-manifest-url"),
+            rcon_password=config.get("user.folia.rcon-password"),
             jar_engine=config.get("user.folia.jar-engine", "folia"),
             jar_version=config.get("user.folia.jar-version", "1.21.4"),
             velocity_forwarding_secret=config.get("user.folia.velocity-forwarding-secret"),

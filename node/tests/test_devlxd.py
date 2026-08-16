@@ -50,6 +50,7 @@ def test_get_world_assignment_parses_expected_fields():
     assert assignment.plugins_manifest_url.endswith("world-nether.json")
     assert assignment.datapacks_manifest_url.endswith("world-nether-datapacks.json")
     assert assignment.server_properties_url.endswith("/server-properties-manifest")
+    assert assignment.rcon_password is None  # not set in VALUES above — an old world without one yet
 
 
 def test_missing_required_key_raises():

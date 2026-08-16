@@ -90,6 +90,14 @@ class World(SQLModel, table=True):
     # a running world on every folia-nexa-node (re)start, not just first
     # boot — see GET /worlds/{name}/server-properties-manifest.
     properties: dict[str, str] = Field(default_factory=dict, sa_column=Column(JSON))
+    # Generated once per world (routers/worlds.py's _ensure_rcon_password),
+    # never returned from any API response. Delivered to the world's own
+    # container the same way the Velocity forwarding secret is — a
+    # user.folia.* devlxd config key (scheduler.py's _node_config), never
+    # over HTTP — see rcon.py's module docstring for why this needs its
+    # own delivery channel instead of riding along in
+    # server-properties-manifest, which is deliberately unauthenticated.
+    rcon_password: Optional[str] = None
 
     cpu_cores: int
     memory_gb: int

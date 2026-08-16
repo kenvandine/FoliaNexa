@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
@@ -17,7 +18,14 @@ from folia_mgmt.deps import get_health_check, get_lxd_client, get_uuid_resolver,
 from folia_mgmt.lxd_client import LXDClient, LXDError
 from folia_mgmt.models import Host, HostStatus, World, WorldPhase, WorldType, utcnow
 from folia_mgmt.plugin_catalog import load_catalog
+from folia_mgmt.rcon import RconError, execute_rcon_command
 from folia_mgmt.scheduler import HealthCheck, allocated_capacity, reconcile, _node_config
+
+# Minecraft's conventional RCON port — not configurable per-world today
+# (mirrors the fixed 25565 game port every world already uses), just a
+# named constant instead of a magic number at the one call site that
+# needs it.
+RCON_PORT = 25575
 
 logger = logging.getLogger(__name__)
 
@@ -166,6 +174,15 @@ def _validate_properties(properties: dict[str, str]) -> None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, f"invalid server.properties value for {key!r}")
 
 
+def _ensure_rcon_password(world: World) -> None:
+    """Lazily generates World.rcon_password the first time it's needed —
+    called from both create_world and update_world so a world declared
+    before RCON existed still gets one on its next edit, not just brand
+    new worlds. Idempotent: a no-op once set."""
+    if not world.rcon_password:
+        world.rcon_password = secrets.token_urlsafe(32)
+
+
 def _with_default_plugins(plugins: list[str], settings: Settings) -> list[str]:
     """Every world gets every catalog entry flagged
     default_for_all_worlds=true (e.g. FoliaNexaStats, HuskHomes) whether or
@@ -215,6 +232,7 @@ def create_world(
         snapshot_expiry=body.snapshot_expiry,
         phase=WorldPhase.pending,
     )
+    _ensure_rcon_password(world)
     session.add(world)
     session.commit()
     session.refresh(world)
@@ -269,6 +287,7 @@ def update_world(
     if body.properties is not None:
         _validate_properties(body.properties)
         world.properties = body.properties
+    _ensure_rcon_password(world)  # backfills worlds declared before RCON existed
     world.updated_at = utcnow()
     session.add(world)
     session.commit()
@@ -304,6 +323,45 @@ def restart_world(
     except LXDError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     return {"restarted": world.container_name}
+
+
+class RconCommandRequest(BaseModel):
+    command: str
+
+
+@router.post("/{name}/rcon", dependencies=[Depends(require_operator)])
+def run_rcon_command(
+    name: str,
+    body: RconCommandRequest,
+    session: Session = Depends(get_session),
+) -> dict[str, str]:
+    """Runs one command against a running world's live server via RCON —
+    the instant-apply counterpart to PATCH /{name}'s restart-to-apply
+    config edits. Only useful for things Minecraft itself lets you change
+    without a restart (/gamerule, /difficulty, /whitelist, /op, /kick,
+    /say, ...) — server.properties keys like allow-flight have no live
+    command equivalent at all and still need PATCH + restart regardless.
+
+    world.address is the same container IP the Minecraft port itself is
+    reachable on (mgmt already has direct network reachability to every
+    placed world — see default_health_check) — RCON is just a different
+    port on that same address, not a separate LXD round trip.
+    """
+    world = _get_world_or_404(session, name)
+    if not world.address:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"world '{name}' is not placed on a host yet")
+    if not world.rcon_password:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"world '{name}' has no RCON password yet — PATCH it (even a no-op edit) to generate one, "
+            "then restart the world so it picks up RCON config",
+        )
+    host = world.address.split(":", 1)[0]
+    try:
+        response = execute_rcon_command(host, RCON_PORT, world.rcon_password, body.command)
+    except RconError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    return {"response": response}
 
 
 @router.delete("/{name}", response_model=WorldResponse, dependencies=[Depends(require_operator)])
