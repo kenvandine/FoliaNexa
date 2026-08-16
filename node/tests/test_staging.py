@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 import httpx
 
 from folia_node.devlxd import WorldAssignment
@@ -149,18 +151,50 @@ def test_sync_world_config_removes_plugin_no_longer_in_manifest(tmp_path):
     assert (tmp_path / "plugins" / "HuskClaims.jar").read_bytes() == PLUGIN_BYTES
 
 
-def test_sync_world_config_does_not_redownload_existing_plugin(tmp_path):
+def test_sync_world_config_does_not_redownload_plugin_with_unchanged_url(tmp_path):
+
     (tmp_path / "plugins").mkdir()
     (tmp_path / "plugins" / "HuskClaims.jar").write_bytes(b"already-here")
+    (tmp_path / "plugins" / ".manifest-urls.json").write_text(
+        json.dumps({"HuskClaims": "https://artifacts.internal/plugins/huskclaims.jar"})
+    )
 
     def failing_handler(request: httpx.Request) -> httpx.Response:
         if str(request.url).endswith("huskclaims.jar"):
-            raise AssertionError("should not re-download an already-staged plugin")
+            raise AssertionError("should not re-download a plugin whose manifest URL hasn't changed")
         return _handler(request)
 
     client = httpx.Client(transport=httpx.MockTransport(failing_handler))
     sync_world_config(tmp_path, _assignment(), client=client)
     assert (tmp_path / "plugins" / "HuskClaims.jar").read_bytes() == b"already-here"
+
+
+def test_sync_world_config_redownloads_plugin_once_when_manifest_state_predates_this_feature(tmp_path):
+    # Simulates a world staged before .manifest-urls.json existed at all
+    # — treated as stale and redownloaded once, even though the URL
+    # happens to already match, same tradeoff as JAR_VERSION_MARKER.
+    (tmp_path / "plugins").mkdir()
+    (tmp_path / "plugins" / "HuskClaims.jar").write_bytes(b"old-jar-no-state-file")
+
+    client = httpx.Client(transport=httpx.MockTransport(_handler))
+    sync_world_config(tmp_path, _assignment(), client=client)
+    assert (tmp_path / "plugins" / "HuskClaims.jar").read_bytes() == PLUGIN_BYTES
+
+
+def test_sync_world_config_redownloads_plugin_when_manifest_url_changes(tmp_path):
+    # The actual bug this was built to fix: updating a catalog entry's
+    # download_url (e.g. via the dashboard's plugin-catalog editor) had
+    # no effect on a world that had already staged the old jar.
+
+    (tmp_path / "plugins").mkdir()
+    (tmp_path / "plugins" / "HuskClaims.jar").write_bytes(b"old-version-bytes")
+    (tmp_path / "plugins" / ".manifest-urls.json").write_text(
+        json.dumps({"HuskClaims": "https://artifacts.internal/plugins/old-huskclaims.jar"})
+    )
+
+    client = httpx.Client(transport=httpx.MockTransport(_handler))
+    sync_world_config(tmp_path, _assignment(), client=client)
+    assert (tmp_path / "plugins" / "HuskClaims.jar").read_bytes() == PLUGIN_BYTES
 
 
 def test_sync_world_config_downloads_datapacks_into_level_datapacks_dir(tmp_path):

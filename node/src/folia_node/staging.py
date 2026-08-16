@@ -21,6 +21,7 @@ Two separate concerns, on purpose:
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -130,12 +131,17 @@ def _download(client: httpx.Client, url: str, dest: Path) -> None:
     tmp.replace(dest)
 
 
+_MANIFEST_STATE_FILENAME = ".manifest-urls.json"
+
+
 def _reconcile_manifest_dir(client: httpx.Client, manifest_url: str, target_dir: Path, suffix: str) -> None:
     """Makes target_dir's `{name}{suffix}` files match the manifest exactly
-    — downloads anything missing, deletes anything no longer listed.
-    Existing files for entries still in the manifest are left alone (no
-    forced re-download just because a restart happened; a catalog version
-    bump doesn't retroactively update an already-staged world).
+    — downloads anything missing or whose URL has changed since it was
+    last staged (a catalog entry's download_url bumped to a new version —
+    e.g. the dashboard's plugin-catalog editor — via .manifest-urls.json,
+    a name->url map of what's currently on disk), deletes anything no
+    longer listed. Existing files whose URL hasn't changed are left
+    alone, no redundant re-download just because a restart happened.
 
     Deletion is scoped to exactly this dir's top level, matching only
     `*{suffix}` files — a plugin/data pack's own subdirectory (config
@@ -144,6 +150,12 @@ def _reconcile_manifest_dir(client: httpx.Client, manifest_url: str, target_dir:
     from a stale managed one, though — this reconciliation assumes
     target_dir's `{suffix}` files are entirely mgmt-managed, matching
     _validate_plugins/_validate_datapacks' "no free-typed names" model.
+
+    A world staged before this URL-tracking existed has no state file yet
+    — treated the same as "every entry's URL changed," matching
+    JAR_VERSION_MARKER's own tradeoff: one redundant re-download the
+    first time this runs on an old world, harmless, self-healing from
+    then on.
     """
     resp = client.get(manifest_url)
     resp.raise_for_status()
@@ -151,8 +163,13 @@ def _reconcile_manifest_dir(client: httpx.Client, manifest_url: str, target_dir:
     desired = {entry["name"]: entry["url"] for entry in manifest}
 
     target_dir.mkdir(parents=True, exist_ok=True)
-    existing = {p.stem for p in target_dir.glob(f"*{suffix}")}
+    state_path = target_dir / _MANIFEST_STATE_FILENAME
+    try:
+        staged_urls = json.loads(state_path.read_text()) if state_path.exists() else {}
+    except json.JSONDecodeError:
+        staged_urls = {}
 
+    existing = {p.stem for p in target_dir.glob(f"*{suffix}")}
     for name in existing - desired.keys():
         stale = target_dir / f"{name}{suffix}"
         logger.info("removing '%s' (no longer in manifest)", stale.name)
@@ -160,10 +177,12 @@ def _reconcile_manifest_dir(client: httpx.Client, manifest_url: str, target_dir:
 
     for name, url in desired.items():
         dest = target_dir / f"{name}{suffix}"
-        if dest.exists():
+        if dest.exists() and staged_urls.get(name) == url:
             continue
         logger.info("staging '%s' from %s", dest.name, url)
         _download(client, url, dest)
+
+    state_path.write_text(json.dumps(desired))
 
 
 def _jar_identity(assignment: WorldAssignment) -> str:
