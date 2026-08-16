@@ -13,12 +13,26 @@ LOG_TAIL_LINES = 200
 def build_java_command(java_bin: str, jar_path: Path, memory_gb: int) -> list[str]:
     """Region-scheduler-friendly flags, matching PLAN.md's original
     run-folia.sh baseline (generational ZGC tends to do well with Folia's
-    per-region tick threads)."""
-    min_heap = max(1, memory_gb // 2)
+    per-region tick threads).
+
+    Heap is sized at 75% of the container's own memory limit, not the
+    full amount, and -Xms == -Xmx always (-XX:+AlwaysPreTouch pretouches
+    every heap page at startup, so a heap that could still grow at
+    runtime would defeat the point). Confirmed the hard way: a world
+    declared with memory_gb=1 handing the JVM the *entire* 1GB as
+    -Xmx1G -Xms1G left zero room for metaspace, thread stacks, the JIT
+    code cache, GC bookkeeping (ZGC keeps real structures outside the
+    heap too), and off-heap buffers — the JVM failed before Minecraft's
+    own code ever ran ("Failed to allocate initial Java heap", "Failed
+    to commit memory (Not enough space)"). Not a small-container-only
+    problem, just the size where zero headroom is guaranteed to be fatal
+    every time rather than merely risky.
+    """
+    heap_mb = max(256, int(memory_gb * 1024 * 0.75))
     return [
         java_bin,
-        f"-Xms{min_heap}G",
-        f"-Xmx{memory_gb}G",
+        f"-Xms{heap_mb}m",
+        f"-Xmx{heap_mb}m",
         "-XX:+UseZGC",
         "-XX:+ZGenerational",
         "-XX:+AlwaysPreTouch",
