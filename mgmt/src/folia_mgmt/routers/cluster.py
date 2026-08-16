@@ -89,6 +89,38 @@ class MigrateResponse(BaseModel):
     results: list[MigrateResult]
 
 
+def migrate_world_to_current_version(
+    session: Session, lxd_client: LXDClient, settings: Settings, config: MinecraftVersionConfig, world: World
+) -> MigrateResult:
+    """Pushes the cluster's current engine/version to one running world's
+    container config and restarts it so folia-nexa-node re-syncs
+    (staging.py checks the staged jar's own version marker on every
+    restart now, not just first boot — see sync_world_config) — same
+    restart-to-apply pattern as PATCH /worlds/{name}. Shared by the bulk
+    "migrate every running world" action below and routers/worlds.py's
+    per-world POST /worlds/{name}/migrate-minecraft-version."""
+    if not world.host_name or not world.container_name:
+        return MigrateResult(world=world.name, migrated=False, detail="not placed")
+    host = session.exec(select(Host).where(Host.name == world.host_name)).first()
+    if host is None:
+        return MigrateResult(world=world.name, migrated=False, detail="host not found")
+
+    world.engine = config.engine
+    world.version = config.version
+    world.updated_at = utcnow()
+    session.add(world)
+    session.commit()
+    session.refresh(world)
+
+    try:
+        lxd_client.update_config(host, world.container_name, _node_config(session, world, settings))
+        lxd_client.restart_container(host, world.container_name)
+        return MigrateResult(world=world.name, migrated=True)
+    except LXDError as exc:
+        logger.exception("failed to migrate world '%s' to %s %s", world.name, config.engine, config.version)
+        return MigrateResult(world=world.name, migrated=False, detail=str(exc))
+
+
 @router.post(
     "/minecraft-version/migrate", response_model=MigrateResponse, dependencies=[Depends(require_operator)]
 )
@@ -97,40 +129,12 @@ def migrate_worlds_to_current_version(
     lxd_client: LXDClient = Depends(get_lxd_client),
     settings: Settings = Depends(settings_dependency),
 ) -> MigrateResponse:
-    """Pushes the cluster's current engine/version to every running
-    world's container config and restarts it so folia-nexa-node re-syncs
-    (staging.py checks the staged jar's own version marker on every
-    restart now, not just first boot — see sync_world_config) — same
-    restart-to-apply pattern as PATCH /worlds/{name}. Worlds not
-    currently running (still pending, provisioning, or torn down) are
-    skipped, not errored — they pick up the current cluster version
-    whenever they do reach placement, via the normal creation/placement
-    path, no migration needed."""
+    """Migrates every currently-running world. Worlds not currently
+    running (still pending, provisioning, or torn down) are skipped, not
+    errored — they pick up the current cluster version whenever they do
+    reach placement, via the normal creation/placement path, no
+    migration needed."""
     config = _get_config(session)
-    results: list[MigrateResult] = []
     worlds = session.exec(select(World).where(World.phase == WorldPhase.running)).all()
-    for world in worlds:
-        if not world.host_name or not world.container_name:
-            results.append(MigrateResult(world=world.name, migrated=False, detail="not placed"))
-            continue
-        host = session.exec(select(Host).where(Host.name == world.host_name)).first()
-        if host is None:
-            results.append(MigrateResult(world=world.name, migrated=False, detail="host not found"))
-            continue
-
-        world.engine = config.engine
-        world.version = config.version
-        world.updated_at = utcnow()
-        session.add(world)
-        session.commit()
-        session.refresh(world)
-
-        try:
-            lxd_client.update_config(host, world.container_name, _node_config(session, world, settings))
-            lxd_client.restart_container(host, world.container_name)
-            results.append(MigrateResult(world=world.name, migrated=True))
-        except LXDError as exc:
-            logger.exception("failed to migrate world '%s' to %s %s", world.name, config.engine, config.version)
-            results.append(MigrateResult(world=world.name, migrated=False, detail=str(exc)))
-
+    results = [migrate_world_to_current_version(session, lxd_client, settings, config, world) for world in worlds]
     return MigrateResponse(engine=config.engine, version=config.version, results=results)

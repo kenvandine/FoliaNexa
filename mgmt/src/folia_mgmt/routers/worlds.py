@@ -17,6 +17,7 @@ from folia_mgmt.db import get_session
 from folia_mgmt.deps import get_health_check, get_lxd_client, get_uuid_resolver, settings_dependency
 from folia_mgmt.lxd_client import LXDClient, LXDError
 from folia_mgmt.models import Host, HostStatus, MinecraftVersionConfig, World, WorldPhase, WorldType, utcnow
+from folia_mgmt.routers.cluster import migrate_world_to_current_version
 from folia_mgmt.plugin_catalog import load_catalog
 from folia_mgmt.rcon import RconError, execute_rcon_command
 from folia_mgmt.scheduler import HealthCheck, allocated_capacity, reconcile, _node_config
@@ -322,6 +323,33 @@ def restart_world(
     except LXDError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     return {"restarted": world.container_name}
+
+
+class MigrateVersionResponse(BaseModel):
+    migrated: bool
+    detail: str | None = None
+
+
+@router.post(
+    "/{name}/migrate-minecraft-version",
+    response_model=MigrateVersionResponse,
+    dependencies=[Depends(require_operator)],
+)
+def migrate_world_minecraft_version(
+    name: str,
+    session: Session = Depends(get_session),
+    lxd_client: LXDClient = Depends(get_lxd_client),
+    settings: Settings = Depends(settings_dependency),
+) -> MigrateVersionResponse:
+    """Migrates just this one world to the cluster's current Minecraft
+    version — the per-world counterpart to POST /cluster/minecraft-
+    version/migrate, for rolling a version bump out world-by-world
+    (e.g. checking a lobby migrates cleanly before touching everything
+    else) rather than all at once."""
+    world = _get_world_or_404(session, name)
+    config = session.get(MinecraftVersionConfig, 1) or MinecraftVersionConfig(id=1)
+    result = migrate_world_to_current_version(session, lxd_client, settings, config, world)
+    return MigrateVersionResponse(migrated=result.migrated, detail=result.detail)
 
 
 class RconCommandRequest(BaseModel):

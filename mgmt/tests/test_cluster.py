@@ -121,3 +121,46 @@ def test_migrate_skips_unplaced_worlds(client, operator_token, fake_lxd):
 def test_migrate_requires_operator(client, viewer_token):
     resp = client.post("/api/v1/cluster/minecraft-version/migrate", headers=auth_header(viewer_token))
     assert resp.status_code == 403
+
+
+def test_per_world_migrate_endpoint_migrates_just_that_world(client, admin_token, operator_token, fake_lxd):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-a", "type": "overworld", "cpu_cores": 2, "memory_gb": 2},
+        headers=auth_header(operator_token),
+    )
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-b", "type": "overworld", "cpu_cores": 2, "memory_gb": 2},
+        headers=auth_header(operator_token),
+    )
+    client.put(
+        "/api/v1/cluster/minecraft-version", json={"version": "26.3"}, headers=auth_header(operator_token)
+    )
+
+    resp = client.post(
+        "/api/v1/worlds/world-a/migrate-minecraft-version", headers=auth_header(operator_token)
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"migrated": True, "detail": None}
+    assert ("node-a", "world-a") in fake_lxd.restarted
+    assert ("node-a", "world-b") not in fake_lxd.restarted
+
+    worlds = {w["name"]: w for w in client.get("/api/v1/worlds", headers=auth_header(operator_token)).json()}
+    assert worlds["world-a"]["version"] == "26.3"
+    assert worlds["world-b"]["version"] == "26.2"  # untouched
+
+
+def test_per_world_migrate_404s_for_unknown_world(client, operator_token):
+    resp = client.post(
+        "/api/v1/worlds/no-such-world/migrate-minecraft-version", headers=auth_header(operator_token)
+    )
+    assert resp.status_code == 404
+
+
+def test_per_world_migrate_requires_operator(client, viewer_token):
+    resp = client.post(
+        "/api/v1/worlds/no-such-world/migrate-minecraft-version", headers=auth_header(viewer_token)
+    )
+    assert resp.status_code == 403

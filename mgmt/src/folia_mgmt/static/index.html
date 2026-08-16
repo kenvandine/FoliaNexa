@@ -184,7 +184,7 @@
       <div class="card">
         <h2>Worlds</h2>
         <table>
-          <thead><tr><th>Name</th><th>Type</th><th>Phase</th><th>Host</th><th>Address</th><th>Access</th><th></th></tr></thead>
+          <thead><tr><th>Name</th><th>Type</th><th>Phase</th><th>Version</th><th>Host</th><th>Address</th><th>Access</th><th></th></tr></thead>
           <tbody id="worlds-body"></tbody>
         </table>
       </div>
@@ -404,6 +404,7 @@ const state = {
   datapackCatalog: [],
   worlds: [],
   editingWorld: null,
+  minecraftVersion: null,
 };
 
 async function api(path, options) {
@@ -496,6 +497,7 @@ function escapeHtml(s) {
 async function loadMinecraftVersion() {
   try {
     const mc = await api('/cluster/minecraft-version');
+    state.minecraftVersion = mc;
     document.getElementById('mc-engine').value = mc.engine;
     document.getElementById('mc-version').value = mc.version;
   } catch (e) {
@@ -542,30 +544,52 @@ async function migrateMinecraftVersion() {
   }
 }
 
+async function migrateWorldVersion(name) {
+  const errorEl = document.getElementById('worlds-error');
+  errorEl.textContent = '';
+  if (!confirm(`Migrate "${name}" to the current cluster version now? It restarts — players on it will be briefly disconnected.`)) return;
+  try {
+    await api('/worlds/' + encodeURIComponent(name) + '/migrate-minecraft-version', { method: 'POST' });
+    await loadWorlds();
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+}
+
 async function loadWorlds() {
-  loadMinecraftVersion();
+  await loadMinecraftVersion();
   const errorEl = document.getElementById('worlds-error');
   errorEl.textContent = '';
   try {
     const worlds = await api('/worlds');
     state.worlds = worlds;
     const body = document.getElementById('worlds-body');
-    body.innerHTML = worlds.map(w => `
+    const target = state.minecraftVersion;
+    body.innerHTML = worlds.map(w => {
+      const current = `${w.engine} ${w.version}`;
+      const stale = target && (w.engine !== target.engine || w.version !== target.version);
+      const versionCell = stale
+        ? `<span class="pill pending" title="cluster target is ${escapeHtml(target.engine)} ${escapeHtml(target.version)}">${escapeHtml(current)}</span>`
+        : `<span class="pill running">${escapeHtml(current)}</span>`;
+      return `
       <tr>
         <td>${escapeHtml(w.name)}</td>
         <td>${escapeHtml(w.type)}</td>
         <td><span class="pill ${escapeHtml(w.phase)}">${escapeHtml(w.phase)}</span></td>
+        <td>${versionCell}</td>
         <td>${escapeHtml(w.host_name || '—')}</td>
         <td>${escapeHtml(w.address || '—')}</td>
         <td>${w.whitelist_enabled ? 'whitelist on' : 'open'}${w.ops.length ? ', ' + w.ops.length + ' op(s)' : ''}</td>
         <td class="row-actions">
           <button class="btn ghost" onclick="openWorldEdit('${escapeHtml(w.name)}')">Edit</button>
+          ${stale && w.phase === 'running' ? `<button class="btn ghost" onclick="migrateWorldVersion('${escapeHtml(w.name)}')">Migrate to ${escapeHtml(target.engine)} ${escapeHtml(target.version)}</button>` : ''}
           <button class="btn ghost" onclick="snapshotWorld('${escapeHtml(w.name)}')">Snapshot</button>
           <button class="btn ghost" onclick="toggleWhitelist('${escapeHtml(w.name)}', ${w.whitelist_enabled})">${w.whitelist_enabled ? 'Disable' : 'Enable'} whitelist</button>
           <button class="btn danger" onclick="deleteWorld('${escapeHtml(w.name)}')">Delete</button>
         </td>
       </tr>
-    `).join('') || '<tr><td colspan="7" class="hint">No worlds declared yet.</td></tr>';
+    `;
+    }).join('') || '<tr><td colspan="8" class="hint">No worlds declared yet.</td></tr>';
   } catch (e) {
     errorEl.textContent = e.message;
   }
