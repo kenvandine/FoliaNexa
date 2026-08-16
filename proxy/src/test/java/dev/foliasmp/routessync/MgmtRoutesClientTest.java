@@ -42,15 +42,17 @@ class MgmtRoutesClientTest {
     @Test
     void fetchSendsBearerTokenAndParsesRoutes() throws Exception {
         AtomicReference<String> authHeader = new AtomicReference<>();
-        String baseUrl = start(200, "{\"routes\": [{\"world\": \"world-lobby\", \"type\": \"lobby\", \"address\": \"10.0.2.10:25565\", \"default\": true}]}", authHeader);
+        String baseUrl = start(200, "{\"routes\": [{\"world\": \"world-lobby\", \"type\": \"lobby\", \"address\": \"10.0.2.10:25565\", \"default\": true}], \"domains\": {\"smp.example.com\": \"world-lobby\"}}", authHeader);
 
         MgmtRoutesClient client = new MgmtRoutesClient(baseUrl, "test-token-123", Duration.ofSeconds(5));
-        List<Route> routes = client.fetch();
+        MgmtRoutesClient.RoutesFetch fetched = client.fetch();
+        List<Route> routes = fetched.routes();
 
         assertEquals("Bearer test-token-123", authHeader.get());
         assertEquals(1, routes.size());
         assertEquals("world-lobby", routes.get(0).world());
         assertTrue(routes.get(0).isDefault());
+        assertEquals("world-lobby", fetched.domainRoutes().get("smp.example.com"));
     }
 
     @Test
@@ -68,6 +70,8 @@ class MgmtRoutesClientTest {
         String baseUrl = start(200, "{\"routes\": []}", authHeader);
 
         MgmtRoutesClient client = new MgmtRoutesClient(baseUrl + "/", "token", Duration.ofSeconds(5));
-        assertTrue(client.fetch().isEmpty());
+        MgmtRoutesClient.RoutesFetch fetched = client.fetch();
+        assertTrue(fetched.routes().isEmpty());
+        assertTrue(fetched.domainRoutes().isEmpty());
     }
 }

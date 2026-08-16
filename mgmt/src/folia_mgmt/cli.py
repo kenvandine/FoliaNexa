@@ -118,11 +118,12 @@ def hosts_list(mgmt_url: str | None = None) -> None:
         resp = client.get("/api/v1/hosts")
         _fail_on_error(resp)
         for h in resp.json():
+            domains = f"  domains={','.join(h['domains'])}" if h.get("domains") else ""
             typer.echo(
                 f"{h['name']:<16} {h['status']:<10} "
                 f"cpu {h['allocated_cpu_cores']}/{h['capacity_cpu_cores']}  "
                 f"mem {h['allocated_memory_gb']}/{h['capacity_memory_gb']}GB  "
-                f"{h['address']}"
+                f"{h['address']}{domains}"
             )
 
 
@@ -132,6 +133,17 @@ def hosts_drain(name: str, mgmt_url: str | None = None) -> None:
         resp = client.post(f"/api/v1/hosts/{name}/drain")
         _fail_on_error(resp)
     typer.echo(f"draining '{name}'")
+
+
+@hosts_app.command("set-domains")
+def hosts_set_domains(name: str, domains: list[str], mgmt_url: str | None = None) -> None:
+    """Full-replace the public hostnames that route to this host's default
+    world, e.g. 'folia-nexa-mgmt hosts set-domains node-a smp.example.com'.
+    Pass no domains to clear them."""
+    with _client(mgmt_url) as client:
+        resp = client.put(f"/api/v1/hosts/{name}/domains", json={"domains": domains})
+        _fail_on_error(resp)
+    typer.echo(f"'{name}' domains: {', '.join(domains) if domains else '(none)'}")
 
 
 def _parse_memory_gb(value: str) -> int:

@@ -14,7 +14,7 @@ from folia_mgmt.auth import require_operator, require_viewer, User
 from folia_mgmt.config import Settings
 from folia_mgmt.db import get_session
 from folia_mgmt.deps import settings_dependency
-from folia_mgmt.models import ProxyDisplay, World, WorldPhase, WorldType, utcnow
+from folia_mgmt.models import Host, ProxyDisplay, World, WorldPhase, WorldType, utcnow
 
 router = APIRouter(prefix="/routes", tags=["routes"])
 
@@ -32,6 +32,7 @@ class Route(BaseModel):
 
 class RoutesResponse(BaseModel):
     routes: list[Route]
+    domains: dict[str, str] = {}
 
 
 def _pick_default(worlds: list[World]) -> str | None:
@@ -65,6 +66,27 @@ def get_forwarding_secret(settings: Settings = Depends(settings_dependency)) -> 
     return ForwardingSecretResponse(secret=settings.get_velocity_forwarding_secret())
 
 
+def _domain_routes(routable: list[World], hosts: list[Host]) -> dict[str, str]:
+    """Domain -> world name, one entry per (host, domain) pair, for hosts
+    that declare public hostnames (PLAN.md §7C). Reuses `_pick_default`
+    scoped to just that host's routable worlds, so a domain always lands on
+    that host's own lobby (or overworld) — the same hub logic §14B already
+    uses globally, just applied once per host instead of once per cluster.
+    A host with no running lobby/overworld is silently omitted; there's
+    nothing sensible to route its domain(s) to yet."""
+    result: dict[str, str] = {}
+    for host in hosts:
+        if not host.domains:
+            continue
+        host_worlds = [w for w in routable if w.host_name == host.name]
+        default = _pick_default(host_worlds)
+        if default is None:
+            continue
+        for domain in host.domains:
+            result[domain] = default
+    return result
+
+
 @router.get("", response_model=RoutesResponse, dependencies=[Depends(require_viewer)])
 def get_routes(session: Session = Depends(get_session)) -> RoutesResponse:
     worlds = session.exec(
@@ -76,7 +98,8 @@ def get_routes(session: Session = Depends(get_session)) -> RoutesResponse:
         Route(world=w.name, type=w.type.value, address=w.address, default=(w.name == default_world))
         for w in routable
     ]
-    return RoutesResponse(routes=routes)
+    hosts = session.exec(select(Host)).all()
+    return RoutesResponse(routes=routes, domains=_domain_routes(routable, hosts))
 
 
 _PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"

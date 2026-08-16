@@ -3,6 +3,7 @@ package dev.foliasmp.routessync;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -58,5 +59,44 @@ class RoutesJsonTest {
     void objectsMissingRequiredFieldsAreSkipped() {
         String body = "{\"routes\": [{\"type\": \"lobby\", \"address\": \"10.0.2.10:25565\"}]}"; // no "world"
         assertTrue(RoutesJson.parse(body).isEmpty());
+    }
+
+    @Test
+    void parsesDomainRoutesMap() {
+        String body = """
+                {
+                  "routes": [],
+                  "domains": {"smp.example.com": "world-a-lobby", "creative.example.com": "world-b-lobby"}
+                }
+                """;
+
+        Map<String, String> domainRoutes = RoutesJson.parseDomainRoutes(body);
+
+        assertEquals(2, domainRoutes.size());
+        assertEquals("world-a-lobby", domainRoutes.get("smp.example.com"));
+        assertEquals("world-b-lobby", domainRoutes.get("creative.example.com"));
+    }
+
+    @Test
+    void missingDomainsKeyParsesToEmptyMap() {
+        String body = "{\"routes\": []}";
+        assertTrue(RoutesJson.parseDomainRoutes(body).isEmpty());
+    }
+
+    @Test
+    void emptyDomainsObjectParsesToEmptyMap() {
+        String body = "{\"routes\": [], \"domains\": {}}";
+        assertTrue(RoutesJson.parseDomainRoutes(body).isEmpty());
+    }
+
+    @Test
+    void domainsDoNotLeakIntoRoutesParsing() {
+        String body = """
+                {
+                  "routes": [{"world": "world-a-lobby", "type": "lobby", "address": "10.0.1.21:25565", "default": true}],
+                  "domains": {"smp.example.com": "world-a-lobby"}
+                }
+                """;
+        assertEquals(1, RoutesJson.parse(body).size());
     }
 }

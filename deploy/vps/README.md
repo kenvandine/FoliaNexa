@@ -8,8 +8,8 @@ adapted, the same way `tools/folia-host-join.sh` works today.
 
 | File | Runs on | What it's for |
 | --- | --- | --- |
-| `setup-wireguard.sh` | both | Generates this peer's WireGuard keypair and a filled-in `wg0.conf`. Run once per peer. |
-| `wg-vps.conf.template` | VPS | Reference: what `setup-wireguard.sh --role vps` produces, for manual review/editing. |
+| `setup-wireguard.sh` | both | Generates this peer's WireGuard keypair and a filled-in `wg0.conf`. Run once per home LXD host on the `home` side; on the VPS, run once per home host (`--peer-name`) to build a multi-peer mesh — each host's `[Peer]` stanza lives under `peers.d/` next to `wg0.conf` so adding one never disturbs another. |
+| `wg-vps.conf.template` | VPS | Reference: the shape of a single `[Peer]` block `setup-wireguard.sh --role vps` produces (the real file has one such block per home host in the mesh), for manual review/editing. |
 | `wg-home.conf.template` | home LXD host | Same, for `--role home`. |
 | `Caddyfile` | VPS | Terminates public TLS for `admin.<domain>` / `api.<domain>` / `play.<domain>` and reverse-proxies to mgmt over the tunnel. |
 | `deploy-portal.sh` | VPS (or wherever you push from) | Syncs `portal/`'s static files to the VPS's Caddy `file_server` root. `portal/` has no build step and no `snapcraft.yaml` — this is the entire deploy story for it. |

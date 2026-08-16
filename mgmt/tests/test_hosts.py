@@ -87,3 +87,79 @@ def test_drain_host(client, admin_token, operator_token):
     resp = client.post("/api/v1/hosts/node-a/drain", headers=auth_header(operator_token))
     assert resp.status_code == 200
     assert resp.json()["status"] == "draining"
+
+
+def test_set_domains_happy_path(client, admin_token, operator_token):
+    join_token = _get_join_token(client, admin_token)
+    client.post("/api/v1/hosts/enroll", json=_enroll_body(), headers=auth_header(join_token))
+
+    resp = client.put(
+        "/api/v1/hosts/node-a/domains",
+        json={"domains": ["SMP.Example.com", "other.example.com."]},
+        headers=auth_header(operator_token),
+    )
+    assert resp.status_code == 200, resp.text
+    # normalized: lowercased, trailing dot stripped
+    assert resp.json()["domains"] == ["smp.example.com", "other.example.com"]
+
+
+def test_set_domains_clears_with_empty_list(client, admin_token, operator_token):
+    join_token = _get_join_token(client, admin_token)
+    client.post("/api/v1/hosts/enroll", json=_enroll_body(), headers=auth_header(join_token))
+    client.put(
+        "/api/v1/hosts/node-a/domains",
+        json={"domains": ["smp.example.com"]},
+        headers=auth_header(operator_token),
+    )
+
+    resp = client.put("/api/v1/hosts/node-a/domains", json={"domains": []}, headers=auth_header(operator_token))
+    assert resp.status_code == 200
+    assert resp.json()["domains"] == []
+
+
+def test_set_domains_rejects_empty_string(client, admin_token, operator_token):
+    join_token = _get_join_token(client, admin_token)
+    client.post("/api/v1/hosts/enroll", json=_enroll_body(), headers=auth_header(join_token))
+
+    resp = client.put(
+        "/api/v1/hosts/node-a/domains", json={"domains": ["  "]}, headers=auth_header(operator_token)
+    )
+    assert resp.status_code == 400
+
+
+def test_set_domains_unknown_host(client, operator_token):
+    resp = client.put(
+        "/api/v1/hosts/no-such-host/domains",
+        json={"domains": ["smp.example.com"]},
+        headers=auth_header(operator_token),
+    )
+    assert resp.status_code == 404
+
+
+def test_set_domains_rejects_conflict_with_another_host(client, admin_token, operator_token):
+    join_token_1 = _get_join_token(client, admin_token)
+    client.post("/api/v1/hosts/enroll", json=_enroll_body(name="node-a"), headers=auth_header(join_token_1))
+    join_token_2 = _get_join_token(client, admin_token)
+    client.post(
+        "/api/v1/hosts/enroll",
+        json=_enroll_body(name="node-b", address="10.0.1.12:8443"),
+        headers=auth_header(join_token_2),
+    )
+
+    client.put(
+        "/api/v1/hosts/node-a/domains", json={"domains": ["smp.example.com"]}, headers=auth_header(operator_token)
+    )
+    resp = client.put(
+        "/api/v1/hosts/node-b/domains", json={"domains": ["smp.example.com"]}, headers=auth_header(operator_token)
+    )
+    assert resp.status_code == 409
+
+
+def test_set_domains_requires_operator(client, admin_token, viewer_token):
+    join_token = _get_join_token(client, admin_token)
+    client.post("/api/v1/hosts/enroll", json=_enroll_body(), headers=auth_header(join_token))
+
+    resp = client.put(
+        "/api/v1/hosts/node-a/domains", json={"domains": ["smp.example.com"]}, headers=auth_header(viewer_token)
+    )
+    assert resp.status_code == 403

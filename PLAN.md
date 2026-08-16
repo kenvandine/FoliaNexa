@@ -373,6 +373,101 @@ such client was reachable to test against). See `CLAUDE.md`'s own
 
 ---
 
+## 7C. Hostname-Based Virtual Routing
+
+§7's routes table has always had exactly one landing point cluster-wide
+(`default: true` on one route). This section generalizes that to *N*
+landing points, one per public domain, so a multi-host cluster can put
+different games/communities behind different hostnames on the same proxy —
+`smp.example.com` → one host's survival cluster, `creative.example.com` →
+another host's, both through the same `folia-nexa-proxy`.
+
+**Domains live on `Host`, not `World`.** A domain resolves to a *host*
+(`Host.domains: list[str]`, `mgmt/src/folia_mgmt/models.py`) — a physical/
+LXD machine that can run several worlds — not to one specific world
+directly. The world a connecting player actually lands on is still decided
+by the existing lobby-as-hub preference (§14B's `_pick_default`: a running
+`lobby` on that host, else a running `overworld`), just scoped to that
+host's own worlds instead of the whole cluster. This means adding a second
+domain-routed host doesn't require inventing a second concept — it reuses
+§14B's hub logic once per host. `PUT /api/v1/hosts/{name}/domains`
+(operator role, full-replace semantics like `PUT /worlds/{name}/access`)
+manages the list; `folia-nexa-mgmt hosts set-domains <host> <domain>...`
+is the CLI front for it. A domain can only belong to one host at a time,
+enforced with a 409 at write time (SQLite's JSON column can't carry a
+uniqueness constraint on list membership, so this lives in
+`routers/hosts.py`, not the schema).
+
+**`GET /api/v1/routes` grew a `domains` field** — a flat `domain -> world
+name` map, computed fresh on every request (`routers/routes.py`'s
+`_domain_routes`, reusing `_pick_default` per host as described above). A
+host with domains declared but no routable lobby/overworld right now is
+silently omitted — there's nothing sensible to route its domain(s) to
+until it has one running. This keeps the existing single `Route.default`
+global flag completely unchanged; it's still what Bedrock and any
+unrecognized-hostname connection falls back to.
+
+**Resolution happens in Java code, not Velocity's native `forced-hosts`.**
+Velocity supports hostname routing out of the box via a `[forced-hosts]`
+table in `velocity.toml`, but that file is seeded once by `run-velocity.sh`
+and deliberately never rewritten again post-install (same "never overwrite
+operator config" rule §7B's Geyser `config.yml` follows) — and
+`forced-hosts` is read once at Velocity startup, not hot-reloadable,
+which would break §7's "no restart required to add or remove a world"
+property. Instead, `FoliaRoutesSyncPlugin.onChooseInitialServer` reads the
+connecting player's `getVirtualHost()` and looks it up in a domain→world
+map (`VirtualHostRouter`, a pure-logic class with no Velocity dependency,
+same style as `RouteDiff`/`AccessDecision`) built fresh from `/api/v1/routes`
+on every poll (`MgmtRoutesClient.RoutesFetch` bundles both the route list
+and the domain map from one HTTP call, so a poll can't observe the two out
+of sync). Unmatched hostnames — including no hostname at all — fall back
+to the existing single global default, unchanged. `RoutesJson` (proxy's
+hand-rolled, purpose-built parser — see its own class javadoc for why it's
+not a general JSON library) gained a second small regex pair to extract
+the `domains` object; same "these values never need escaping" reasoning
+its `FIELD` regex already relies on for `world`/`type`/`address`.
+
+**Bedrock has no per-domain routing.** RakNet (Bedrock's transport) has no
+SNI/hostname concept at all — there's no field in a Bedrock connection
+equivalent to Java's login-packet hostname, so Geyser has no way to know
+which domain a Bedrock player "typed." Bedrock connections always resolve
+through the single global default, exactly as before this feature — this
+is a protocol limitation, not a gap left to close later.
+
+**WireGuard multi-peer mesh (`deploy/vps/setup-wireguard.sh`).** Domain
+routing itself doesn't require this — a world's resolved address is
+already reachable through the existing tunnel regardless of which host
+it's on. But per-host domains pair naturally with giving each host its own
+WireGuard peer identity on the VPS side, for tighter `AllowedIPs` scoping
+per host rather than one blob "the whole home LAN" entry. `--role vps` now
+supports adding home hosts incrementally: each host's `[Peer]` stanza is
+kept in its own file under `peers.d/<peer-name>.conf` next to `wg0.conf`,
+which is regenerated as `[Interface]` + every file in `peers.d/`
+concatenated together on each run — so re-running for one host's key
+rotation or `AllowedIPs` change never disturbs any other host's already-
+configured peer. `--role home` is unchanged (a home host only ever has one
+peer: the VPS). See `docs/vps-edge-deployment.md`'s WireGuard section for
+the full incremental-add flow.
+
+**What's real vs. unverified:** mgmt's domain model, the `/api/v1/routes`
+`domains` map, and the CLI all have a real pytest suite exercising them
+end-to-end through FastAPI's `TestClient` (`test_hosts.py`,
+`test_routes.py`, `test_cli.py`). `RoutesJson`'s domain parsing,
+`VirtualHostRouter`'s resolution logic, and `MgmtRoutesClient`'s combined
+fetch all have a real Gradle test run (`RoutesJsonTest`,
+`VirtualHostRouterTest`, `MgmtRoutesClientTest`). `setup-wireguard.sh`'s
+new `peers.d` multi-peer mechanics were exercised with a fake `wg` binary
+standing in for key generation (no real `wireguard-tools` available in the
+environment this was added in) — confirmed two peers added in sequence
+both survive in the final `wg0.conf`, and re-running with an existing
+`--peer-name` replaces only that peer's block. Not verified: a real Java
+Minecraft client actually connecting with a specific hostname and landing
+on the right host's default world — no live Velocity server or Minecraft
+client was reachable to test against in this environment, same limitation
+as the rest of §7A/§7B.
+
+---
+
 ## 8. Snap Packaging Specifications
 
 ### A. `folia-nexa-mgmt` snap
