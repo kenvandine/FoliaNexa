@@ -211,18 +211,42 @@ parts:
   # $CRAFT_PART_INSTALL/plugins across every part, including this one, no
   # further wiring required. PLAN.md §7B.
   #
-  # Deliberately pinned to "latest" rather than a fixed build number, the
-  # opposite choice from velocity-runtime's pinned Velocity version:
-  # Velocity itself is pinned for backend-protocol stability, but Geyser
-  # tracks newly-released Bedrock client versions continuously and an
-  # old, pinned Geyser build breaks newer Bedrock clients outright.
+  # Geyser is pinned to a fixed version+build here, NOT "latest" — this
+  # used to float to latest deliberately (Geyser tracks newly-released
+  # Bedrock client versions continuously; an old pinned build breaks
+  # newer Bedrock clients outright), but that floated straight into a
+  # real incompatibility with velocity-runtime's pinned Velocity 3.5.1,
+  # confirmed live 2026-08-17: Geyser 2.11.1 (build 1223) crashes on
+  # every startup with
+  #   java.lang.NoSuchMethodError: GsonComponentSerializer.toBuilder()
+  # at org.geysermc.geyser.translator.text.MessageTranslator.<clinit> —
+  # Geyser's plugin classloading relies on Velocity's own shaded copy of
+  # `net.kyori.adventure` (it doesn't shade its own, so all plugins share
+  # one instance), and 2.11.1 is the first Geyser version whose compiled
+  # bytecode calls the narrow `GsonComponentSerializer$Builder toBuilder()`
+  # bridge method — confirmed by disassembling MessageTranslator.class
+  # from each version: 2.11.1 calls that narrow signature, while 2.10.1,
+  # 2.9.6, and 2.8.4 all call the older, generic `Buildable$Builder
+  # toBuilder()` signature that Velocity 3.5.1's bundled adventure jar
+  # actually has (also confirmed directly via javap on velocity-3.5.1.jar's
+  # own shaded GsonComponentSerializer/Buildable classes). The crash means
+  # Geyser's RakNet listener never binds — no error that stops Velocity
+  # itself, just Bedrock silently unreachable on :19132.
+  #
+  # 2.10.1 build 1184 is the pin below: the newest Geyser build confirmed
+  # NOT to hit this. Revisit floating this back to "latest" only alongside
+  # a Velocity bump past 3.5.1 (Velocity 4.0.0 exists and likely bundles a
+  # newer adventure, but folia-routes-sync is compiled against
+  # velocity-api:3.5.1 and hasn't been tested against 4.0.0 — a separate,
+  # bigger change to make deliberately, not as a side effect of chasing
+  # Geyser's latest build).
   geyser-plugins:
     plugin: nil
     override-build: |
       set -e
       mkdir -p $CRAFT_PART_INSTALL/plugins
       # -L is required: these URLs 302-redirect to the actual versioned
-      # build (e.g. .../versions/2.11.1/builds/1223/downloads/velocity).
+      # build (e.g. .../versions/2.10.1/builds/1184/downloads/velocity).
       # curl -f only fails on >=400 responses, so without -L it silently
       # saves the empty 302 body and exits 0 — a real bug caught by an
       # actual snapcraft build + runtime plugin load, not just a HEAD
@@ -231,7 +255,7 @@ parts:
       # size check below is a second line of defense against the same
       # failure mode recurring silently.
       curl -sfL -o $CRAFT_PART_INSTALL/plugins/Geyser-Velocity.jar \
-        https://download.geysermc.org/v2/projects/geyser/versions/latest/builds/latest/downloads/velocity
+        https://download.geysermc.org/v2/projects/geyser/versions/2.10.1/builds/1184/downloads/velocity
       curl -sfL -o $CRAFT_PART_INSTALL/plugins/floodgate-velocity.jar \
         https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/velocity
       for jar in Geyser-Velocity.jar floodgate-velocity.jar; do

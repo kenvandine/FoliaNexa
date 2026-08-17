@@ -191,6 +191,34 @@ rsyncs `portal/`'s static files to wherever Caddy's `PORTAL_ROOT` points
 open https://play.<domain>/
 ```
 
+## Connecting from Java and Bedrock clients
+
+Once Phase 4 (proxy relocated to the VPS) is done, both client families
+connect straight to the VPS's public IP — never to mgmt, never to a
+world container directly:
+
+| Client | Address | Port | Protocol |
+| --- | --- | --- | --- |
+| Java Edition | VPS public IP, or a hostname/SRV record you point at it (e.g. `mc.<domain>`) | **25565** | TCP |
+| Bedrock (console/mobile/Win10) | VPS public IP directly | **19132** | UDP (RakNet) |
+
+Neither port goes through Caddy — both are raw Minecraft protocol, not
+HTTP, so `Caddyfile` never touches them (see its own comments). Java's
+`25565` is optional to expose via a hostname: an SRV record is a
+convenience, not a requirement, since a Java client will happily connect
+to a bare IP:port too. Bedrock has no equivalent SRV convention, so
+there's nothing to add to DNS for it either way — a Bedrock player just
+types the VPS's IP and `19132` into their client's "Add Server" screen
+as two separate fields. Make sure both ports are actually open before
+testing (`sudo ufw allow 19132/udp` from Phase 1; `25565` needs the same
+if you didn't already open it for Java).
+
+Skip the Bedrock row entirely if the proxy snap wasn't built with the
+Geyser-Velocity/floodgate-velocity part, or if you deleted those jars
+post-install (`proxy/snapcraft.yaml`'s note on removing them) — Java
+still works unaffected either way, the two protocols are fully
+independent at the proxy.
+
 ## Phase 7: Get real data flowing
 
 The portal is only as useful as the data behind it. `GET

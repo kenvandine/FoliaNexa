@@ -317,6 +317,38 @@ curl -X POST https://<mgmt-host>:8443/api/v1/users/folia-nexa-proxy/api-token \
 sudo snap start folia-nexa-proxy.daemon
 ```
 
+#### Connecting a Minecraft client
+
+`folia-nexa-proxy` is the single public entry point for both client
+families — players never connect to a world container directly, and
+never pick a world by address; the proxy's `default`-flagged lobby route
+(PLAN.md §14B) is what they land on first.
+
+| Client | Add-server address | Port | Protocol |
+| --- | --- | --- | --- |
+| Java Edition | proxy host's IP or hostname | **25565** | TCP |
+| Bedrock (console/mobile/Win10) | proxy host's IP or hostname | **19132** | UDP (RakNet) |
+
+- **Java**: "Add Server" → the proxy host's address, port `25565` (Velocity's
+  default `bind` in `proxy/snapcraft.yaml`; omit the port if it's the
+  default 25565, most Java clients assume it).
+- **Bedrock**: "Add Server" → the same proxy host's address, but port
+  `19132` and UDP — this only works if the snap was built with the
+  bundled Geyser-Velocity + floodgate-velocity part (on by default, see
+  above) and that port is reachable (open it in any firewall in front of
+  the proxy host, e.g. `sudo ufw allow 19132/udp`). No separate DNS
+  record is needed for Bedrock — unlike Java, it has no SRV-record
+  convention, so players type the host and `19132` into two separate
+  fields in their client.
+
+Both protocols terminate at the same proxy process and route through the
+same live backend list (PLAN.md §7B) — a Bedrock player reaches the exact
+same worlds a Java player does, translated transparently by Geyser. If
+this cluster is deployed behind the VPS edge (Phase 9 below) instead of
+directly, see `docs/vps-edge-deployment.md`'s own connecting section —
+the addresses differ (VPS public IP instead of the home host) but the
+ports are identical.
+
 ### Phase 8 — build and install `folia-nexa-bot` (optional)
 
 ```bash
@@ -545,13 +577,32 @@ live infrastructure:
   feeds the player hub also doesn't exist yet as a real, released
   plugin — see `mgmt/src/folia_mgmt/catalog.yaml`'s entry for it.
 - Bedrock client support (PLAN.md §7B): a real Bedrock/console/mobile
-  client actually joining through Geyser-Velocity, and the full
-  `snapcraft` build of `proxy/`'s new `geyser-plugins` part — neither a
-  Bedrock client nor `snapcraft`/`snapd` was available in the
-  environment this was added in. What *was* verified directly: both
-  GeyserMC download URLs the new part uses resolve to real jars whose
-  sha256 matches GeyserMC's own build-metadata API, and the optional
-  `Floodgate` catalog entry's `download_url`/`sha256` the same way.
+  client actually joining through Geyser-Velocity. This snap **has**
+  now been built and run for real on a live production VPS
+  (`play.sullivan.linuxgroove.com`), which caught a real incompatibility
+  the original "fetch latest Geyser" approach missed: Geyser 2.11.1
+  crashes at startup against Velocity 3.5.1 with `NoSuchMethodError:
+  GsonComponentSerializer.toBuilder()` (Geyser relies on Velocity's own
+  shaded `adventure` library rather than shading its own, and 2.11.1 is
+  the first Geyser version whose compiled bytecode expects a method
+  Velocity 3.5.1's bundled copy doesn't have — confirmed by disassembling
+  `MessageTranslator.class` from several Geyser versions and the actual
+  `GsonComponentSerializer`/`Buildable` classes inside `velocity-3.5.1.jar`
+  itself, not just by reading a changelog). The RakNet listener silently
+  never binds when this happens — Velocity itself stays up fine, so
+  nothing about the crash is visible except an empty `:19132/udp` and a
+  generic client-side timeout. `geyser-plugins` now pins Geyser to
+  2.10.1 build 1184 instead of `latest` — the newest build confirmed
+  (by the same bytecode check) to call the older, compatible `toBuilder`
+  signature — with the full incompatibility written up in that part's own
+  comment in `proxy/snapcraft.yaml`, including why bumping Velocity past
+  3.5.1 instead is a separate, bigger change (folia-routes-sync is
+  compiled against `velocity-api:3.5.1` specifically) rather than a quick
+  fix. **Not yet re-confirmed**: an actual rebuild+redeploy of the proxy
+  snap with this new pin, and a real Bedrock client successfully
+  connecting afterward — the bytecode analysis is solid but the fix
+  itself hasn't been round-tripped through a live `snapcraft` build and
+  a real RakNet handshake yet.
 
 If you're picking up this project to actually run it: those are the
 places to validate first, roughly in that order.
