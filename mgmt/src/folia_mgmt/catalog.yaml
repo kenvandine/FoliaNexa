@@ -44,13 +44,13 @@
   source: external
   version: "5.23"
   download_url: "https://github.com/BlueMap-Minecraft/BlueMap/releases/download/v5.23/bluemap-5.23-paper.jar"
-  sha256: null
+  sha256: "339554d75cedab354e376677cfc7308c499952915849e8e2994718e4a153d64e"
   homepage: "https://bluemap.bluecolored.de"
   verified: true
   notes: >
     URL verified live 2026-08-15 via GitHub releases (a real, pinned
-    tag — v5.23). sha256 not yet computed; do that before relying on
-    integrity checking for this one.
+    tag — v5.23). sha256 computed 2026-08-16 by downloading the jar
+    directly.
 
 - id: ServerSelector
   category: lobby
@@ -111,19 +111,33 @@
   homepage: "https://github.com/WiIIiam278/HuskClaims"
   verified: false
   notes: >
-    Release 1.5.10 exists on GitHub but publishes no release binary
-    asset there — likely distributed via Modrinth/Hangar/Polymart
-    instead. Resolve a real download_url before using this entry.
+    Confirmed 2026-08-16: not a free-download gap, a real license gate.
+    Release 1.5.10 exists as a GitHub tag but ships no binary asset;
+    checked William278's Modrinth (ENskVqha) and Hangar (william278)
+    listings directly — HuskHomes/HuskChat/Velocitab/etc are all there,
+    HuskClaims is not. The repo's own README says why: "Due to its
+    complexity, official binaries and customer support for HuskClaims is
+    provided through a paid model" — purchase required via Spigot,
+    Polymart, or BuiltByBit, same shape as the ItemsAdder entry below.
+    This will never resolve to a plain public download_url; an operator
+    who buys a license needs to host the jar themselves (e.g. a
+    plugin-catalog-override.yaml entry pointing at their own mirror).
 
 - id: Vault-Unlocked
   category: economy
   source: external
-  version: "unknown"
-  download_url: null
-  sha256: null
-  homepage: "https://github.com/MilkBowl/VaultUnlocked"
-  verified: false
-  notes: "Placeholder — repo/release lookup didn't resolve during a quick check. Verify before use."
+  version: "2.20.2"
+  download_url: "https://cdn.modrinth.com/data/ayRaM8J7/versions/cLNipSgw/VaultUnlocked-2.20.2.jar"
+  sha256: "bd9e7a31f1b2d31a591497174887eea7ae7e632c6b179da13e4f0ad732de2df7"
+  homepage: "https://github.com/TheNewEconomy/VaultUnlockedAPI"
+  verified: true
+  notes: >
+    Verified 2026-08-16 — downloaded from Modrinth's CDN and sha256'd
+    directly (Modrinth only publishes sha1/sha512 for this file). The
+    old homepage (MilkBowl/VaultUnlocked) no longer resolves — the
+    project moved to TheNewEconomy/VaultUnlockedAPI, confirmed via
+    Modrinth's own listed source_url; updated above. Tags folia, paper,
+    spigot, purpur, and bukkit loaders on Modrinth.
 
 - id: AxAuctions
   category: economy
@@ -131,19 +145,34 @@
   version: "unknown"
   download_url: null
   sha256: null
-  homepage: null
+  homepage: "https://github.com/Artillex-Studios"
   verified: false
-  notes: "Placeholder, not independently verified."
+  notes: >
+    Confirmed 2026-08-16: another real license gate, not a research gap.
+    AxAuctions is published by Artillex Studios, whose public GitHub org
+    only hosts an "AxAuctionsAPI" repo (a Java API for integrating with
+    it), never the plugin itself — consistent with their catalog, where
+    most "Ax*" plugins (AxAuctions, AxEnvoys, AxMinions, etc) are sold
+    commercially and only a handful (AxCalendar, AxGraves, AxSellwands)
+    are actually open-source/free. No Modrinth or Hangar listing either.
+    Will never resolve to a plain public download_url the way this
+    catalog expects; an operator with a purchased license needs to host
+    the jar themselves via plugin-catalog-override.yaml.
 
 - id: AuraSkills
   category: rpg
   source: external
-  version: "unknown"
-  download_url: null
-  sha256: null
-  homepage: "https://www.auraskills.com"
-  verified: false
-  notes: "Placeholder, not independently verified."
+  version: "2.3.12"
+  download_url: "https://cdn.modrinth.com/data/uDdZAVls/versions/QOb8ZzmE/AuraSkills-2.3.12.jar"
+  sha256: "b80fe9024f5b6566803e86a9c2caca47b76a529ec29bb29cee0a6cfd07cd161b"
+  homepage: "https://github.com/Archy-X/AuraSkills"
+  verified: true
+  notes: >
+    Verified 2026-08-16 — downloaded from Modrinth's CDN and sha256'd
+    directly. Tags paper/purpur/spigot loaders on Modrinth (no explicit
+    "folia" loader tag as of this build) — check for Folia-specific
+    region-thread issues before relying on it in a Folia world, the same
+    caveat this catalog gives the minigame plugins below.
 
 - id: ItemsAdder
   category: custom-content
@@ -158,12 +187,17 @@
 - id: MythicMobs
   category: custom-content
   source: external
-  version: "unknown"
-  download_url: null
-  sha256: null
-  homepage: "https://www.mythicmobs.net"
-  verified: false
-  notes: "Placeholder, not independently verified."
+  version: "5.13.0"
+  download_url: "https://cdn.modrinth.com/data/NLuc7Jjh/versions/YVgkWAjK/MythicMobs-5.13.0.jar"
+  sha256: "0906a5d1e7927b1f628e3b36bda4c0ea155ec6da2d3997b88e3e41455c2ee05a"
+  homepage: "https://git.mythiccraft.io/mythiccraft/MythicMobs/-/wikis/home"
+  verified: true
+  notes: >
+    Verified 2026-08-16 — downloaded from Modrinth's CDN and sha256'd
+    directly. This is the free/core plugin, which explicitly tags the
+    "folia" loader on Modrinth (alongside paper/spigot) — do not confuse
+    with "MythicMobs Premium," a separately-sold marketplace addon that
+    is not what this entry points at.
 
 - id: HuskHomes
   category: navigation
@@ -196,39 +230,63 @@
   version: "unknown"
   download_url: null
   sha256: null
-  homepage: "https://github.com/WiIIiam278/HuskPortals"
+  homepage: "https://william278.net/project/huskportals"
   verified: false
-  notes: "Placeholder, not independently verified."
+  notes: >
+    Checked 2026-08-16: github.com/WiIIiam278/HuskPortals now 404s (the
+    repo is gone, not just missing a release asset — different from the
+    HuskClaims situation above), it's absent from William278's Modrinth
+    (ENskVqha) and Hangar (william278) project listings alongside their
+    still-active plugins, and their own site's project page for it is
+    marked archived. This plugin appears to be discontinued/pulled by
+    its author, not just under-documented — there's no live source to
+    resolve a download_url from. If a hub/lobby world needs portal-style
+    world switching, ServerSelector (this catalog, verified) already
+    covers the common case.
 
 - id: SimpleVoiceChat
   category: social
   source: external
-  version: "unknown"
-  download_url: null
-  sha256: null
-  homepage: "https://modrepo.de/minecraft/plugin/svc"
-  verified: false
-  notes: "Placeholder, not independently verified."
+  version: "bukkit-2.6.21"
+  download_url: "https://cdn.modrinth.com/data/9eGKb6K1/versions/62MVmInV/voicechat-bukkit-2.6.21.jar"
+  sha256: "c08145770c19ec5550881b13c897e2a357e43ec419f7da4039f73dcf279b94d8"
+  homepage: "https://modrepo.de/minecraft/voicechat/wiki"
+  verified: true
+  notes: >
+    Verified 2026-08-16 — downloaded from Modrinth's CDN and sha256'd
+    directly. Tags folia/bukkit/paper/purpur/spigot loaders on Modrinth.
+    Requires the matching Simple Voice Chat client-side mod for players
+    to actually hear anything — this jar is just the server side.
 
 - id: FancyNpcs
   category: vanity
   source: external
-  version: "unknown"
-  download_url: null
-  sha256: null
-  homepage: "https://github.com/Oheers/FancyNpcs"
-  verified: false
-  notes: "Placeholder, not independently verified."
+  version: "2.11.0+370"
+  download_url: "https://cdn.modrinth.com/data/EeyAn23L/versions/sEt3BDRu/FancyNpcs-2.11.0%2B370.jar"
+  sha256: "8f29507e5cb1b765ffc8db2d40aea287e57d026ad6b095c1dbc6a51444498eee"
+  homepage: "https://fancyinnovations.com/docs/minecraft-plugins/fancynpcs"
+  verified: true
+  notes: >
+    Verified 2026-08-16 — downloaded from Modrinth's CDN and sha256'd
+    directly. The old homepage (Oheers/FancyNpcs) was stale — the project
+    now lives under the FancyInnovations org/monorepo
+    (FancyInnovations/FancyPlugins), confirmed via Modrinth's own listed
+    source_url; updated above. Tags the "folia" loader explicitly on
+    Modrinth.
 
 - id: FancyHolograms
   category: vanity
   source: external
-  version: "unknown"
-  download_url: null
-  sha256: null
-  homepage: "https://github.com/FancyMcPlugins/FancyHolograms"
-  verified: false
-  notes: "Placeholder, not independently verified."
+  version: "2.11.0+193"
+  download_url: "https://cdn.modrinth.com/data/5QNgOj66/versions/sVWtLhTt/FancyHolograms-2.11.0%2B193.jar"
+  sha256: "6ca347199ef28939a14c27b1eb0d95241e42a09318ef39d33d33d9ce71b3a0b6"
+  homepage: "https://fancyinnovations.com/docs/minecraft-plugins/fancyholograms"
+  verified: true
+  notes: >
+    Verified 2026-08-16 — downloaded from Modrinth's CDN and sha256'd
+    directly. Same FancyInnovations/FancyPlugins monorepo as FancyNpcs
+    above (the old FancyMcPlugins/FancyHolograms homepage was stale);
+    updated above. Tags the "folia" loader explicitly on Modrinth.
 
 - id: DiscordSRV
   category: chat-bridge
@@ -288,20 +346,45 @@
   homepage: null
   verified: false
   notes: >
-    Placeholder. Verify Folia compatibility for whatever version you
-    pin — classic Bukkit-era minigame plugins commonly assume
+    Checked 2026-08-16: this is not resolvable to a single trustworthy
+    download_url, not just an unfilled placeholder. The original
+    (walrusone/SkyWarsReloaded) has had no releases in years and its
+    GitHub Releases page is empty; at least a half-dozen community forks
+    exist (lukasvdgaag/SkyWarsReloaded, smessie/SkyWarsReloaded,
+    SpoopyDev/SkyWarsReloaded-Walruscode, dev-mart/SkyWarsReloaded, …),
+    none published to Modrinth or Hangar, each with divergent feature
+    sets/bugfixes and no clear "canonical successor." Picking one here
+    would be an editorial call this catalog shouldn't make silently —
+    an operator who wants this plugin should pick a fork deliberately
+    (check its last-commit date and issue tracker) and add it via
+    plugin-catalog-override.yaml, then verify Folia compatibility
+    themselves; classic Bukkit-era minigame plugins commonly assume
     single-threaded world ticking that Folia's regionized scheduler
     doesn't guarantee (see configs/worlds/create-minigame-skywars.sh).
 
 - id: BedWars1058
   category: minigame
   source: external
-  version: "unknown"
-  download_url: null
-  sha256: null
-  homepage: null
-  verified: false
-  notes: "Placeholder — same Folia-compatibility caveat as SkyWarsReloaded."
+  version: "25.5-SNAPSHOT"
+  download_url: "https://cdn.modrinth.com/data/VBj24lEa/versions/uZ3VS43M/bedwars-plugin-25.5-SNAPSHOT.jar"
+  sha256: "d2eee5d095399f0698d0f609c8166eb897ec042b77eabff3f9291c41b9cb81f1"
+  homepage: "https://wiki.andrei1058.dev/docs/BedWars1058/"
+  verified: true
+  notes: >
+    Verified 2026-08-16 — downloaded from Modrinth's CDN and sha256'd
+    directly. Unlike SkyWarsReloaded above, this one does have a single
+    actively-maintained upstream (andrei1058/BedWars1058) with a real
+    Modrinth listing. Two caveats worth flagging: (1) this is the newest
+    build available for current game versions but Modrinth marks it
+    "beta"/SNAPSHOT, not a tagged stable release — the last plain
+    "release"-type build (25.2) only targets MC 1.20.3/1.20.4; (2) as of
+    this build BedWars1058 tags only paper/spigot loaders on Modrinth,
+    no explicit "folia" tag — same Folia-compatibility caveat this
+    catalog already gave it applies (see
+    configs/worlds/create-minigame-skywars.sh's sibling minigame configs)
+    — classic Bukkit-era minigame plugins commonly assume single-
+    threaded world ticking that Folia's regionized scheduler doesn't
+    guarantee.
 
 - id: FoliaNexaStats
   category: analytics
