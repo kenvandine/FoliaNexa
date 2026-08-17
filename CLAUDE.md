@@ -75,7 +75,7 @@ cd node && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 cd bot && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
-# proxy (Java) — 24 tests, real Gradle + real velocity-api jar
+# proxy (Java) — 35 tests, real Gradle + real velocity-api jar
 cd proxy && ./gradlew test   # needs a JDK 21+ on PATH, or JAVA_HOME set
 ```
 
@@ -494,6 +494,18 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   download and jar contents.
 - `folia-routes-sync`'s routing diff, JSON parsing, and access-gate logic
   — compiled and unit-tested against the real `velocity-api` jar.
+  `MgmtHttpFetcher` (the shared client behind routes polling, the access
+  gate, the display API, and chat reporting) also self-heals from a
+  wedged connection now: confirmed live 2026-08-17 on
+  play.sullivan.linuxgroove.com that a pooled HTTP/1.1 connection can go
+  silently black-holed (WireGuard itself never dropped — no `wg-quick`
+  restart, no kernel link events, no VPS reboot in the outage window —
+  but every poll timed out for over an hour until the proxy process was
+  manually restarted). It now rebuilds its `HttpClient` after 3
+  consecutive I/O failures rather than needing that manual restart;
+  covered by `MgmtHttpFetcherTest`, not yet re-observed against a second
+  real black-holed connection in production (the original incident is
+  what motivated the fix, not a reproduction of it after the fact).
 - `folia-nexa-bot`'s embed-building, auto-approve decision logic,
   Discord role-sync reconcile logic (`folia_bot/access.py`'s
   `role_membership_changed`/`compute_role_sync_ids`), and mgmt API

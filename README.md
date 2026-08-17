@@ -77,13 +77,13 @@ cd node && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]" && .venv/b
 # bot (Python, 15 tests)
 cd bot && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]" && .venv/bin/pytest -q
 
-# proxy (Java, 24 tests — needs a JDK 21+)
+# proxy (Java, 35 tests — needs a JDK 21+)
 cd proxy && ./gradlew test
 ```
 
 ## Status
 
-183 automated tests passing across four components (129 mgmt, 15 node, 15 bot, 24 proxy). All five snaps build successfully with real `snapcraft` (that build pass caught and fixed two real bugs — see CLAUDE.md). Every mgmt API endpoint, the scheduler, the CLI, and the dashboard have been exercised against a real running server, not just a test client; `folia-nexa-db`'s entrypoint script was run end-to-end against real MariaDB binaries. Full breakdown of what's verified against real tooling versus what's written against a documented contract but not yet exercised live (installing/running the snaps, a registered Discord application) is in [CLAUDE.md](CLAUDE.md#whats-real-vs-whats-documented-but-unverified).
+194 automated tests passing across four components (129 mgmt, 15 node, 15 bot, 35 proxy). All five snaps build successfully with real `snapcraft` (that build pass caught and fixed two real bugs — see CLAUDE.md). Every mgmt API endpoint, the scheduler, the CLI, and the dashboard have been exercised against a real running server, not just a test client; `folia-nexa-db`'s entrypoint script was run end-to-end against real MariaDB binaries. Full breakdown of what's verified against real tooling versus what's written against a documented contract but not yet exercised live (installing/running the snaps, a registered Discord application) is in [CLAUDE.md](CLAUDE.md#whats-real-vs-whats-documented-but-unverified).
 
 This is under active development — expect gaps, and check `PLAN.md`'s inline status notes before assuming a described feature is fully wired up.
 
