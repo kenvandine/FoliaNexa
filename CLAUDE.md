@@ -202,7 +202,11 @@ these**, note two separate things need to be reachable:
 - Declaring any `--plugin` requires `FOLIA_MGMT_PUBLIC_URL` to be set to
   this mgmt instance's own reachable address — worlds fetch their plugin
   manifest from `{public_url}/api/v1/worlds/{name}/plugins-manifest`,
-  which mgmt generates live from the catalog (PLAN.md §14A). Several
+  which mgmt generates live from the catalog (PLAN.md §14A). For the snap,
+  set it with `sudo snap set folia-nexa-mgmt public-url=https://<mgmt-
+  host>:8443` (mirrors `listen-port` below — `run-mgmt-daemon.sh` re-reads
+  it via snapctl on every daemon start, and `snap/hooks/configure`
+  restarts the daemon when it changes). Several
   catalog entries (e.g. `HuskClaims`, `ItemsAdder`) still have a
   placeholder `download_url: null` — populate those (in
   `catalog.yaml` or a `plugin-catalog-override.yaml` in mgmt's state

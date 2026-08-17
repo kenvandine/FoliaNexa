@@ -29,8 +29,11 @@ apps:
 # `snap set folia-nexa-mgmt listen-port=<port>` overrides Settings.listen_port
 # (default 8443) without a hand-rolled systemd drop-in — useful when this
 # snap and a host's own LXD remote API (also default 8443) share a machine.
-# scripts/run-mgmt-daemon.sh reads it via snapctl at every daemon start;
-# snap/hooks/configure restarts the daemon whenever it's changed.
+# `snap set folia-nexa-mgmt public-url=<url>` overrides Settings.public_url
+# (unset by default — required before any world can declare plugins/
+# datapacks, see routers/worlds.py) the same way.
+# scripts/run-mgmt-daemon.sh reads both via snapctl at every daemon start;
+# snap/hooks/configure restarts the daemon whenever either is changed.
 parts:
   mgmt:
     plugin: python
