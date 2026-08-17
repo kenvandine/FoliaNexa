@@ -33,8 +33,11 @@ directly:
   gateway-maintained cache the privileged members intent provides, no
   extra API calls) to `POST /access-requests/role-sync`, which grants or
   revokes access accordingly. Requires the privileged `members` intent
-  (enabled below and in the Discord Developer Portal) and
-  `DISCORD_GUILD_ID` to be set.
+  (enabled below and in the Discord Developer Portal). The guild to
+  enumerate comes from the same dashboard-polled gate config as the role
+  id — not an env var — so there's nothing extra to set on this bot
+  beyond the intent itself; an operator who's never touched the
+  dashboard's Discord role gate card just gets a permanent no-op here.
 - `/leaderboard` — an explicit stub. There's no analytics store backing
   it yet (PLAN.md §16's Future Expansion), and saying so beats a missing
   command or fabricated numbers.
@@ -52,12 +55,11 @@ Configuration, environment variables:
   creating access requests on another user's behalf is more than a
   read-only action), DISCORD_GUILD_ID (optional — syncs commands to one
   guild instantly instead of waiting up to an hour for a global sync,
-  useful during setup; also required for the role-sync loop above to
-  know which guild to enumerate — unset means role-sync silently no-ops,
-  same "unset disables the feature" convention as everything else here),
-  FOLIA_BOT_AUTO_APPROVE_ROLE_ID (optional, for the one-shot
+  useful during setup; unrelated to role-sync above, which gets its
+  guild from the dashboard-editable gate config instead, not this env
+  var), FOLIA_BOT_AUTO_APPROVE_ROLE_ID (optional, for the one-shot
   /request-access-time check only — the ongoing role-sync loop instead
-  reads its role id live from mgmt's dashboard-editable gate config).
+  reads its role id live from mgmt's dashboard-editable gate config too).
 
 The gateway/heartbeat/reconnect protocol itself is discord.py's job (a
 well-tested third-party library, not hand-rolled here); what's actually
@@ -154,9 +156,10 @@ def build_client() -> discord.Client:
 
     @tasks.loop(minutes=15)
     async def periodic_role_sync() -> None:
-        if not gate_config.get("enabled") or not guild_id_raw:
+        guild_id = gate_config.get("guild_id")
+        if not gate_config.get("enabled") or not guild_id:
             return
-        guild = client.get_guild(int(guild_id_raw))
+        guild = client.get_guild(int(guild_id))
         if guild is not None:
             await _push_role_sync(guild)
 
@@ -247,6 +250,14 @@ def build_client() -> discord.Client:
         else:
             await tree.sync()
         if not refresh_gate_config.is_running():
+            # Populate gate_config synchronously before starting either
+            # loop — tasks.loop's first iteration fires immediately but
+            # asynchronously on .start(), so starting periodic_role_sync
+            # right after this would otherwise race it: its first tick
+            # could run before this one's first HTTP fetch completes and
+            # see the stale/default {"enabled": False}, silently no-op,
+            # and then not try again for a full 15 minutes.
+            await refresh_gate_config()
             refresh_gate_config.start()
         if not periodic_role_sync.is_running():
             periodic_role_sync.start()
