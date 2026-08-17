@@ -1,5 +1,5 @@
 name: folia-nexa-proxy
-version: '3.5.1'
+version: '4.0.0'
 summary: Velocity proxy with live routing synced from folia-nexa-mgmt
 description: |
   Velocity Next-Gen proxy, packaged with the folia-routes-sync plugin
@@ -13,8 +13,13 @@ confinement: strict
 grade: stable
 
 environment:
-  JAVA_HOME: $SNAP/usr/lib/jvm/java-21-openjdk-amd64
-  PATH: $SNAP/usr/lib/jvm/java-21-openjdk-amd64/bin:$PATH
+  # Velocity 4.0.0+ requires Java 25 (velocity-api:4.0.0's own classfiles
+  # target it — confirmed: Gradle's dependency resolution refuses to
+  # compile against it under a Java 21 toolchain with "only compatible
+  # with JVM runtime version 25 or newer"). Bumped from java-21 alongside
+  # the Velocity 3.5.1 -> 4.0.0 upgrade below.
+  JAVA_HOME: $SNAP/usr/lib/jvm/java-25-openjdk-amd64
+  PATH: $SNAP/usr/lib/jvm/java-25-openjdk-amd64/bin:$PATH
 
 apps:
   daemon:
@@ -37,7 +42,20 @@ parts:
     source: .
     gradle-task: shadowJar
     build-packages:
+      # Two JDKs, deliberately: the project's own toolchain (build.gradle.kts)
+      # now targets 25, to compile against velocity-api:4.0.0 (see the
+      # JAVA_HOME comment above) -- but Gradle 8.10 itself (this repo's
+      # wrapper version) can't run its own daemon on a JDK 25 launcher,
+      # confirmed locally (`./gradlew compileJava` under JAVA_HOME=java-25
+      # fails immediately with a bare "25.0.3" exception, no stack trace,
+      # before even reaching the toolchain-provisioning step). Gradle picks
+      # up JDK 25 for the toolchain automatically via auto-detection under
+      # /usr/lib/jvm as long as it's present on the build image, with the
+      # daemon itself launched on 21 via build-environment below.
       - openjdk-21-jdk-headless
+      - openjdk-25-jdk-headless
+    build-environment:
+      - JAVA_HOME: /usr/lib/jvm/java-21-openjdk-amd64
     override-build: |
       craftctl default
       mkdir -p $CRAFT_PART_INSTALL/plugins
@@ -47,7 +65,7 @@ parts:
     plugin: nil
     source: .
     stage-packages:
-      - openjdk-21-jre-headless
+      - openjdk-25-jre-headless
     override-build: |
       set -e
       # Resolve the latest PaperMC ("Fill" — api.papermc.io/v2 was sunset;
@@ -215,9 +233,9 @@ parts:
   # used to float to latest deliberately (Geyser tracks newly-released
   # Bedrock client versions continuously; an old pinned build breaks
   # newer Bedrock clients outright), but that floated straight into a
-  # real incompatibility with velocity-runtime's pinned Velocity 3.5.1,
-  # confirmed live 2026-08-17: Geyser 2.11.1 (build 1223) crashes on
-  # every startup with
+  # real incompatibility with velocity-runtime's then-pinned Velocity
+  # 3.5.1, confirmed live 2026-08-17: Geyser 2.11.1 (build 1223) crashed
+  # on every startup with
   #   java.lang.NoSuchMethodError: GsonComponentSerializer.toBuilder()
   # at org.geysermc.geyser.translator.text.MessageTranslator.<clinit> —
   # Geyser's plugin classloading relies on Velocity's own shaded copy of
@@ -233,20 +251,41 @@ parts:
   # Geyser's RakNet listener never binds — no error that stops Velocity
   # itself, just Bedrock silently unreachable on :19132.
   #
-  # 2.10.1 build 1184 is the pin below: the newest Geyser build confirmed
-  # NOT to hit this. Revisit floating this back to "latest" only alongside
-  # a Velocity bump past 3.5.1 (Velocity 4.0.0 exists and likely bundles a
-  # newer adventure, but folia-routes-sync is compiled against
-  # velocity-api:3.5.1 and hasn't been tested against 4.0.0 — a separate,
-  # bigger change to make deliberately, not as a side effect of chasing
-  # Geyser's latest build).
+  # That pin (2.10.1 build 1184) was itself only ever a stopgap: it's the
+  # LAST build ever published on the 2.10.x line (2026-07-10), topping
+  # out at Bedrock protocol 26.33 — no newer 2.10.x build exists to move
+  # to. Confirmed live 2026-08-17 (the same day as the crash above, ~1
+  # month after this pin shipped): a real Bedrock client on a newer
+  # auto-updated version got "Outdated Geyser proxy! This server supports
+  # ... 26.0 ... 26.33" — the exact version list 2.10.1/1184 supports,
+  # proving that build does start and bind cleanly against Velocity
+  # 3.5.1 (no crash, unlike 2.11.1) but can now never support any Bedrock
+  # client newer than 26.33 no matter how long it's left pinned.
+  #
+  # The actual fix (this change): velocity-runtime above was bumped from
+  # 3.5.1 to 4.0.0, which re-verified the same way as the original
+  # incompatibility — javap on the real velocity-4.0.0-6.jar shows its
+  # shaded GsonComponentSerializer now DOES declare the narrow
+  #   GsonComponentSerializer$Builder toBuilder()
+  # signature directly (3.5.1's didn't; it only inherited the generic
+  # `Buildable.toBuilder()` Geyser 2.10.1 called), which is exactly the
+  # signature disassembling Geyser 2.11.1 build 1225's MessageTranslator
+  # bytecode shows it invoking. This resolves the NoSuchMethodError at
+  # the bytecode level, but — same caveat as before — hasn't been
+  # round-tripped through a real `snapcraft` build + install + a real
+  # Bedrock client connecting; no snapcraft/snapd/root was available in
+  # the environment this change was made in. Geyser is pinned to 2.11.1
+  # build 1225 (2026-08-16, the newest build as of this change, supports
+  # up to Bedrock 26.44) rather than floated to "latest" again, so a
+  # future Geyser build can't reintroduce a different incompatibility
+  # unnoticed — bump this pin deliberately, the same way this one was.
   geyser-plugins:
     plugin: nil
     override-build: |
       set -e
       mkdir -p $CRAFT_PART_INSTALL/plugins
       # -L is required: these URLs 302-redirect to the actual versioned
-      # build (e.g. .../versions/2.10.1/builds/1184/downloads/velocity).
+      # build (e.g. .../versions/2.11.1/builds/1225/downloads/velocity).
       # curl -f only fails on >=400 responses, so without -L it silently
       # saves the empty 302 body and exits 0 — a real bug caught by an
       # actual snapcraft build + runtime plugin load, not just a HEAD
@@ -255,7 +294,7 @@ parts:
       # size check below is a second line of defense against the same
       # failure mode recurring silently.
       curl -sfL -o $CRAFT_PART_INSTALL/plugins/Geyser-Velocity.jar \
-        https://download.geysermc.org/v2/projects/geyser/versions/2.10.1/builds/1184/downloads/velocity
+        https://download.geysermc.org/v2/projects/geyser/versions/2.11.1/builds/1225/downloads/velocity
       curl -sfL -o $CRAFT_PART_INSTALL/plugins/floodgate-velocity.jar \
         https://download.geysermc.org/v2/projects/floodgate/versions/latest/builds/latest/downloads/velocity
       for jar in Geyser-Velocity.jar floodgate-velocity.jar; do

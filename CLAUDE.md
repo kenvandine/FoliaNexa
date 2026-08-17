@@ -76,17 +76,31 @@ cd bot && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
 # proxy (Java) — 35 tests, real Gradle + real velocity-api jar
-cd proxy && ./gradlew test   # needs a JDK 21+ on PATH, or JAVA_HOME set
+cd proxy && ./gradlew test   # needs a JDK 21 on JAVA_HOME, plus a JDK 25 installed
 ```
 
-If there's no system JDK available (this project was developed in a
-sandbox with none, and no root to install one), a portable one works
-fine — Gradle doesn't care where `JAVA_HOME` points:
+`proxy/build.gradle.kts` compiles against `velocity-api:4.0.0` (bumped
+from `3.5.1`, see `proxy/snapcraft.yaml`'s `geyser-plugins` part for
+why), whose own classfiles require a Java 25 toolchain. Gradle 8.10
+(this project's wrapper) can't run its own daemon on a JDK 25 launcher
+— confirmed locally, `./gradlew` under `JAVA_HOME` pointed at a JDK 25
+fails immediately with a bare, stack-trace-less `25.0.3` exception
+before it even reaches toolchain provisioning. So `JAVA_HOME` needs to
+point at a JDK **21** (for Gradle's own launcher) while a JDK **25** is
+also present on the machine for Gradle's toolchain auto-detection (it
+scans `/usr/lib/jvm` and similar by default, no extra config needed) to
+pick up for the actual compile. If there's no system JDK available at
+all (this project was developed in a sandbox with none, and no root to
+install one), portable ones work fine — Gradle doesn't care where
+`JAVA_HOME` points, just that a 21 and a 25 both exist on disk:
 
 ```bash
-curl -sL -o /tmp/jdk.tar.gz \
+curl -sL -o /tmp/jdk21.tar.gz \
   "https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jdk/hotspot/normal/eclipse"
-mkdir -p ~/.local/jdk21 && tar -xzf /tmp/jdk.tar.gz -C ~/.local/jdk21 --strip-components=1
+mkdir -p ~/.local/jdk21 && tar -xzf /tmp/jdk21.tar.gz -C ~/.local/jdk21 --strip-components=1
+curl -sL -o /tmp/jdk25.tar.gz \
+  "https://api.adoptium.net/v3/binary/latest/25/ga/linux/x64/jdk/hotspot/normal/eclipse"
+mkdir -p ~/.local/jdk25 && tar -xzf /tmp/jdk25.tar.gz -C ~/.local/jdk25 --strip-components=1
 cd proxy && JAVA_HOME=~/.local/jdk21 ./gradlew test
 ```
 
@@ -279,7 +293,7 @@ backend at plugin load time, not live).
 
 ```bash
 cd proxy && snapcraft   # confirmed to build, same as the others (see note below on the Bedrock addition)
-sudo snap install ./folia-nexa-proxy_3.5.1_amd64.snap --dangerous
+sudo snap install ./folia-nexa-proxy_4.0.0_amd64.snap --dangerous
 ```
 
 It needs `FOLIA_MGMT_URL` and `FOLIA_MGMT_API_TOKEN` (an mgmt API token —
@@ -293,11 +307,17 @@ Bedrock (console/mobile/Win10) clients can join the same proxy on
 "Bootstrapping" note in PLAN.md §7B, and Phase 9 below for the VPS-edge
 firewall rule). This is new since the original snap build was last
 confirmed against real `snapcraft` — the two GeyserMC download URLs the
-new `geyser-plugins` part uses were fetched and sha256-verified for real,
-but the full `snapcraft` build itself wasn't re-run with this addition
-(no `snapcraft`/`snapd` available in the environment this was added in);
-treat "confirmed to build" above as applying to everything except that
-one new part until someone actually runs it.
+`geyser-plugins` part uses were fetched and sha256-verified for real, and
+`velocity-runtime`'s Velocity 4.0.0 jar likewise; `routes-sync-plugin`'s
+Gradle project was compiled and its full test suite run for real (outside
+`snapcraft`, against local JDK 21 + 25 installs — `cd proxy && JAVA_HOME=
+~/.local/jdk21 ./gradlew build`) against `velocity-api:4.0.0`. But the
+full `snapcraft` build itself — the `gradle` plugin invoking that same
+Gradle project inside a build instance, plus every other part in this
+file — hasn't been re-run since the Velocity 3.5.1 -> 4.0.0 / JDK 21 ->
+25 bump (no `snapcraft`/`snapd` available in the environment this was
+added in); treat "confirmed to build" above as applying to everything
+except this Velocity/JDK/Geyser bump until someone actually runs it.
 
 There's no CLI command for user/token management yet (only `hosts` and
 `worlds` have one — see `mgmt/src/folia_mgmt/cli.py`), so create the
@@ -606,28 +626,58 @@ live infrastructure:
   now been built and run for real on a live production VPS
   (`play.sullivan.linuxgroove.com`), which caught a real incompatibility
   the original "fetch latest Geyser" approach missed: Geyser 2.11.1
-  crashes at startup against Velocity 3.5.1 with `NoSuchMethodError:
+  crashed at startup against Velocity 3.5.1 with `NoSuchMethodError:
   GsonComponentSerializer.toBuilder()` (Geyser relies on Velocity's own
-  shaded `adventure` library rather than shading its own, and 2.11.1 is
-  the first Geyser version whose compiled bytecode expects a method
+  shaded `adventure` library rather than shading its own, and 2.11.1 was
+  the first Geyser version whose compiled bytecode expected a method
   Velocity 3.5.1's bundled copy doesn't have — confirmed by disassembling
   `MessageTranslator.class` from several Geyser versions and the actual
   `GsonComponentSerializer`/`Buildable` classes inside `velocity-3.5.1.jar`
   itself, not just by reading a changelog). The RakNet listener silently
   never binds when this happens — Velocity itself stays up fine, so
   nothing about the crash is visible except an empty `:19132/udp` and a
-  generic client-side timeout. `geyser-plugins` now pins Geyser to
-  2.10.1 build 1184 instead of `latest` — the newest build confirmed
-  (by the same bytecode check) to call the older, compatible `toBuilder`
-  signature — with the full incompatibility written up in that part's own
-  comment in `proxy/snapcraft.yaml`, including why bumping Velocity past
-  3.5.1 instead is a separate, bigger change (folia-routes-sync is
-  compiled against `velocity-api:3.5.1` specifically) rather than a quick
-  fix. **Not yet re-confirmed**: an actual rebuild+redeploy of the proxy
-  snap with this new pin, and a real Bedrock client successfully
-  connecting afterward — the bytecode analysis is solid but the fix
-  itself hasn't been round-tripped through a live `snapcraft` build and
-  a real RakNet handshake yet.
+  generic client-side timeout. The fix at the time was pinning
+  `geyser-plugins` to Geyser 2.10.1 build 1184 instead of `latest` — the
+  newest build confirmed (by the same bytecode check) to call the older,
+  compatible `toBuilder` signature.
+
+  That pin got a real, live confirmation the same day it shipped
+  (2026-08-17): a real Bedrock client was disconnected with "Outdated
+  Geyser proxy! This server supports ... 26.0 ... 26.33" — exactly
+  2.10.1/1184's supported-version list, which proves that build *does*
+  start and bind cleanly against Velocity 3.5.1 (a real client got a
+  real, well-formed protocol response, not a timeout the way the 2.11.1
+  crash looked). But it also exposed the pin's real cost: build 1184 is
+  the *last* build ever published on the 2.10.x line — there's no newer
+  2.10.x to move to, so any Bedrock client that auto-updates past 26.33
+  is now permanently locked out regardless of how long the pin sits
+  there.
+
+  The actual fix, applied the same day: `velocity-runtime` was bumped
+  from Velocity 3.5.1 to 4.0.0 (the only newer Velocity that exists —
+  there's no 3.5.2/3.6.x, just a major-version jump), which also forced
+  bumping the snap's bundled JRE from Java 21 to 25 (`velocity-api:4.0.0`
+  requires it) and `routes-sync-plugin`'s own toolchain to match.
+  `geyser-plugins` is re-pinned to 2.11.1 build 1225 (2026-08-16, the
+  newest build as of this change, supports up to Bedrock 26.44) rather
+  than `latest`, so a future Geyser build can't reintroduce a *different*
+  incompatibility unnoticed. Verified for real: `folia-routes-sync`
+  recompiles and its full 35-test suite still passes against
+  `velocity-api:4.0.0` (`cd proxy && JAVA_HOME=~/.local/jdk21 ./gradlew
+  build`); re-running the same bytecode check that found the original
+  incompatibility — `javap` on the real `velocity-4.0.0-6.jar` — shows
+  its shaded `GsonComponentSerializer` now directly declares the narrow
+  `GsonComponentSerializer$Builder toBuilder()` signature (3.5.1's didn't;
+  it only inherited the generic `Buildable.toBuilder()` that 2.10.1
+  called), which disassembling Geyser 2.11.1 build 1225's
+  `MessageTranslator` bytecode confirms is exactly the signature it now
+  invokes — the same NoSuchMethodError class of bug, checked the same
+  rigorous way, now resolved at the bytecode level. **Not yet
+  re-confirmed**: a full `snapcraft` build with the new JDK 25 stage-/
+  build-packages, an actual snap install, and a real Bedrock client
+  successfully reconnecting afterward — no `snapcraft`/`snapd`/root was
+  available in the environment this bump was made in, same constraint as
+  before.
 
 If you're picking up this project to actually run it: those are the
 places to validate first, roughly in that order.
