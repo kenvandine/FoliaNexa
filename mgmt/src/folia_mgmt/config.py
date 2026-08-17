@@ -47,16 +47,18 @@ class Settings(BaseSettings):
     # LXD host trust / enrollment (PLAN.md §3, §4)
     join_token_ttl_seconds: int = 15 * 60
 
-    # Discord OAuth2 (PLAN.md §11C) — unset disables the integration.
+    # Discord OAuth2 app credentials (PLAN.md §11C) — unset disables the
+    # integration. Which guild/role gates auto-approval is *not* here —
+    # that's DiscordAccessGateConfig, a DB-backed singleton editable from
+    # the dashboard (see routers/access_requests.py) so it can be changed
+    # without a redeploy and is shared with folia-nexa-bot's role-sync.
     discord_client_id: str | None = None
     discord_client_secret: str | None = None
     discord_redirect_uri: str | None = None
-    discord_guild_id: str | None = None
-    discord_auto_approve_role_id: str | None = None
 
     @property
     def discord_configured(self) -> bool:
-        return bool(self.discord_client_id and self.discord_client_secret and self.discord_guild_id)
+        return bool(self.discord_client_id and self.discord_client_secret)
 
     # LuckPerms shared MySQL/MariaDB backend (PLAN.md §11B) — provisioned
     # by the operator directly (folia-nexa-node only knows how to run a

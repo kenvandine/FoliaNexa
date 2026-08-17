@@ -24,7 +24,7 @@ class DiscordError(RuntimeError):
 
 def build_authorize_url(settings: Settings, state: str) -> str:
     if not settings.discord_configured or not settings.discord_redirect_uri:
-        raise DiscordError("Discord integration is not configured (client id/secret/guild/redirect_uri)")
+        raise DiscordError("Discord integration is not configured (client id/secret/redirect_uri)")
     params = {
         "client_id": settings.discord_client_id,
         "redirect_uri": settings.discord_redirect_uri,

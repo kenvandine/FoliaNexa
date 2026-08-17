@@ -4,7 +4,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlmodel import Session, select
 
 from folia_mgmt.db import _add_missing_columns, _purge_soft_deleted_worlds
-from folia_mgmt.models import World, WorldType
+from folia_mgmt.models import AccessRequest, World, WorldType
 
 
 def test_add_missing_columns_backfills_existing_rows_with_default(tmp_path):
@@ -45,6 +45,41 @@ def test_add_missing_columns_backfills_existing_rows_with_default(tmp_path):
         world = session.exec(select(World).where(World.name == "world-overworld")).one()
         assert world.properties == {}
         assert world.type == WorldType.overworld
+
+
+def test_add_missing_columns_backfills_scalar_bool_default(tmp_path):
+    """Regression test for the class of bug the docstring above
+    _add_missing_columns warns about, now exercised for a plain scalar
+    default (AccessRequest.auto_managed: bool = True) rather than a JSON
+    default_factory column — without the fix, existing rows would
+    backfill to NULL/None instead of the model's actual default."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'old_access_request.db'}")
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE accessrequest ("
+                "id INTEGER PRIMARY KEY, discord_user_id VARCHAR, discord_username VARCHAR, "
+                "minecraft_username VARCHAR, minecraft_uuid VARCHAR, status VARCHAR, "
+                "created_at DATETIME, decided_at DATETIME, decided_by INTEGER, deny_reason VARCHAR"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO accessrequest (discord_user_id, discord_username, status, created_at) VALUES "
+                "('123', 'somebody', 'approved', '2026-01-01 00:00:00')"
+            )
+        )
+
+    _add_missing_columns(engine)
+
+    columns = {col["name"] for col in inspect(engine).get_columns("accessrequest")}
+    assert "auto_managed" in columns
+
+    with Session(engine) as session:
+        request = session.exec(select(AccessRequest)).one()
+        assert request.auto_managed is True
 
 
 def test_add_missing_columns_is_a_noop_on_a_current_schema(tmp_path):

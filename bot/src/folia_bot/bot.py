@@ -15,6 +15,26 @@ directly:
   resolves Java usernames via Mojang, so a Bedrock player supplies their
   own (found via Floodgate's in-game `/uuid` command) and mgmt stores it
   directly instead of doing a Mojang lookup.
+- Discord role-sync — separate from and complementary to the one-shot
+  `/request-access`-time check above; does NOT replace it. Holding the
+  configured role never gets someone onto the whitelist by itself — they
+  still have to run `/request-access` (or the web OAuth flow) once, so
+  mgmt learns which Minecraft account is theirs; role-sync only ever
+  manages an AccessRequest mgmt already has, never invents one for a
+  Discord member it's never heard from. What it adds is *ongoing*
+  enforcement of that one-time link: if mgmt's dashboard has the Discord
+  role gate enabled (`GET /access-requests/discord-gate-config`, polled
+  here every 60s so a dashboard toggle takes effect without a bot
+  restart), this bot keeps mgmt's already-linked AccessRequest rows in
+  sync with *live* membership of that one configured role: on every
+  relevant `on_member_update` (someone gains/loses the role) and on a
+  15-minute safety-net timer, it posts the role's complete current
+  membership (`guild.get_role(role_id).members` — free, from the
+  gateway-maintained cache the privileged members intent provides, no
+  extra API calls) to `POST /access-requests/role-sync`, which grants or
+  revokes access accordingly. Requires the privileged `members` intent
+  (enabled below and in the Discord Developer Portal) and
+  `DISCORD_GUILD_ID` to be set.
 - `/leaderboard` — an explicit stub. There's no analytics store backing
   it yet (PLAN.md §16's Future Expansion), and saying so beats a missing
   command or fabricated numbers.
@@ -32,15 +52,26 @@ Configuration, environment variables:
   creating access requests on another user's behalf is more than a
   read-only action), DISCORD_GUILD_ID (optional — syncs commands to one
   guild instantly instead of waiting up to an hour for a global sync,
-  useful during setup), FOLIA_BOT_AUTO_APPROVE_ROLE_ID (optional).
+  useful during setup; also required for the role-sync loop above to
+  know which guild to enumerate — unset means role-sync silently no-ops,
+  same "unset disables the feature" convention as everything else here),
+  FOLIA_BOT_AUTO_APPROVE_ROLE_ID (optional, for the one-shot
+  /request-access-time check only — the ongoing role-sync loop instead
+  reads its role id live from mgmt's dashboard-editable gate config).
 
-NOT exercised against a live Discord gateway connection in this
-environment — no bot token or registered Discord application was
-available to test against. The gateway/heartbeat/reconnect protocol
-itself is discord.py's job (a well-tested third-party library, not
-hand-rolled here); what's actually new code in this package — embeds.py,
-access.py, mgmt_client.py — is unit-tested without needing a live
-connection.
+The gateway/heartbeat/reconnect protocol itself is discord.py's job (a
+well-tested third-party library, not hand-rolled here); what's actually
+new code in this package — embeds.py, access.py, mgmt_client.py — is
+unit-tested without needing a live connection. The gateway connection
+itself is now also confirmed live (2026-08-16): deployed to a real
+production host with a real bot token and the privileged members intent
+enabled in the Discord Developer Portal, it connected successfully (no
+PrivilegedIntentsRequired crash) and began polling
+discord-gate-config on its own right after on_ready, as designed. Not
+yet observed live: a real /request-access invocation by an actual
+Discord member, or a real on_member_update event actually firing the
+role-sync POST — only the connection itself and the periodic config
+poll have been watched directly so far.
 """
 
 from __future__ import annotations
@@ -50,8 +81,9 @@ import os
 
 import discord
 from discord import app_commands
+from discord.ext import tasks
 
-from folia_bot.access import decide_auto_approve
+from folia_bot.access import compute_role_sync_ids, decide_auto_approve, role_membership_changed
 from folia_bot.embeds import build_leaderboard_stub_embed, build_status_embed
 from folia_bot.mgmt_client import MgmtClient
 
@@ -82,8 +114,62 @@ def build_client() -> discord.Client:
     # see message.content; every other intent this bot uses is already
     # covered by Intents.default().
     intents.message_content = True
+    # Privileged intent — same Developer Portal requirement as above.
+    # Keeps a live, gateway-maintained cache of every member's roles, so
+    # on_member_update fires for role changes and guild.get_role(...).members
+    # is always current, with zero extra Discord API calls — needed for
+    # the Discord role-sync loop (see module docstring).
+    intents.members = True
     client = discord.Client(intents=intents)
     tree = app_commands.CommandTree(client)
+
+    # Cached locally and refreshed periodically (see refresh_gate_config
+    # below) rather than read once from env, since it's edited live from
+    # mgmt's dashboard — a toggle there should take effect without a bot
+    # restart.
+    gate_config: dict = {"enabled": False, "guild_id": None, "role_id": None}
+
+    async def _push_role_sync(guild: discord.Guild) -> None:
+        role_id = gate_config.get("role_id")
+        role = guild.get_role(int(role_id)) if role_id else None
+        if role is None:
+            # Unconfigured, or the role doesn't exist in this guild —
+            # "nothing to sync", not "revoke everyone". A role that DOES
+            # exist but currently has zero members is different (real
+            # data, correctly pushed as an empty list below) — that case
+            # is exactly how a mass revoke is supposed to propagate.
+            return
+        member_ids = compute_role_sync_ids(role)
+        try:
+            await mgmt.role_sync(discord_user_ids_with_role=member_ids)
+        except Exception:
+            logger.exception("failed to push discord role-sync to mgmt")
+
+    @tasks.loop(seconds=60)
+    async def refresh_gate_config() -> None:
+        try:
+            gate_config.update(await mgmt.get_discord_gate_config())
+        except Exception:
+            logger.exception("failed to refresh discord gate config from mgmt")
+
+    @tasks.loop(minutes=15)
+    async def periodic_role_sync() -> None:
+        if not gate_config.get("enabled") or not guild_id_raw:
+            return
+        guild = client.get_guild(int(guild_id_raw))
+        if guild is not None:
+            await _push_role_sync(guild)
+
+    @client.event
+    async def on_member_update(before: discord.Member, after: discord.Member) -> None:
+        role_id = gate_config.get("role_id")
+        if not gate_config.get("enabled") or role_id is None:
+            return
+        before_ids = {r.id for r in before.roles}
+        after_ids = {r.id for r in after.roles}
+        if not role_membership_changed(before_ids, after_ids, int(role_id)):
+            return
+        await _push_role_sync(after.guild)
 
     @tree.command(name="status", description="Show the current worlds and their status")
     async def status(interaction: discord.Interaction) -> None:
@@ -160,6 +246,10 @@ def build_client() -> discord.Client:
             await tree.sync(guild=guild)
         else:
             await tree.sync()
+        if not refresh_gate_config.is_running():
+            refresh_gate_config.start()
+        if not periodic_role_sync.is_running():
+            periodic_role_sync.start()
         logger.info("folia-nexa-bot ready as %s", client.user)
 
     return client

@@ -5,6 +5,7 @@ import logging
 from collections.abc import Generator
 from functools import lru_cache
 
+from pydantic_core import PydanticUndefined
 from sqlalchemy import inspect, text
 from sqlmodel import Session, SQLModel, create_engine
 
@@ -43,6 +44,10 @@ def _add_missing_columns(engine) -> None:
     pattern) so existing rows read back as `[]`/`{}`, not `None` — a
     non-Optional Pydantic response field (e.g. WorldResponse.properties)
     would otherwise 500 on serialization for every pre-existing row.
+    Plain-scalar defaults (e.g. AccessRequest.auto_managed: bool = True)
+    get the same treatment, added alongside that field — without it,
+    existing rows would backfill to NULL/None instead of the model's
+    actual default.
     """
     model_by_table = {
         cls.__tablename__: cls
@@ -65,6 +70,13 @@ def _add_missing_columns(engine) -> None:
                 field = model.model_fields.get(column.name) if model is not None else None
                 if field is not None and field.default_factory is not None:
                     default_clause = f" NOT NULL DEFAULT '{json.dumps(field.default_factory())}'"
+                elif field is not None and field.default is not None and field.default is not PydanticUndefined:
+                    if isinstance(field.default, bool):
+                        default_clause = f" NOT NULL DEFAULT {1 if field.default else 0}"
+                    elif isinstance(field.default, (int, float)):
+                        default_clause = f" NOT NULL DEFAULT {field.default}"
+                    elif isinstance(field.default, str):
+                        default_clause = f" NOT NULL DEFAULT '{field.default}'"
                 conn.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {ddl_type}{default_clause}'))
 
 

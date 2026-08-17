@@ -9,7 +9,7 @@ from sqlmodel import Session, select
 from folia_mgmt.auth import User, require_operator, require_viewer
 from folia_mgmt.config import Settings
 from folia_mgmt.db import get_session
-from folia_mgmt.deps import settings_dependency
+from folia_mgmt.deps import get_lxd_client, settings_dependency
 from folia_mgmt.discord import (
     DiscordError,
     build_authorize_url,
@@ -18,9 +18,15 @@ from folia_mgmt.discord import (
     get_guild_member_roles,
     resolve_minecraft_uuid,
 )
-from folia_mgmt.models import AccessRequest, AccessRequestStatus, utcnow
+from folia_mgmt.lxd_client import LXDClient
+from folia_mgmt.models import AccessRequest, AccessRequestStatus, DiscordAccessGateConfig, utcnow
+from folia_mgmt.scheduler import sync_whitelisted_worlds
 
 router = APIRouter(tags=["access-requests"])
+
+
+def _get_gate_config(session: Session) -> DiscordAccessGateConfig:
+    return session.get(DiscordAccessGateConfig, 1) or DiscordAccessGateConfig(id=1)
 
 
 class AuthorizeUrlResponse(BaseModel):
@@ -49,6 +55,7 @@ class AccessRequestResponse(BaseModel):
     minecraft_uuid: str | None
     status: str
     auto_approved: bool = False
+    auto_managed: bool = True
 
 
 def _to_response(req: AccessRequest, auto_approved: bool = False) -> AccessRequestResponse:
@@ -60,6 +67,7 @@ def _to_response(req: AccessRequest, auto_approved: bool = False) -> AccessReque
         minecraft_uuid=req.minecraft_uuid,
         status=req.status.value,
         auto_approved=auto_approved,
+        auto_managed=req.auto_managed,
     )
 
 
@@ -69,12 +77,14 @@ def discord_callback(
     state: str,
     session: Session = Depends(get_session),
     settings: Settings = Depends(settings_dependency),
+    lxd_client: LXDClient = Depends(get_lxd_client),
 ) -> AccessRequestResponse:
     minecraft_username = state
+    gate_config = _get_gate_config(session)
     try:
         access_token = exchange_code(settings, code)
         identity = get_current_user(access_token)
-        roles = get_guild_member_roles(access_token, settings.discord_guild_id)
+        roles = get_guild_member_roles(access_token, gate_config.guild_id) if gate_config.guild_id else []
     except DiscordError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
 
@@ -90,17 +100,60 @@ def discord_callback(
 
     auto_approved = False
     if request.status == AccessRequestStatus.pending:
-        if settings.discord_auto_approve_role_id and settings.discord_auto_approve_role_id in roles:
+        if gate_config.enabled and gate_config.role_id and gate_config.role_id in roles:
             request.status = AccessRequestStatus.approved
             request.decided_at = utcnow()
             auto_approved = True
-            # TODO once §11B's whitelist wiring exists: insert into
-            # network_access and the default LuckPerms group here.
 
     session.add(request)
     session.commit()
     session.refresh(request)
+    if auto_approved:
+        sync_whitelisted_worlds(session, lxd_client)
     return _to_response(request, auto_approved=auto_approved)
+
+
+class GateConfigResponse(BaseModel):
+    enabled: bool
+    guild_id: str | None
+    role_id: str | None
+
+
+@router.get(
+    "/access-requests/discord-gate-config",
+    response_model=GateConfigResponse,
+    dependencies=[Depends(require_viewer)],
+)
+def get_gate_config(session: Session = Depends(get_session)) -> GateConfigResponse:
+    """Viewer-role is enough — a guild/role id isn't sensitive on its own.
+    Polled by folia-nexa-bot to know what to watch for role-sync."""
+    c = _get_gate_config(session)
+    return GateConfigResponse(enabled=c.enabled, guild_id=c.guild_id, role_id=c.role_id)
+
+
+class UpdateGateConfigRequest(BaseModel):
+    enabled: bool
+    guild_id: str | None = None
+    role_id: str | None = None
+
+
+@router.put(
+    "/access-requests/discord-gate-config",
+    response_model=GateConfigResponse,
+    dependencies=[Depends(require_operator)],
+)
+def update_gate_config(
+    body: UpdateGateConfigRequest, session: Session = Depends(get_session)
+) -> GateConfigResponse:
+    c = _get_gate_config(session)
+    c.enabled = body.enabled
+    c.guild_id = body.guild_id
+    c.role_id = body.role_id
+    c.updated_at = utcnow()
+    session.add(c)
+    session.commit()
+    session.refresh(c)
+    return GateConfigResponse(enabled=c.enabled, guild_id=c.guild_id, role_id=c.role_id)
 
 
 class CreateAccessRequest(BaseModel):
@@ -109,6 +162,13 @@ class CreateAccessRequest(BaseModel):
     minecraft_username: str
     minecraft_uuid: str | None = None
     auto_approve: bool = False
+    auto_managed: bool = True
+    # False for the dashboard's manual (non-Discord) allowlist entries —
+    # keeps them permanently exempt from POST /access-requests/role-sync,
+    # which would otherwise revoke them the moment it runs (their
+    # discord_user_id, e.g. "manual:<username>", will never appear in a
+    # real Discord role-holder list). The bot's real /request-access flow
+    # doesn't send this, so it keeps the default (True, role-sync-managed).
 
 
 @router.post(
@@ -120,6 +180,7 @@ def create_access_request(
     body: CreateAccessRequest,
     user: User = Depends(require_operator),
     session: Session = Depends(get_session),
+    lxd_client: LXDClient = Depends(get_lxd_client),
 ) -> AccessRequestResponse:
     """The in-Discord counterpart to `GET /auth/discord/callback` — used by
     folia-nexa-bot's `/request-access` command (PLAN.md §16) for
@@ -128,6 +189,8 @@ def create_access_request(
     caller since reaching this endpoint at all already requires an
     operator-role token (the bot decided auto-approval locally from the
     inviting member's roles — see folia_bot.access.decide_auto_approve).
+    Also used by the dashboard's manual-allowlist form, with
+    `auto_managed=False`.
 
     `minecraft_uuid`, if supplied, is stored as-is instead of resolving
     `minecraft_username` through Mojang — the path for Bedrock players
@@ -140,6 +203,14 @@ def create_access_request(
     request.discord_username = body.discord_username
     request.minecraft_username = body.minecraft_username
     request.minecraft_uuid = body.minecraft_uuid or resolve_minecraft_uuid(body.minecraft_username)
+    # Only ever move auto_managed False->True here if the row is brand
+    # new or was never human-touched. Once approve/deny has set it False
+    # (sticky), a routine repeat call (e.g. the same player running
+    # /request-access again) must not silently re-enable role-sync
+    # management for them — that's exactly the "needs an explicit human
+    # re-decision" invariant this whole flag exists to preserve.
+    if existing is None or existing.auto_managed:
+        request.auto_managed = body.auto_managed
 
     auto_approved = False
     if request.status == AccessRequestStatus.pending and body.auto_approve:
@@ -151,6 +222,8 @@ def create_access_request(
     session.add(request)
     session.commit()
     session.refresh(request)
+    if auto_approved:
+        sync_whitelisted_worlds(session, lxd_client)
     return _to_response(request, auto_approved=auto_approved)
 
 
@@ -178,6 +251,68 @@ def approved_uuids(session: Session = Depends(get_session)) -> ApprovedUuidsResp
     return ApprovedUuidsResponse(uuids=[r.minecraft_uuid for r in approved])
 
 
+class RoleSyncRequest(BaseModel):
+    discord_user_ids_with_role: list[str]
+
+
+class RoleSyncResponse(BaseModel):
+    approved: list[str]
+    revoked: list[str]
+
+
+@router.post(
+    "/access-requests/role-sync",
+    response_model=RoleSyncResponse,
+    dependencies=[Depends(require_operator)],
+)
+def role_sync(
+    body: RoleSyncRequest,
+    session: Session = Depends(get_session),
+    lxd_client: LXDClient = Depends(get_lxd_client),
+) -> RoleSyncResponse:
+    """Reconciles AccessRequest.status against the *complete current*
+    membership of the configured Discord allowlist role (PLAN.md §11C).
+    Called by folia-nexa-bot both on role-change gateway events and on a
+    periodic safety-net timer. Only ever touches auto_managed=True rows —
+    an operator's explicit approve/deny (or a manually-added allowlist
+    entry) is sticky until they act again, this endpoint never overrides
+    it. Rows with no existing AccessRequest are skipped entirely: this
+    manages known requesters only, initial linking still requires
+    /request-access or the OAuth flow once. No-ops if the gate is
+    currently disabled, so a stale bot call made just after an operator
+    flips it off in the dashboard can't revoke anyone."""
+    config = _get_gate_config(session)
+    if not config.enabled:
+        return RoleSyncResponse(approved=[], revoked=[])
+
+    role_holders = set(body.discord_user_ids_with_role)
+    approved_ids: list[str] = []
+    revoked_ids: list[str] = []
+
+    managed = session.exec(select(AccessRequest).where(AccessRequest.auto_managed.is_(True))).all()
+    for request in managed:
+        has_role = request.discord_user_id in role_holders
+        if has_role and request.status != AccessRequestStatus.approved:
+            request.status = AccessRequestStatus.approved
+            request.decided_at = utcnow()
+            request.decided_by = None
+            request.deny_reason = None
+            approved_ids.append(request.discord_user_id)
+            session.add(request)
+        elif not has_role and request.status == AccessRequestStatus.approved:
+            request.status = AccessRequestStatus.revoked
+            request.decided_at = utcnow()
+            request.decided_by = None
+            request.deny_reason = "Discord role removed"
+            revoked_ids.append(request.discord_user_id)
+            session.add(request)
+
+    session.commit()
+    if approved_ids or revoked_ids:
+        sync_whitelisted_worlds(session, lxd_client)
+    return RoleSyncResponse(approved=approved_ids, revoked=revoked_ids)
+
+
 @router.get("/access-requests", response_model=list[AccessRequestResponse], dependencies=[Depends(require_operator)])
 def list_access_requests(
     status_filter: AccessRequestStatus | None = None, session: Session = Depends(get_session)
@@ -194,7 +329,10 @@ def list_access_requests(
     dependencies=[Depends(require_operator)],
 )
 def approve_access_request(
-    request_id: int, user: User = Depends(require_operator), session: Session = Depends(get_session)
+    request_id: int,
+    user: User = Depends(require_operator),
+    session: Session = Depends(get_session),
+    lxd_client: LXDClient = Depends(get_lxd_client),
 ) -> AccessRequestResponse:
     request = session.get(AccessRequest, request_id)
     if request is None:
@@ -202,9 +340,11 @@ def approve_access_request(
     request.status = AccessRequestStatus.approved
     request.decided_at = utcnow()
     request.decided_by = user.id
+    request.auto_managed = False
     session.add(request)
     session.commit()
     session.refresh(request)
+    sync_whitelisted_worlds(session, lxd_client)
     return _to_response(request)
 
 
@@ -222,6 +362,7 @@ def deny_access_request(
     body: DenyRequest,
     user: User = Depends(require_operator),
     session: Session = Depends(get_session),
+    lxd_client: LXDClient = Depends(get_lxd_client),
 ) -> AccessRequestResponse:
     request = session.get(AccessRequest, request_id)
     if request is None:
@@ -230,7 +371,9 @@ def deny_access_request(
     request.decided_at = utcnow()
     request.decided_by = user.id
     request.deny_reason = body.reason
+    request.auto_managed = False
     session.add(request)
     session.commit()
     session.refresh(request)
+    sync_whitelisted_worlds(session, lxd_client)
     return _to_response(request)

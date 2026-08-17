@@ -349,8 +349,27 @@
 
     <section id="panel-access" class="panel">
       <div class="card">
-        <h2>Add a player directly</h2>
-        <p class="hint">Skips Discord entirely and approves immediately — use this if Discord OAuth/the bot isn't set up yet.</p>
+        <h2>Discord role gate</h2>
+        <p class="hint">When enabled, access tracks live membership of one Discord role — granted and revoked automatically as players' roles change. Applies cluster-wide, to every world.</p>
+        <form onsubmit="return saveGateConfig(event)">
+          <label><input type="checkbox" id="gate-enabled"> Enabled</label>
+          <div style="margin:0.7rem 0">
+            <label class="hint" style="display:block;margin-bottom:0.3rem">Discord server (guild) ID</label>
+            <input id="gate-guild-id" placeholder="1537925612952363008" style="width:100%">
+          </div>
+          <div style="margin-bottom:0.7rem">
+            <label class="hint" style="display:block;margin-bottom:0.3rem">Role ID</label>
+            <input id="gate-role-id" placeholder="1537937124144193637" style="width:100%">
+          </div>
+          <button class="btn" type="submit">Save</button>
+          <span id="gate-saved" class="hint"></span>
+        </form>
+        <div id="gate-error" class="error"></div>
+      </div>
+
+      <div class="card">
+        <h2>Manual allowlist</h2>
+        <p class="hint">Minecraft usernames added here are always allowed, on every world, independent of Discord — use for admins, testers, or anyone without a linked Discord account. Never affected by the Discord role gate above.</p>
         <form class="inline" onsubmit="return addPlayerDirectly(event)">
           <input id="ar-minecraft-username" placeholder="Minecraft username" required>
           <button class="btn" type="submit">Add &amp; approve</button>
@@ -486,7 +505,7 @@ function showTab(name) {
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
   document.getElementById('panel-' + name).classList.add('active');
   document.querySelector('nav button[data-tab="' + name + '"]').classList.add('active');
-  const loaders = { worlds: loadWorlds, hosts: loadHosts, plugins: loadCatalog, datapacks: loadDatapackCatalog, display: loadDisplay, chat: loadChatConfig, access: loadAccessRequests, users: loadUsers };
+  const loaders = { worlds: loadWorlds, hosts: loadHosts, plugins: loadCatalog, datapacks: loadDatapackCatalog, display: loadDisplay, chat: loadChatConfig, access: loadAccessTab, users: loadUsers };
   loaders[name]();
 }
 
@@ -1084,10 +1103,49 @@ async function createJoinToken() {
   }
 }
 
+async function loadAccessTab() {
+  await Promise.all([loadGateConfig(), loadAccessRequests()]);
+}
+
+async function loadGateConfig() {
+  const errorEl = document.getElementById('gate-error');
+  errorEl.textContent = '';
+  try {
+    const c = await api('/access-requests/discord-gate-config');
+    document.getElementById('gate-enabled').checked = c.enabled;
+    document.getElementById('gate-guild-id').value = c.guild_id || '';
+    document.getElementById('gate-role-id').value = c.role_id || '';
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+}
+
+async function saveGateConfig(event) {
+  event.preventDefault();
+  const errorEl = document.getElementById('gate-error');
+  const savedEl = document.getElementById('gate-saved');
+  errorEl.textContent = '';
+  savedEl.textContent = '';
+  try {
+    await api('/access-requests/discord-gate-config', {
+      method: 'PUT',
+      body: JSON.stringify({
+        enabled: document.getElementById('gate-enabled').checked,
+        guild_id: document.getElementById('gate-guild-id').value.trim() || null,
+        role_id: document.getElementById('gate-role-id').value.trim() || null,
+      }),
+    });
+    savedEl.textContent = 'Saved.';
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+  return false;
+}
+
 async function loadAccessRequests() {
   const requests = await api('/access-requests');
   const body = document.getElementById('access-body');
-  const pillClass = { approved: 'running', denied: 'crashed', pending: 'pending' };
+  const pillClass = { approved: 'running', denied: 'crashed', revoked: 'crashed', pending: 'pending' };
   body.innerHTML = requests.map(r => `
     <tr>
       <td>${escapeHtml(r.discord_username)}</td>
@@ -1097,6 +1155,9 @@ async function loadAccessRequests() {
         ${r.status === 'pending' ? `
           <button class="btn" onclick="decideAccessRequest(${r.id}, 'approve')">Approve</button>
           <button class="btn danger" onclick="decideAccessRequest(${r.id}, 'deny')">Deny</button>
+        ` : ''}
+        ${r.status === 'approved' && r.discord_user_id.startsWith('manual:') ? `
+          <button class="btn danger" onclick="decideAccessRequest(${r.id}, 'deny')">Remove</button>
         ` : ''}
       </td>
     </tr>
@@ -1123,6 +1184,7 @@ async function addPlayerDirectly(event) {
         discord_username: username,
         minecraft_username: username,
         auto_approve: true,
+        auto_managed: false,
       }),
     });
     document.getElementById('ar-minecraft-username').value = '';

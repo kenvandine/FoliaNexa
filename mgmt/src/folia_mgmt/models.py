@@ -56,6 +56,7 @@ class AccessRequestStatus(str, enum.Enum):
     pending = "pending"
     approved = "approved"
     denied = "denied"
+    revoked = "revoked"  # was approved via Discord role-sync, then lost the role
 
 
 class Host(SQLModel, table=True):
@@ -268,7 +269,8 @@ class ChatBridgeConfig(SQLModel, table=True):
 
 
 class AccessRequest(SQLModel, table=True):
-    """A Discord-authenticated request to join the network. PLAN.md §11C."""
+    """A Discord-authenticated request to join the network, or a manually
+    added Minecraft-only allowlist entry. PLAN.md §11C."""
 
     id: Optional[int] = Field(default=None, primary_key=True)
     discord_user_id: str = Field(index=True)
@@ -280,3 +282,25 @@ class AccessRequest(SQLModel, table=True):
     decided_at: Optional[datetime] = None
     decided_by: Optional[int] = Field(default=None, foreign_key="user.id")
     deny_reason: Optional[str] = None
+    auto_managed: bool = Field(default=True)
+    # True: this row's status is policy-driven (Discord role-sync,
+    # OAuth/bot auto-approve) and safe for POST /access-requests/role-sync
+    # to keep reconciling automatically. False: an operator explicitly
+    # approved/denied it via the manual endpoints, or added it directly
+    # to the manual (non-Discord) allowlist — sticky until they act again,
+    # role-sync always skips it.
+
+
+class DiscordAccessGateConfig(SQLModel, table=True):
+    """Singleton row (fixed id=1): whether the dynamic Discord-role
+    allowlist (PLAN.md §11C) is on, and which guild/role gates it.
+    Cluster-wide, not per-world — the proxy is the single access gate
+    every world shares. Editable from the dashboard; folia-nexa-bot polls
+    this instead of reading a static env var, so a toggle here takes
+    effect without a bot restart."""
+
+    id: Optional[int] = Field(default=1, primary_key=True)
+    enabled: bool = False
+    guild_id: Optional[str] = None
+    role_id: Optional[str] = None
+    updated_at: datetime = Field(default_factory=utcnow)

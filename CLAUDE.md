@@ -331,9 +331,51 @@ in `bot/src/folia_bot/bot.py`. Requires a registered Discord application
 with a bot user and the `applications.commands` scope invited to your
 server, none of which this repo can set up for you.
 
+**Before starting this snap**, enable the privileged **Server Members
+Intent** for that application in the Discord Developer Portal (Bot page
+→ Privileged Gateway Intents) — the bot's Discord role-sync feature
+(PLAN.md §11C) requests the `members` gateway intent unconditionally at
+connect time, and discord.py refuses to log in at all
+(`PrivilegedIntentsRequired`) if the portal side hasn't been flipped on
+first, even if you never configure a gate role. This is a one-time
+per-application setting, done once in the portal, not per-deploy.
+
 ```bash
 sudo snap start folia-nexa-bot.daemon
 ```
+
+The bot commands (`/status`, `/request-access`, `/leaderboard`) and the
+Discord role-sync loop are documented in full in the module docstring at
+the top of `bot/src/folia_bot/bot.py` — read that first for exact
+behavior, including what each optional env var does when unset. Short
+version of the parts most likely to surprise an operator:
+
+- Auto-approving someone by Discord role and *revoking* them
+  automatically if that role is later removed both go through the
+  dashboard's new "Discord role gate" card (Access Requests tab in
+  `folia-nexa-mgmt`'s web UI) — an enable toggle plus the guild ID and
+  role ID to gate on. This is **not** an env var on this snap; it's a
+  cluster-wide setting stored in mgmt's own DB and polled by the bot
+  every 60s, so a change in the dashboard takes effect without
+  restarting either the bot or mgmt.
+- Even with the role gate enabled and a player already holding the
+  configured role, they still need to run `/request-access
+  <minecraft_username>` (or the web OAuth flow) **once** — that's the
+  only way mgmt learns which Minecraft account belongs to that Discord
+  user. Role-sync only manages players it already knows about; it never
+  invents a new access request for a Discord member it's never heard
+  from, regardless of their roles. Granting someone the Discord role by
+  itself does not get them onto the whitelist.
+- After that one-time link, ongoing access tracks the role live —
+  gaining or losing it in Discord grants/revokes access automatically
+  (near-instantly via a gateway member-update event, with a 15-minute
+  periodic re-sync as a safety net for anything missed), no repeat
+  command or operator action needed either way. Losing the role blocks
+  future joins; it does not disconnect an already-connected player.
+- An operator's own manual approve/deny from the dashboard (or a
+  manually-added entry in the same tab's "Manual allowlist" card, for
+  admins/testers/anyone without Discord) is always sticky — role-sync
+  never overrides a human decision, only rows it manages itself.
 
 ### Phase 9 — VPS edge: public portal + no home port-forwarding (optional)
 
@@ -420,9 +462,22 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
 - `folia-routes-sync`'s routing diff, JSON parsing, and access-gate logic
   — compiled and unit-tested against the real `velocity-api` jar.
 - `folia-nexa-bot`'s embed-building, auto-approve decision logic,
-  and mgmt API client — unit-tested; `discord.Client`/`CommandTree`
-  construction and command registration verified to build correctly
-  against the real `discord.py` API.
+  Discord role-sync reconcile logic (`folia_bot/access.py`'s
+  `role_membership_changed`/`compute_role_sync_ids`), and mgmt API
+  client — unit-tested; `discord.Client`/`CommandTree` construction and
+  command registration verified to build correctly against the real
+  `discord.py` API. **The bot's actual gateway connection is now also
+  confirmed live**, 2026-08-16: deployed to a real production host with
+  a real bot token and the privileged `members` intent enabled in the
+  Discord Developer Portal — connected to the gateway successfully, with
+  no `PrivilegedIntentsRequired` crash, and began polling `GET
+  /access-requests/discord-gate-config` on its own right after
+  `on_ready`, exactly as designed. Not yet observed live: an actual
+  `/request-access` command invocation by a real Discord member, or a
+  real `on_member_update` gateway event actually firing the role-sync
+  POST — only the connection itself and the periodic config poll were
+  watched directly; the role-sync push logic is exercised by the unit
+  tests above, not yet by a real Discord role change.
 - `folia-host-join.sh`'s LXD-prep steps (project creation, trust token
   generation) — bash-syntax-checked and logically reviewed, not run
   against a live LXD daemon in this environment.
@@ -467,9 +522,10 @@ live infrastructure:
   but nothing set up a `folia` project on it and pointed `LXDClient` at
   it for real — that's the next-most-valuable thing to verify if you're
   picking this project up.
-- The Discord OAuth2 flow, Mojang UUID resolution, and the bot's actual
-  gateway connection — no registered Discord application was available
-  to test against.
+- The Discord OAuth2 flow and Mojang UUID resolution — no registered
+  Discord application was available to test the OAuth2 authorize/
+  callback round trip against in this environment (the bot's gateway
+  connection itself *is* now confirmed live — see above).
 - `configs/luckperms/provision-mysql.sh` and the LuckPerms config.yml
   format itself (verify plugin config keys against whatever LuckPerms
   version you actually deploy — they can drift between major versions).

@@ -112,6 +112,40 @@ async def test_relay_chat_sends_expected_body(mock_http):
     assert result == {"queued": True}
 
 
+async def test_get_discord_gate_config_sends_bearer_token(mock_http):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["auth"] = request.headers["Authorization"]
+        captured["path"] = request.url.path
+        return httpx.Response(200, json={"enabled": True, "guild_id": "1537925612952363008", "role_id": "1537937124144193637"})
+
+    mock_http(handler)
+    client = MgmtClient("https://mgmt.example:8443", "tok-abc")
+    result = await client.get_discord_gate_config()
+
+    assert captured["auth"] == "Bearer tok-abc"
+    assert captured["path"] == "/api/v1/access-requests/discord-gate-config"
+    assert result == {"enabled": True, "guild_id": "1537925612952363008", "role_id": "1537937124144193637"}
+
+
+async def test_role_sync_sends_expected_body(mock_http):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={"approved": ["1"], "revoked": []})
+
+    mock_http(handler)
+    client = MgmtClient("https://mgmt.example:8443", "tok-abc")
+    result = await client.role_sync(discord_user_ids_with_role=["1", "2"])
+
+    assert captured["path"] == "/api/v1/access-requests/role-sync"
+    assert captured["body"] == {"discord_user_ids_with_role": ["1", "2"]}
+    assert result == {"approved": ["1"], "revoked": []}
+
+
 async def test_base_url_trailing_slash_is_stripped(mock_http):
     captured = {}
 

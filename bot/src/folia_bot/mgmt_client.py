@@ -59,3 +59,27 @@ class MgmtClient:
             )
             resp.raise_for_status()
             return resp.json()
+
+    async def get_discord_gate_config(self) -> dict:
+        """GET /access-requests/discord-gate-config — whether the dynamic
+        Discord-role allowlist is on and which guild/role gates it,
+        editable from mgmt's dashboard. Polled periodically rather than
+        read once at startup, so a toggle there takes effect without a
+        bot restart."""
+        async with httpx.AsyncClient(base_url=self._base_url, timeout=self._timeout) as client:
+            resp = await client.get("/api/v1/access-requests/discord-gate-config", headers=self._headers())
+            resp.raise_for_status()
+            return resp.json()
+
+    async def role_sync(self, *, discord_user_ids_with_role: list[str]) -> dict:
+        """POST /access-requests/role-sync — reports the *complete
+        current* membership of the configured allowlist role so mgmt can
+        reconcile AccessRequest.status against it."""
+        async with httpx.AsyncClient(base_url=self._base_url, timeout=self._timeout) as client:
+            resp = await client.post(
+                "/api/v1/access-requests/role-sync",
+                headers=self._headers(),
+                json={"discord_user_ids_with_role": discord_user_ids_with_role},
+            )
+            resp.raise_for_status()
+            return resp.json()

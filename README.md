@@ -24,7 +24,7 @@ Where k8s would actually win: running on someone else's cloud cluster, or wantin
 | [`mgmt/`](mgmt/) | `folia-nexa-mgmt` | Orchestrator: REST API, scheduler, web dashboard, CLI. Trusts LXD hosts, places worlds on them, keeps them healthy, and serves a curated plugin catalog (repo-tracked, operator-extensible) worlds pick from. |
 | [`node/`](node/) | `folia-nexa-node` | Runs inside every world's container. Reads its assignment off the container's own LXD config, stages the jar/plugins, runs the JVM, reports health. |
 | [`proxy/`](proxy/) | `folia-nexa-proxy` (+ `folia-routes-sync` plugin) | The public entry point. Keeps its backend list in sync with mgmt's live routing table and optionally gates login against Discord-approved players — no restart to add or remove a world. |
-| [`bot/`](bot/) | `folia-nexa-bot` | Discord bot: `/status`, `/request-access`, `/leaderboard`. |
+| [`bot/`](bot/) | `folia-nexa-bot` | Discord bot: `/status`, `/request-access`, `/leaderboard`, plus a background loop that keeps access synced to live Discord role membership (grant/revoke, no operator action needed after the one-time `/request-access`). |
 | [`db/`](db/) | `folia-nexa-db` | Self-contained MariaDB instance backing LuckPerms, shared across every world. |
 
 Full design rationale, data model, and API reference live in **[PLAN.md](PLAN.md)**. If you're going to read one doc before touching code, make it that one.
