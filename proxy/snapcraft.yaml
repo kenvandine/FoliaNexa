@@ -152,6 +152,18 @@ parts:
       [ -f velocity.jar ] || cp "$SNAP/velocity.jar" velocity.jar
       [ -f velocity.toml ] || cp "$SNAP/velocity.toml" velocity.toml
       [ -f server-icon.png ] || cp "$SNAP/server-icon.png" server-icon.png
+
+      # folia-routes-sync is in-house and not operator-optional -- always
+      # replace it with whatever ships in the currently installed snap
+      # revision, unlike the seed-once loop below for genuinely
+      # operator-editable jars (Geyser/floodgate). Without this, a fixed
+      # filename (version isn't bumped per-change) meant every snap
+      # upgrade silently kept running the jar from the very first
+      # install forever -- caught for real when an HTTP/1.1 fix in this
+      # plugin never took effect after several rebuild+reinstalls.
+      rm -f plugins/folia-routes-sync-*.jar
+      cp "$SNAP"/plugins/folia-routes-sync-*.jar plugins/
+
       for jar in "$SNAP"/plugins/*.jar; do
         [ -f "plugins/$(basename "$jar")" ] || cp "$jar" "plugins/"
       done
