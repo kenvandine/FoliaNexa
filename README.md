@@ -89,4 +89,4 @@ This is under active development — expect gaps, and check `PLAN.md`'s inline s
 
 ## License
 
-Not yet specified.
+[GPLv3](LICENSE).
