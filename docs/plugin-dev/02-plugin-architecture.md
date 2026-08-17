@@ -312,7 +312,8 @@ model Folia's region-threading behavior — a test passing under
 MockBukkit is not evidence your scheduling is Folia-safe. Treat it as a
 tool for testing plugin wiring and your domain logic's Bukkit-facing
 edges, not as a substitute for actually running your plugin on a real
-Folia server (part 1, §1.6/§1.7) before considering it done.
+Folia server (part 1, §1.8 — `tools/folia-nexa-spawn.sh`) before
+considering it done.
 
 ## 2.7 Logging
 

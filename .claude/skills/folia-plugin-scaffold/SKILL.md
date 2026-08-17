@@ -241,6 +241,11 @@ worth restating here since this is the point you'd otherwise stop:
 - Actually built successfully (§5), and — if there's any way to run a
   local Folia test server in this environment or the developer can —
   actually loaded and smoke-tested, not just compiled.
+  `tools/folia-nexa-spawn.sh <version> overworld --plugindir=<this
+  plugin's dir>` (docs/plugin-dev/01-environment-setup.md §1.8) is the
+  recommended way to do that: it builds the plugin, launches a scratch
+  Folia server with it loaded, and prints the address to connect a
+  client to.
 - `plugin.yml`'s `api-version` matches the `paper-api` coordinate used.
 - Every permission has an explicit `default:`.
 - If Modrinth-derived: the inspiration/non-affiliation disclosure from

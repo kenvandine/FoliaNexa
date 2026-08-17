@@ -95,9 +95,11 @@ on a reviewer:
       Any hit needs a look: is it actually fine (rare), or does it need
       to move to `RegionScheduler`/`GlobalRegionScheduler`/
       `AsyncScheduler` per part 2 §2.3?
-- [ ] **Actually run on a real local Folia server** (part 1 §1.6/§1.7),
-      not just compiled successfully or passed `MockBukkit` tests (part
-      2 §2.6 explains why that's not sufficient evidence on its own).
+- [ ] **Actually run on a real local Folia server** (part 1 §1.8 —
+      `tools/folia-nexa-spawn.sh`, the recommended way; §1.6/§1.7 covers
+      doing it by hand), not just compiled successfully or passed
+      `MockBukkit` tests (part 2 §2.6 explains why that's not
+      sufficient evidence on its own).
 - [ ] **`plugin.yml`'s `api-version` matches** what you compiled against.
 - [ ] **Config has sane defaults** and a `reload` command if it's meant
       to be editable without a restart.

@@ -200,8 +200,12 @@ Confirm the build works even with no plugin code yet:
 
 You don't need the FoliaNexa cluster, mgmt, or a proxy to iterate on a
 plugin — a single Folia server running directly on your dev machine is
-faster to restart and easier to attach a debugger to. Pick a scratch
-directory outside your plugin's own repo:
+faster to restart and easier to attach a debugger to. **§1.8 below
+(`tools/folia-nexa-spawn.sh`) automates everything in this section and
+§1.7 into one command, and is the recommended way to do this day to
+day** — read §1.6/§1.7 once anyway, since they're what the tool is
+actually doing and knowing that matters for debugging it. Pick a
+scratch directory outside your plugin's own repo:
 
 ```bash
 mkdir -p ~/folia-test-server && cd ~/folia-test-server
@@ -270,6 +274,76 @@ cd ~/my-folianexa-plugin && ./gradlew build
 cp build/libs/*.jar ~/folia-test-server/plugins/
 cd ~/folia-test-server && java -Xms2G -Xmx2G -jar folia-server.jar --nogui
 ```
+
+## 1.8 `folia-nexa-spawn.sh`: the recommended day-to-day workflow
+
+§1.6-1.7 is the loop worth understanding once by hand, but you don't
+need to keep re-typing it. **This is the recommended way to run and
+iterate on a plugin locally** —
+[`tools/folia-nexa-spawn.sh`](../../tools/folia-nexa-spawn.sh) in the
+`folia-server` repo does the whole thing in one command: fetches (and
+caches) the right Folia build, builds your plugin from local source
+with `./gradlew build`, drops the resulting jar into a scratch server's
+`plugins/`, starts the server, and prints the address to connect a
+client to once it's actually up. Reach for §1.6/§1.7's manual steps
+only if you need something the script doesn't do (e.g. a from-source
+custom Folia build) — otherwise, use this.
+
+**Prerequisites beyond §1.1's JDK** — `curl` and `python3` (used to
+call `fill.papermc.io` and parse its JSON, and to pick a free local
+port). Both ship by default on Ubuntu 24.04 desktop and most server
+images, but on a minimal/server install confirm with:
+
+```bash
+curl --version && python3 --version
+# if missing:
+sudo apt install curl python3
+```
+
+No system Gradle needed — same as §1.4, your plugin's own `./gradlew`
+wrapper handles that.
+
+From the `folia-server` repo checkout (a sibling clone next to your
+plugin's own repo — see [part 3](03-submitting-for-review.md) for why
+plugin source lives in its own repo, not inside `folia-server`):
+
+```bash
+tools/folia-nexa-spawn.sh 1.21.4 overworld --plugindir=~/my-folianexa-plugin
+```
+
+`1.21.4` is the Folia version to run (same version string §1.6's manual
+`VERSION=` uses); `overworld` is a label for this test world — it also
+picks `level-type` (`lobby`/`minigame`/`staging` get a flat world, since
+those are normally hand-built rather than generated; anything else gets
+normal terrain). Pass `--plugindir` again to load more than one plugin
+at once (handy for a plugin that depends on `LuckPerms` or another
+catalog entry — point it at a local checkout of that too, or just drop
+a prebuilt jar into the server's `plugins/` directory directly, which
+lives under `~/.local/share/folia-nexa-spawn/<version>-<world-type>/`
+by default).
+
+The server runs in the foreground with the console attached, exactly
+like running `java -jar ... --nogui` by hand — type commands directly,
+`Ctrl+C` or `/stop` shuts it down. Once it's actually up, you'll see:
+
+```
+==============================================================
+ Folia 1.21.4 (overworld) is up.
+ Connect to your world with localhost:53214
+ (offline-mode — any username works)
+ World save + logs: /home/you/.local/share/folia-nexa-spawn/1.21.4-overworld
+ Stop the server with /stop in this console, or Ctrl+C.
+==============================================================
+```
+
+The port is auto-picked free each run (so `overworld` and a second
+`lobby` instance can run side by side); pass `--port` to pin one. The
+world save persists across runs in that same directory — re-run the
+same command to relaunch with your existing world and just the plugin
+rebuilt; add `--clean` for a fresh world, or `--no-build` to skip
+`./gradlew build` and relaunch faster when only server-side config
+changed. `tools/folia-nexa-spawn.sh --help` covers the rest (`--memory`,
+`--workdir`, `--online-mode`, `--refresh-jar`).
 
 ## Next
 

@@ -8,7 +8,9 @@ environment setup you likely already have.
 
 1. **[Setting up your development environment (Ubuntu)](01-environment-setup.md)**
    — JDK 21, an IDE, the Gradle wrapper, scaffolding a new plugin
-   project, and running a local Folia server to test against.
+   project, and running a local Folia server to test against
+   (§1.8's `tools/folia-nexa-spawn.sh` is the recommended way to do
+   that day to day).
 2. **[Writing a sound, well-architected plugin](02-plugin-architecture.md)**
    — project structure, `plugin.yml`, and Folia's region-scheduler APIs
    (`RegionScheduler`/`GlobalRegionScheduler`/`AsyncScheduler`) that
