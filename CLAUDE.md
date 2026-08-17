@@ -63,7 +63,7 @@ unverified; only the build step is confirmed.
 ## Running the test suites
 
 ```bash
-# mgmt (Python) — 288 tests
+# mgmt (Python) — 294 tests
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
@@ -467,6 +467,24 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   `test_powered_off_host_flips_to_offline_on_next_reconcile`) — not yet
   observed against a real LXD daemon actually going dark, only against
   `FakeLXDClient.ping_host` returning `False`.
+- Draining a host now actually evacuates it (`scheduler.
+  migrate_worlds_off_draining_hosts`) — `POST /hosts/{name}/drain` used to
+  only stop *new* placements; a world already there just kept running on
+  it forever, with no automatic migration despite PLAN.md §2's documented
+  "host maintenance/decommission" intent for the status. Every reconcile
+  pass now migrates every world still on a draining host (stop/export/
+  import/start, same path as the existing manual per-world `POST
+  /worlds/{name}/migrate`) to whichever online host has the most free
+  capacity, and deletes the old container once the move succeeds; a world
+  that can't be moved yet (no capacity) is retried the next pass. Unit-
+  tested (`tests/test_scheduler.py`: best-fit target selection, crashed
+  worlds get migrated rather than restarted in place, no-capacity and
+  migration-failure retry paths, worlds on non-draining hosts left alone)
+  and exercised end-to-end (`tests/test_hosts.py`'s
+  `test_draining_a_host_migrates_its_worlds_elsewhere`, two reconcile
+  passes through the real API: migrate, then finalize back to `running`
+  on the new host) — same "written against `FakeLXDClient`, not a real
+  LXD daemon" caveat as the rest of `LXDClient.migrate_container` above.
 - The plugin catalog (`catalog.yaml` + override merge, `/api/v1/plugins`,
   world-creation validation, `/plugins-manifest` generation, the CLI's
   `plugins list`/`show`, and the dashboard's Plugins tab + world-creation

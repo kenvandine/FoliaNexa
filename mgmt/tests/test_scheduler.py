@@ -3,6 +3,7 @@ from __future__ import annotations
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from folia_mgmt.config import Settings
+from folia_mgmt.lxd_client import LXDError
 from folia_mgmt.models import (
     AccessRequest,
     AccessRequestStatus,
@@ -17,6 +18,7 @@ from folia_mgmt.scheduler import (
     _node_config,
     check_host_health,
     check_running_worlds,
+    migrate_worlds_off_draining_hosts,
     recover_crashed_worlds,
     select_host,
     sync_whitelisted_worlds,
@@ -110,12 +112,23 @@ class _RecordingLXDClient:
     def __init__(self):
         self.restarted: list[str] = []
         self.pushed: dict[tuple[str, str], bytes] = {}
+        self.migrated: list[tuple[str, str, str]] = []  # (source_host, name, target_host)
+        self.deleted: list[tuple[str, str]] = []
+        self.fail_migrate_for: set[str] = set()
 
     def restart_container(self, host, name):
         self.restarted.append(name)
 
     def push_file(self, host, name, path, content, *, mode="0644"):
         self.pushed[(name, path)] = content
+
+    def migrate_container(self, source_host, source_name, target_host):
+        if source_name in self.fail_migrate_for:
+            raise LXDError(f"simulated migration failure for {source_name}")
+        self.migrated.append((source_host.name, source_name, target_host.name))
+
+    def delete_container(self, host, name, *, stop_first=True):
+        self.deleted.append((host.name, name))
 
 
 def test_check_running_worlds_marks_unhealthy_worlds_crashed():
@@ -406,3 +419,139 @@ def test_check_host_health_never_touches_draining_or_cordoned_hosts():
     cordoned = session.exec(select(Host).where(Host.name == "cordoned-host")).first()
     assert draining.status == HostStatus.draining
     assert cordoned.status == HostStatus.cordoned
+
+
+def test_migrate_worlds_off_draining_hosts_picks_best_fit_target():
+    session = _session()
+    session.add(Host(name="going-away", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.draining))
+    session.add(Host(name="roomy", address="1.2.3.5:8443", capacity_cpu_cores=16, capacity_memory_gb=32, status=HostStatus.online))
+    session.add(Host(name="snug", address="1.2.3.6:8443", capacity_cpu_cores=4, capacity_memory_gb=8, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a",
+            type=WorldType.overworld,
+            cpu_cores=2,
+            memory_gb=4,
+            phase=WorldPhase.running,
+            host_name="going-away",
+            container_name="world-a",
+            address="10.0.0.1:25565",
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    migrate_worlds_off_draining_hosts(session, lxd)
+
+    world = session.exec(select(World).where(World.name == "world-a")).first()
+    assert world.host_name == "roomy"  # most free capacity remaining after placement
+    assert world.sticky_host == "roomy"
+    assert world.phase == WorldPhase.provisioning
+    assert world.address is None
+    assert lxd.migrated == [("going-away", "world-a", "roomy")]
+    assert lxd.deleted == [("going-away", "world-a")]
+
+
+def test_migrate_worlds_off_draining_hosts_moves_crashed_worlds_too():
+    session = _session()
+    session.add(Host(name="going-away", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.draining))
+    session.add(Host(name="target", address="1.2.3.5:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-crashed",
+            type=WorldType.overworld,
+            cpu_cores=2,
+            memory_gb=4,
+            phase=WorldPhase.crashed,
+            host_name="going-away",
+            container_name="world-crashed",
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    migrate_worlds_off_draining_hosts(session, lxd)
+
+    world = session.exec(select(World).where(World.name == "world-crashed")).first()
+    assert world.host_name == "target"
+    assert world.phase == WorldPhase.provisioning  # migrated, not restarted in place
+    assert lxd.migrated == [("going-away", "world-crashed", "target")]
+
+
+def test_migrate_worlds_off_draining_hosts_leaves_world_in_place_without_capacity():
+    session = _session()
+    session.add(Host(name="going-away", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.draining))
+    session.add(Host(name="full", address="1.2.3.5:8443", capacity_cpu_cores=1, capacity_memory_gb=1, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a",
+            type=WorldType.overworld,
+            cpu_cores=4,
+            memory_gb=8,
+            phase=WorldPhase.running,
+            host_name="going-away",
+            container_name="world-a",
+            address="10.0.0.1:25565",
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    migrate_worlds_off_draining_hosts(session, lxd)
+
+    world = session.exec(select(World).where(World.name == "world-a")).first()
+    assert world.host_name == "going-away"  # stays put, next tick retries
+    assert world.phase == WorldPhase.running
+    assert lxd.migrated == []
+
+
+def test_migrate_worlds_off_draining_hosts_retries_on_migration_failure():
+    session = _session()
+    session.add(Host(name="going-away", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.draining))
+    session.add(Host(name="target", address="1.2.3.5:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a",
+            type=WorldType.overworld,
+            cpu_cores=2,
+            memory_gb=4,
+            phase=WorldPhase.running,
+            host_name="going-away",
+            container_name="world-a",
+            address="10.0.0.1:25565",
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    lxd.fail_migrate_for.add("world-a")
+    migrate_worlds_off_draining_hosts(session, lxd)  # must not raise
+
+    world = session.exec(select(World).where(World.name == "world-a")).first()
+    assert world.host_name == "going-away"
+    assert world.phase == WorldPhase.running
+
+
+def test_migrate_worlds_off_draining_hosts_ignores_worlds_on_online_hosts():
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a",
+            type=WorldType.overworld,
+            cpu_cores=2,
+            memory_gb=4,
+            phase=WorldPhase.running,
+            host_name="node-a",
+            container_name="world-a",
+            address="10.0.0.1:25565",
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    migrate_worlds_off_draining_hosts(session, lxd)
+
+    assert lxd.migrated == []
+    world = session.exec(select(World).where(World.name == "world-a")).first()
+    assert world.host_name == "node-a"
