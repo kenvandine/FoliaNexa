@@ -48,6 +48,35 @@ def _labels_match(host: Host, world: World) -> bool:
     return all(host.labels.get(k) == v for k, v in world.placement_labels.items())
 
 
+def check_host_health(session: Session, lxd_client: LXDClient) -> None:
+    """Periodic reachability check for every trusted host — until now
+    `Host.status` was only ever written at enrollment (`online`,
+    routers/hosts.py's enroll_host) or by an operator's explicit drain
+    (`draining`); nothing ever re-verified a host afterward, so one that
+    lost power or network stayed `online` in the DB (and dashboard)
+    forever. Only online/offline are touched here — draining/cordoned are
+    operator-managed states this must never override, so they're excluded
+    from the query entirely.
+
+    Single-check like check_running_worlds (no debounce/consecutive-
+    failure counter) — consistent with how this codebase already treats a
+    failed reachability probe elsewhere in the reconcile loop.
+    """
+    hosts = session.exec(select(Host).where(Host.status.in_([HostStatus.online, HostStatus.offline]))).all()
+    for host in hosts:
+        reachable = lxd_client.ping_host(host)
+        if reachable and host.status != HostStatus.online:
+            logger.info("host '%s' reachable again, marking online", host.name)
+            host.status = HostStatus.online
+            session.add(host)
+            session.commit()
+        elif not reachable and host.status != HostStatus.offline:
+            logger.warning("host '%s' failed reachability check, marking offline", host.name)
+            host.status = HostStatus.offline
+            session.add(host)
+            session.commit()
+
+
 def select_host(session: Session, world: World) -> Host | None:
     """Fullest-fit-remaining bin-packing: PLAN.md §5 step 3 — pick the host
     with the most free capacity left *after* placement, spreading load
@@ -319,6 +348,8 @@ def reconcile(
 ) -> None:
     settings = settings or get_settings()
     health_check = health_check or default_health_check
+
+    check_host_health(session, lxd_client)
 
     for world in session.exec(select(World).where(World.phase == WorldPhase.pending)).all():
         place_world(session, lxd_client, world, settings)

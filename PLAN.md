@@ -73,6 +73,13 @@ host:
 
 Capacity numbers come from the LXD project's quota (`limits.cpu`, `limits.memory`), not raw host specs — mgmt only ever schedules against what it's actually been granted, which is what makes shared (non-dedicated) hosts safe to add.
 
+`online`/`offline` are set automatically: every reconcile pass pings each
+trusted host's LXD API directly (`scheduler.check_host_health`) and flips
+status based on reachability, so a host that loses power or network stops
+showing as `online` within one reconcile interval. `draining`/`cordoned`
+are exclusively operator-set (`POST /hosts/{name}/drain`, or a future
+cordon action) and are never touched by the automatic check.
+
 ### World
 
 A **World** is the schedulable unit: one Folia/Paper server, one LXD container, one JVM.
@@ -170,6 +177,17 @@ Flow:
 ---
 
 ## 5. Scheduler
+
+### Host health
+
+Before anything else, each reconcile pass pings every trusted host not
+currently `draining`/`cordoned` (LXD's own `GET /1.0`, mTLS-pinned the same
+as every other call) and writes `online`/`offline` back to the DB based on
+whether it answered — a single failed ping is enough to mark a host
+offline, matching how a single failed `/healthz` poll already marks a
+world crashed below; there's no consecutive-failure debounce. This runs
+first in the pass specifically so a host that just went dark is excluded
+from that same tick's placement decisions, not just the next one.
 
 ### Placement
 

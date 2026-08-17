@@ -87,3 +87,33 @@ def test_drain_host(client, admin_token, operator_token):
     resp = client.post("/api/v1/hosts/node-a/drain", headers=auth_header(operator_token))
     assert resp.status_code == 200
     assert resp.json()["status"] == "draining"
+
+
+def test_powered_off_host_flips_to_offline_on_next_reconcile(client, admin_token, operator_token, fake_lxd):
+    """Reproduces the bug: enrolling a host used to leave it 'online' in
+    the dashboard forever, even after it lost power — nothing ever
+    re-checked reachability. Now every reconcile pass (scheduler.
+    check_host_health) pings each trusted host directly."""
+    join_token = _get_join_token(client, admin_token)
+    client.post("/api/v1/hosts/enroll", json=_enroll_body(), headers=auth_header(join_token))
+    assert client.get("/api/v1/hosts", headers=auth_header(admin_token)).json()[0]["status"] == "online"
+
+    fake_lxd.unreachable.add("node-a")
+    # A world create is the simplest way to force a reconcile pass through
+    # the API surface under test, same trick test_health_recovery.py uses.
+    resp = client.post(
+        "/api/v1/worlds",
+        json={"name": "world-trigger", "type": "lobby", "cpu_cores": 1, "memory_gb": 1},
+        headers=auth_header(operator_token),
+    )
+    assert resp.status_code == 200
+
+    assert client.get("/api/v1/hosts", headers=auth_header(admin_token)).json()[0]["status"] == "offline"
+
+    fake_lxd.unreachable.discard("node-a")
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-trigger-2", "type": "lobby", "cpu_cores": 1, "memory_gb": 1},
+        headers=auth_header(operator_token),
+    )
+    assert client.get("/api/v1/hosts", headers=auth_header(admin_token)).json()[0]["status"] == "online"

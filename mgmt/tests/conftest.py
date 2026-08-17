@@ -27,6 +27,12 @@ class FakeLXDClient:
         self.migrations: list[tuple[str, str, str]] = []  # (source_host, container, target_host)
         self.fail_migrate_for: set[str] = set()
         self.updated_config: dict[tuple[str, str], dict] = {}  # (host_name, container) -> last config pushed
+        self.unreachable: set[str] = set()  # host names that ping_host should report as down
+        self.ping_calls: list[str] = []
+
+    def ping_host(self, host) -> bool:
+        self.ping_calls.append(host.name)
+        return host.name not in self.unreachable
 
     def redeem_trust_token(self, address: str, project: str, trust_token: str):
         if trust_token == "bad-token":

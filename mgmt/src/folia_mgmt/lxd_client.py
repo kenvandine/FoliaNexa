@@ -27,6 +27,10 @@ from folia_mgmt.models import Host
 
 DEFAULT_PORT = 8443
 DEFAULT_TIMEOUT = 15.0
+# Deliberately shorter than DEFAULT_TIMEOUT: ping_host runs once per trusted
+# host on every reconcile tick (scheduler.check_host_health), so a single
+# dead host must not stall the whole tick for the full 15s.
+PING_TIMEOUT = 5.0
 
 
 class LXDError(RuntimeError):
@@ -122,6 +126,29 @@ class LXDClient:
         if metadata.get("status") == "Failure":
             raise LXDError(f"LXD operation failed: {metadata.get('err')}")
         return metadata
+
+    # -- reachability --------------------------------------------------------
+
+    def ping_host(self, host: Host) -> bool:
+        """Lightweight liveness check for the periodic host health-check
+        (scheduler.check_host_health) — GET /1.0 is LXD's own server-info
+        endpoint, unauthenticated-content-wise but still mTLS-gated the same
+        as every other call, and doesn't need a `project` param the way
+        instance calls do. Any failure (refused connection, TLS handshake
+        timeout, DNS failure because the box is off) just means "not
+        reachable" — this never raises, unlike the rest of this class,
+        since a health check that itself needs try/except at every call
+        site defeats the point.
+        """
+        if not host.server_cert_pem:
+            return False
+        try:
+            ctx = _pinned_context(host.server_cert_pem, self._client_cert, self._client_key)
+            with httpx.Client(base_url=f"https://{host.address}", verify=ctx, timeout=PING_TIMEOUT) as client:
+                resp = client.get("/1.0")
+                return resp.status_code == 200
+        except (httpx.HTTPError, ssl.SSLError, OSError):
+            return False
 
     # -- instances ---------------------------------------------------------
 

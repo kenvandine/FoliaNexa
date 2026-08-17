@@ -63,7 +63,7 @@ unverified; only the build step is confirmed.
 ## Running the test suites
 
 ```bash
-# mgmt (Python) — 167 tests
+# mgmt (Python) — 288 tests
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
@@ -454,6 +454,19 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
 
 - Every mgmt API endpoint, the scheduler's placement/health-check/
   recovery/migration logic, the CLI, the dashboard.
+- Host-level reachability checking (`scheduler.check_host_health`,
+  `LXDClient.ping_host`): a real bug where a powered-off host stayed
+  `online` in the dashboard forever (`Host.status` was only ever written
+  at enrollment or by an operator's manual drain — nothing ever
+  re-verified it) — every reconcile pass now pings each trusted host's
+  own LXD API (`GET /1.0`) directly and flips `online`/`offline`
+  accordingly, leaving operator-managed `draining`/`cordoned` hosts
+  untouched. Unit-tested (`tests/test_scheduler.py`) and exercised
+  end-to-end through the real reconcile loop against a running mgmt
+  server (`tests/test_hosts.py`'s
+  `test_powered_off_host_flips_to_offline_on_next_reconcile`) — not yet
+  observed against a real LXD daemon actually going dark, only against
+  `FakeLXDClient.ping_host` returning `False`.
 - The plugin catalog (`catalog.yaml` + override merge, `/api/v1/plugins`,
   world-creation validation, `/plugins-manifest` generation, the CLI's
   `plugins list`/`show`, and the dashboard's Plugins tab + world-creation

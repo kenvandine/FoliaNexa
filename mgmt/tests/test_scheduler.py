@@ -15,6 +15,7 @@ from folia_mgmt.models import (
 )
 from folia_mgmt.scheduler import (
     _node_config,
+    check_host_health,
     check_running_worlds,
     recover_crashed_worlds,
     select_host,
@@ -346,3 +347,62 @@ def test_node_config_omits_server_properties_manifest_url_without_public_url():
     settings = Settings(public_url=None)
     config = _node_config(_session(), world, settings)
     assert "user.folia.server-properties-manifest-url" not in config
+
+
+class _PingLXDClient:
+    def __init__(self, unreachable: set[str] = frozenset()):
+        self.unreachable = set(unreachable)
+        self.pinged: list[str] = []
+
+    def ping_host(self, host) -> bool:
+        self.pinged.append(host.name)
+        return host.name not in self.unreachable
+
+
+def test_check_host_health_marks_unreachable_online_host_offline():
+    session = _session()
+    session.add(Host(name="host3", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.commit()
+
+    check_host_health(session, _PingLXDClient(unreachable={"host3"}))
+
+    host = session.exec(select(Host).where(Host.name == "host3")).first()
+    assert host.status == HostStatus.offline
+
+
+def test_check_host_health_recovers_offline_host_that_answers_again():
+    session = _session()
+    session.add(Host(name="host3", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.offline))
+    session.commit()
+
+    check_host_health(session, _PingLXDClient())  # reachable by default
+
+    host = session.exec(select(Host).where(Host.name == "host3")).first()
+    assert host.status == HostStatus.online
+
+
+def test_check_host_health_leaves_reachable_online_host_alone():
+    session = _session()
+    session.add(Host(name="host1", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.commit()
+
+    check_host_health(session, _PingLXDClient())
+
+    host = session.exec(select(Host).where(Host.name == "host1")).first()
+    assert host.status == HostStatus.online
+
+
+def test_check_host_health_never_touches_draining_or_cordoned_hosts():
+    session = _session()
+    session.add(Host(name="draining-host", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.draining))
+    session.add(Host(name="cordoned-host", address="1.2.3.5:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.cordoned))
+    session.commit()
+
+    ping = _PingLXDClient(unreachable={"draining-host", "cordoned-host"})
+    check_host_health(session, ping)
+
+    assert ping.pinged == []  # never even probed — operator-managed states are untouched
+    draining = session.exec(select(Host).where(Host.name == "draining-host")).first()
+    cordoned = session.exec(select(Host).where(Host.name == "cordoned-host")).first()
+    assert draining.status == HostStatus.draining
+    assert cordoned.status == HostStatus.cordoned
