@@ -163,23 +163,31 @@ parts:
       # First run: seed the working directory from the snap's read-only
       # payload ($SNAP/plugins/*.jar — folia-routes-sync plus the bundled
       # Geyser-Velocity/floodgate-velocity jars from the geyser-plugins
-      # part below). Never overwrite an operator-edited velocity.toml/
-      # plugin set on subsequent runs — this also means an operator who
-      # doesn't want Bedrock support can just delete those two jars from
-      # $PROXY_DIR/plugins/ once, post-install, and it'll stick.
-      [ -f velocity.jar ] || cp "$SNAP/velocity.jar" velocity.jar
+      # part below). Never overwrite an operator-edited velocity.toml on
+      # subsequent runs.
       [ -f velocity.toml ] || cp "$SNAP/velocity.toml" velocity.toml
       [ -f server-icon.png ] || cp "$SNAP/server-icon.png" server-icon.png
 
-      # folia-routes-sync is in-house and not operator-optional -- always
-      # replace it with whatever ships in the currently installed snap
-      # revision, unlike the seed-once loop below for genuinely
-      # operator-editable jars (Geyser/floodgate). Without this, a fixed
-      # filename (version isn't bumped per-change) meant every snap
-      # upgrade silently kept running the jar from the very first
-      # install forever -- caught for real when an HTTP/1.1 fix in this
-      # plugin never took effect after several rebuild+reinstalls.
-      rm -f plugins/folia-routes-sync-*.jar
+      # velocity.jar and folia-routes-sync are both this snap's own
+      # pinned build artifacts, not operator-editable config like
+      # velocity.toml above -- always replace both with whatever ships
+      # in the currently installed snap revision, unlike the seed-once
+      # loop below for genuinely operator-editable jars (Geyser/
+      # floodgate, which an operator can delete once to opt out of
+      # Bedrock support and have it stick). velocity.jar used to be
+      # seed-once too, which meant a pinned-Velocity-version bump (this
+      # snapcraft.yaml going from '3.5.1' to '4.0.0') silently kept every
+      # already-installed proxy running the old engine jar after
+      # upgrade -- confirmed live 2026-08-17: Geyser 2.11.1 (correctly
+      # reseeded from the loop below, since its filename never changes)
+      # loaded against the still-3.5.1 velocity.jar and hit the exact
+      # NoSuchMethodError this version bump was meant to fix. Fixed the
+      # same way folia-routes-sync-*.jar's identical failure mode
+      # already was (see that jar's own note below) rather than
+      # documenting a manual `rm velocity.jar` step every future
+      # operator would need to remember.
+      rm -f velocity.jar plugins/folia-routes-sync-*.jar
+      cp "$SNAP/velocity.jar" velocity.jar
       cp "$SNAP"/plugins/folia-routes-sync-*.jar plugins/
 
       for jar in "$SNAP"/plugins/*.jar; do

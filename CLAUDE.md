@@ -47,18 +47,26 @@ that a review wouldn't have: `proxy/snapcraft.yaml` was pointed at
 `fill.papermc.io/v3` (different host, different response shape); and
 `bot/snapcraft.yaml`'s `summary` field exceeded snap metadata's 78-
 character limit. Both fixed. (`proxy/snapcraft.yaml`'s later Bedrock/
-GeyserMC addition — the `geyser-plugins` part, PLAN.md §7B — was
-**not** re-verified against a real `snapcraft` build; no `snapcraft`/
-`snapd` was available in the environment that change was made in. Its
-two download URLs were fetched and sha256-checked directly instead —
-see that part's comments.) `db/bin/run-folia-nexa-db.sh` was additionally
-run end-to-end against the real MariaDB binaries (outside snap
-confinement, extracted from the `.deb`s directly) — see its own comments
-for what that did and didn't prove. None of the five have been
-**installed** (`snap install ... --dangerous`) or actually started in
-this environment — no root/interactive-sudo access was available for
-that — so runtime behavior under real strict confinement is still
-unverified; only the build step is confirmed.
+GeyserMC addition — the `geyser-plugins` part, PLAN.md §7B — was not
+re-verified against a real `snapcraft` build *in this AI dev-sandbox
+environment*; no `snapcraft`/`snapd` was available in the environment
+that change was made in. Its two download URLs were fetched and
+sha256-checked directly instead — see that part's comments. It, and the
+later Velocity 3.5.1 -> 4.0.0 bump alongside it, **have** since been
+confirmed for real by the operator, outside this sandbox: a real
+`snapcraft` build, `snap install --dangerous`, and start on the live
+`play.sullivan.linuxgroove.com` proxy — see the Bedrock client support
+entry in "What's real vs. what's documented-but-unverified" below for
+what that run caught and what's still open.) `db/bin/run-folia-nexa-db.sh`
+was additionally run end-to-end against the real MariaDB binaries
+(outside snap confinement, extracted from the `.deb`s directly) — see
+its own comments for what that did and didn't prove. None of `mgmt/`,
+`node/`, `bot/`, or `db/` have been **installed** (`snap install ...
+--dangerous`) or actually started in this AI dev-sandbox environment —
+no root/interactive-sudo access was available for that — so their
+runtime behavior under real strict confinement is still unverified;
+only the build step is confirmed for those four. `proxy/` is the
+exception, per the above.
 
 ## Running the test suites
 
@@ -305,19 +313,21 @@ The snap now also bundles Geyser-Velocity + floodgate-velocity, so
 Bedrock (console/mobile/Win10) clients can join the same proxy on
 `:19132/udp` with zero extra config beyond opening that port (see
 "Bootstrapping" note in PLAN.md §7B, and Phase 9 below for the VPS-edge
-firewall rule). This is new since the original snap build was last
-confirmed against real `snapcraft` — the two GeyserMC download URLs the
-`geyser-plugins` part uses were fetched and sha256-verified for real, and
-`velocity-runtime`'s Velocity 4.0.0 jar likewise; `routes-sync-plugin`'s
-Gradle project was compiled and its full test suite run for real (outside
-`snapcraft`, against local JDK 21 + 25 installs — `cd proxy && JAVA_HOME=
-~/.local/jdk21 ./gradlew build`) against `velocity-api:4.0.0`. But the
-full `snapcraft` build itself — the `gradle` plugin invoking that same
-Gradle project inside a build instance, plus every other part in this
-file — hasn't been re-run since the Velocity 3.5.1 -> 4.0.0 / JDK 21 ->
-25 bump (no `snapcraft`/`snapd` available in the environment this was
-added in); treat "confirmed to build" above as applying to everything
-except this Velocity/JDK/Geyser bump until someone actually runs it.
+firewall rule). The Velocity 3.5.1 -> 4.0.0 / JDK 21 -> 25 bump (PLAN.md
+§7B's Bedrock-support section, in "What's real vs. what's documented-
+but-unverified" below, has the full incompatibility history) **has**
+now been through a real `snapcraft` build + `snap install --dangerous` +
+start on the live `play.sullivan.linuxgroove.com` proxy — which is what
+caught a real `run-velocity.sh` bug the dev-environment verification
+alone didn't: `velocity.jar` used to be seeded into `$SNAP_COMMON` once
+and never refreshed, so the upgrade silently kept the daemon running the
+*old* 3.5.1 engine jar against the *new* Geyser 2.11.1 plugin, and
+crashed with the exact incompatibility this bump was meant to fix — now
+fixed by force-refreshing `velocity.jar` on every start, same as
+`folia-routes-sync-*.jar` already was. See that section below for what's
+confirmed vs. still open (mainly: a real Bedrock client actually
+reconnecting once this fixed script has been exercised by a real
+upgrade).
 
 There's no CLI command for user/token management yet (only `hosts` and
 `worlds` have one — see `mgmt/src/folia_mgmt/cli.py`), so create the
@@ -672,12 +682,27 @@ live infrastructure:
   called), which disassembling Geyser 2.11.1 build 1225's
   `MessageTranslator` bytecode confirms is exactly the signature it now
   invokes — the same NoSuchMethodError class of bug, checked the same
-  rigorous way, now resolved at the bytecode level. **Not yet
-  re-confirmed**: a full `snapcraft` build with the new JDK 25 stage-/
-  build-packages, an actual snap install, and a real Bedrock client
-  successfully reconnecting afterward — no `snapcraft`/`snapd`/root was
-  available in the environment this bump was made in, same constraint as
-  before.
+  rigorous way, now resolved at the bytecode level.
+
+  This *has* now been through a real `snapcraft` build + `snap install
+  --dangerous` + start on `play.sullivan.linuxgroove.com` (2026-08-17),
+  which caught one more real bug on top of the bytecode-level fix above:
+  `run-velocity.sh` used to seed `velocity.jar` into `$SNAP_COMMON`
+  once and never touch it again (the same "operator-editable, don't
+  clobber it" treatment as `velocity.toml`), so the upgrade left the
+  daemon running the *old* 3.5.1 `velocity.jar` against the *new*
+  Geyser 2.11.1 plugin jar (which did reseed, since operators are meant
+  to be able to force-refresh it) — hitting the exact
+  `NoSuchMethodError: GsonComponentSerializer.toBuilder()` this bump
+  was meant to fix, just one layer up the stack from where it was
+  fixed. `velocity.jar` is now force-refreshed on every start, the same
+  way `folia-routes-sync-*.jar` already was and for the identical
+  reason (see that jar's own comment in `run-velocity.sh`). **Not yet
+  confirmed**: this fixed `run-velocity.sh` actually being exercised by
+  a real snap upgrade (the live incident above was caught and manually
+  unblocked by deleting the stale `velocity.jar` before this script fix
+  existed, not by the fixed script itself), and a real Bedrock client
+  successfully reconnecting once Velocity is actually running 4.0.0.
 
 If you're picking up this project to actually run it: those are the
 places to validate first, roughly in that order.
