@@ -202,6 +202,28 @@ class PlayerPlaytimeDaily(SQLModel, table=True):
     seconds: int = 0
 
 
+class WorldPresence(SQLModel, table=True):
+    """Live online-player snapshot for one world. PLAN.md §7A.
+
+    Upserted wholesale on every report from folia-routes-sync's poll cycle
+    (`FOLIA_ROUTES_POLL_SECONDS`, default 5s — see
+    `FoliaRoutesSyncPlugin.pollAndReconcile`), which reads Velocity's own
+    `RegisteredServer.getPlayersConnected()` — the one place in this
+    cluster that actually knows who's connected to which backend right
+    now (node's own health agent explicitly doesn't, see
+    `node/src/folia_node/health.py`'s module docstring). Each report fully
+    replaces the previous player list for the worlds it mentions; there's
+    no join/quit event log, so a disconnected player just stops appearing
+    on the next poll. `updated_at` lets a reader (routers/public_stats.py)
+    treat a world that's stopped reporting (proxy down, world
+    unregistered) as stale rather than showing a frozen player list
+    forever."""
+
+    world_name: str = Field(primary_key=True)
+    players: list[dict] = Field(default_factory=list, sa_column=Column(JSON))  # [{"uuid": ..., "username": ...}]
+    updated_at: datetime = Field(default_factory=utcnow)
+
+
 class ProxyDisplay(SQLModel, table=True):
     """Singleton row (fixed id=1): the proxy's server-list MOTD and icon,
     editable from the dashboard and polled live by folia-routes-sync

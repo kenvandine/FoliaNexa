@@ -38,9 +38,10 @@
 }
 
 {$PLAY_DOMAIN:play.example.com} {
-	# The static player-hub portal (portal/) — no backend process here at
-	# all, just files. See deploy-portal.sh for how they get here.
-	root * {$PORTAL_ROOT:/srv/folianexa-portal}
-	file_server
+	# The static player-hub portal (portal/), served locally by the
+	# folia-nexa-portal snap (plain stdlib http.server, no framework) —
+	# this just terminates TLS and reverse-proxies, same pattern as
+	# admin.<domain>/api.<domain> above. See portal/README.md.
+	reverse_proxy {$PORTAL_UPSTREAM:127.0.0.1:8090}
 	encode gzip
 }

@@ -21,6 +21,7 @@ from folia_mgmt.routers import (
     datapacks,
     hosts,
     plugins,
+    presence,
     public_stats,
     routes,
     stats,
@@ -84,6 +85,7 @@ def create_app() -> FastAPI:
     app.include_router(plugins.router, prefix="/api/v1")
     app.include_router(datapacks.router, prefix="/api/v1")
     app.include_router(stats.router, prefix="/api/v1")
+    app.include_router(presence.router, prefix="/api/v1")
     app.include_router(public_stats.router, prefix="/api/v1")
     app.include_router(chat.router, prefix="/api/v1")
     app.include_router(cluster.router, prefix="/api/v1")

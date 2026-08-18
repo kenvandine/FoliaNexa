@@ -15,7 +15,7 @@ own defense in depth, not a substitute.
 from __future__ import annotations
 
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Callable, TypeVar
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -27,7 +27,22 @@ from folia_mgmt.avatar import get_player_avatar
 from folia_mgmt.config import Settings
 from folia_mgmt.db import get_session
 from folia_mgmt.deps import settings_dependency
-from folia_mgmt.models import PlayerPlaytimeDaily, PlayerProfile, PlayerStat
+from folia_mgmt.models import (
+    PlayerPlaytimeDaily,
+    PlayerProfile,
+    PlayerStat,
+    World,
+    WorldPhase,
+    WorldPresence,
+    WorldType,
+    utcnow,
+)
+
+# Same "back-of-house, never player-facing" set as routers/routes.py's
+# _NON_ROUTABLE — a staging/infra world should never show up as an
+# "online" world on the public portal either, duplicated locally rather
+# than importing routes.py's private constant across router modules.
+_NON_ROUTABLE = {WorldType.staging, WorldType.infra}
 
 # Longer-lived than the leaderboard/profile cache — skins change rarely
 # (a player editing their Mojang skin), so there's no reason to re-fetch
@@ -127,6 +142,58 @@ def leaderboards(
         )
 
     return cache.get_or_set(("leaderboards", stat, limit), settings.public_api_cache_seconds, compute)
+
+
+class OnlinePlayer(BaseModel):
+    uuid: str
+    username: str
+
+
+class WorldOnline(BaseModel):
+    world: str
+    type: str
+    player_count: int
+    players: list[OnlinePlayer]
+
+
+class WorldsOnlineResponse(BaseModel):
+    worlds: list[WorldOnline]
+    total_players: int
+
+
+@router.get("/worlds", response_model=WorldsOnlineResponse)
+def worlds_online(
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(settings_dependency),
+    cache: TTLCache = Depends(_get_cache),
+) -> WorldsOnlineResponse:
+    """Who's online, per world — fed by folia-routes-sync's presence
+    reports (routers/presence.py), same near-real-time-but-not-exact
+    caveat as the rest of this file's data (PLAN.md §7A: no WebSocket
+    live-push layer). A world with no fresh WorldPresence row (never
+    reported, or its last report is older than
+    `public_presence_stale_seconds`) is listed with zero players rather
+    than omitted, so an empty world still shows up as "0 online" instead
+    of silently vanishing from the page."""
+
+    def compute() -> WorldsOnlineResponse:
+        worlds = session.exec(select(World).where(World.phase == WorldPhase.running)).all()
+        routable = sorted((w for w in worlds if w.type not in _NON_ROUTABLE), key=lambda w: w.name)
+        stale_cutoff = utcnow() - timedelta(seconds=settings.public_presence_stale_seconds)
+
+        entries = []
+        total_players = 0
+        for w in routable:
+            presence = session.get(WorldPresence, w.name)
+            players: list[OnlinePlayer] = []
+            if presence is not None and presence.updated_at >= stale_cutoff:
+                players = [OnlinePlayer(**p) for p in presence.players]
+            entries.append(WorldOnline(world=w.name, type=w.type.value, player_count=len(players), players=players))
+            total_players += len(players)
+
+        return WorldsOnlineResponse(worlds=entries, total_players=total_players)
+
+    return cache.get_or_set(("worlds-online",), settings.public_api_cache_seconds, compute)
 
 
 class PlayerSummary(BaseModel):

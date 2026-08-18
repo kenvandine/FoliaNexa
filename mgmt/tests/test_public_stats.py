@@ -1,6 +1,108 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from helpers import auth_header
+
+
+def _enroll_host(client, admin_token, **overrides):
+    join = client.post("/api/v1/hosts/join-token", headers=auth_header(admin_token)).json()["token"]
+    body = {
+        "name": "node-a",
+        "address": "10.0.1.11:8443",
+        "project": "folia",
+        "lxd_trust_token": "good-token",
+        "capacity": {"cpu_cores": 6, "memory_gb": 12},
+        "labels": {},
+    }
+    body.update(overrides)
+    resp = client.post("/api/v1/hosts/enroll", json=body, headers=auth_header(join))
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+def _report_presence(client, viewer_token, world, players):
+    body = {"worlds": [{"world": world, "players": players}]}
+    resp = client.post("/api/v1/presence/report", json=body, headers=auth_header(viewer_token))
+    assert resp.status_code == 200, resp.text
+
+
+def test_worlds_online_lists_running_worlds_with_zero_players_by_default(client, admin_token, operator_token):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+
+    resp = client.get("/api/v1/public/worlds")
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["total_players"] == 0
+    assert body["worlds"] == [{"world": "world-overworld", "type": "overworld", "player_count": 0, "players": []}]
+
+
+def test_worlds_online_reflects_reported_presence(client, admin_token, operator_token, viewer_token):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    _report_presence(
+        client,
+        viewer_token,
+        "world-overworld",
+        [{"uuid": "uuid-a", "username": "Alice"}, {"uuid": "uuid-b", "username": "Bob"}],
+    )
+
+    resp = client.get("/api/v1/public/worlds")
+    body = resp.json()
+    assert body["total_players"] == 2
+    [world] = body["worlds"]
+    assert world["player_count"] == 2
+    assert {p["username"] for p in world["players"]} == {"Alice", "Bob"}
+
+
+def test_worlds_online_excludes_non_routable_and_non_running_worlds(client, admin_token, operator_token, viewer_token):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    # stays pending: not enough capacity left on node-a
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-huge", "type": "minigame", "cpu_cores": 10, "memory_gb": 10},
+        headers=auth_header(operator_token),
+    )
+
+    resp = client.get("/api/v1/public/worlds")
+    names = {w["world"] for w in resp.json()["worlds"]}
+    assert names == {"world-overworld"}
+
+
+def test_worlds_online_treats_stale_presence_as_empty(client, admin_token, operator_token, viewer_token, db_session):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    _report_presence(client, viewer_token, "world-overworld", [{"uuid": "uuid-a", "username": "Alice"}])
+
+    from folia_mgmt.models import WorldPresence, utcnow
+
+    presence = db_session.get(WorldPresence, "world-overworld")
+    presence.updated_at = utcnow() - timedelta(seconds=999)
+    db_session.add(presence)
+    db_session.commit()
+
+    resp = client.get("/api/v1/public/worlds")
+    [world] = resp.json()["worlds"]
+    assert world["player_count"] == 0
+    assert world["players"] == []
 
 
 def _seed(client, operator_token):

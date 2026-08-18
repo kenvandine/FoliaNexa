@@ -1,0 +1,10 @@
+#!/bin/sh
+# Restarts the daemon after `snap set folia-nexa-portal <key>=<value>` so
+# scripts/run-portal-daemon.sh's snapctl-get re-reads the new value. No-op
+# on first install (before `snap start` has ever run) — nothing to
+# restart yet. Same pattern as folia-nexa-mgmt's own configure hook.
+set -e
+
+if snapctl services "$SNAP_NAME.daemon" | tail -n +2 | grep -q ' active '; then
+  snapctl restart "$SNAP_NAME.daemon"
+fi

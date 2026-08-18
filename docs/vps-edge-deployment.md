@@ -24,8 +24,8 @@ network for the whole of this guide.
                   │   Linode VPS   │
                   │  Caddy (TLS)   │──── admin.<domain>  ──┐
                   │  folia-nexa-   │──── api.<domain>    ──┤
-                  │    proxy       │──── play.<domain>   ──┤ (portal/,
-                  │  (Velocity)    │                       │  static)
+                  │    proxy       │──── play.<domain>   ──┤ (portal/
+                  │  (Velocity)    │                       │  snap)
                   └───────┬────────┘                       │
                           │ WireGuard (UDP 51820,           │
                           │ dialed FROM home, no             │
@@ -42,9 +42,10 @@ network for the whole of this guide.
 
 Three things move to (or originate from) the VPS: `folia-nexa-proxy`
 (Minecraft's public port), Caddy (TLS termination + the admin/public API
-reverse proxy), and the static `portal/` player hub. Everything else —
-mgmt, the LXD hosts, the worlds themselves — stays exactly where it is
-today.
+reverse proxy), and the `folia-nexa-portal` player hub — a snap like
+every other component now, not a bare rsync of static files. Everything
+else — mgmt, the LXD hosts, the worlds themselves — stays exactly where
+it is today.
 
 ## Phase 1: Provision the VPS
 
@@ -179,13 +180,25 @@ curl https://api.<domain>/api/v1/public/players
 
 ## Phase 6: Deploy the player hub portal
 
+Like every other component in this cluster, the portal is its own snap
+(`folia-nexa-portal`) — a plain stdlib `http.server` wrapper around
+`portal/`'s static HTML/CSS/JS, no framework, no build step (see
+`portal/README.md`). Build it on whichever machine builds your other
+snaps, then install and start it **on the VPS**:
+
 ```bash
-./deploy/vps/deploy-portal.sh --vps-host root@<vps-ip>
+cd portal && snapcraft
+scp folia-nexa-portal_0.1_amd64.snap root@<vps-ip>:
+ssh root@<vps-ip> 'snap install ./folia-nexa-portal_0.1_amd64.snap --dangerous && snap start folia-nexa-portal.daemon'
 ```
 
-rsyncs `portal/`'s static files to wherever Caddy's `PORTAL_ROOT` points
-(default `/srv/folianexa-portal`). No build step, no snap — see
-`portal/README.md`. Confirm:
+It listens on `127.0.0.1:8090` by default (override with `snap set
+folia-nexa-portal listen-port=<port>` / `listen-host=<host>` if you need
+something else — matches `PORTAL_UPSTREAM` in `deploy/vps/Caddyfile`,
+which reverse-proxies `play.<domain>` to it, same pattern as
+`admin.<domain>`/`api.<domain>`). To update the portal after an edit,
+just rebuild and re-install the snap — there's no separate rsync step
+anymore. Confirm:
 
 ```bash
 open https://play.<domain>/

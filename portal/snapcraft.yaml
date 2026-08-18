@@ -1,0 +1,43 @@
+name: folia-nexa-portal
+version: '0.1'
+summary: Static player-hub portal for a FoliaNexa cluster (leaderboards, who's online)
+description: |
+  Serves portal/'s static HTML/CSS/JS (leaderboards, player profiles,
+  playtime heatmaps, who's-online — PLAN.md §7A) locally, so this
+  component deploys the same way as every other piece of the cluster
+  (`snap install`) instead of the old deploy/vps/deploy-portal.sh rsync.
+  Caddy on the VPS still terminates TLS and reverse-proxies
+  play.<domain> to this daemon's local port — see deploy/vps/Caddyfile.
+  No server-side logic here at all: folia_portal/serve.py is a plain
+  stdlib http.server wrapper, and the actual data comes from
+  folia-nexa-mgmt's own GET /api/v1/public/* (unauthenticated, fetched
+  client-side by portal.js).
+base: core24
+confinement: strict
+grade: stable
+
+apps:
+  daemon:
+    command: bin/run-portal-daemon.sh
+    daemon: simple
+    restart-condition: on-failure
+    restart-delay: 5s
+    plugs: [network-bind]
+
+# `snap set folia-nexa-portal listen-port=<port>` overrides
+# FOLIA_PORTAL_LISTEN_PORT (default 8090, serve.py). `snap set
+# folia-nexa-portal listen-host=<host>` overrides FOLIA_PORTAL_LISTEN_HOST
+# (default 127.0.0.1 — only widen this if something other than a
+# same-box reverse proxy needs to reach it directly). Both re-read via
+# snapctl on every daemon start by scripts/run-portal-daemon.sh;
+# snap/hooks/configure restarts the daemon when either changes.
+parts:
+  portal:
+    plugin: python
+    source: .
+    python-packages: []
+    override-build: |
+      craftctl default
+      install -m 0755 scripts/run-portal-daemon.sh "$CRAFT_PART_INSTALL/bin/run-portal-daemon.sh"
+      mkdir -p "$CRAFT_PART_INSTALL/portal"
+      cp *.html portal.css portal.js "$CRAFT_PART_INSTALL/portal/"

@@ -122,6 +122,21 @@ select, input {
   background: var(--border);
 }
 
+.world-section { margin-bottom: 1.5rem; }
+.world-section:last-child { margin-bottom: 0; }
+.world-heading { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.7rem; }
+.world-heading h3 { margin: 0; font-size: 1rem; }
+.world-type {
+  color: var(--muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.1rem 0.4rem;
+}
+.world-count { color: var(--ok); font-size: 0.82rem; margin-left: auto; }
+
 .error { color: var(--danger); font-size: 0.85rem; }
 .loading { color: var(--muted); font-size: 0.85rem; }
 

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Who's online — FoliaNexa</title>
+<link rel="stylesheet" href="portal.css">
+</head>
+<body>
+<header>
+  <h1><a href="index.html">FoliaNexa</a></h1>
+  <nav>
+    <a href="index.html">Home</a>
+    <a href="online.html" class="active">Who's online</a>
+    <a href="leaderboards.html">Leaderboards</a>
+  </nav>
+</header>
+<main>
+  <div class="card">
+    <h2>Who's online <span id="total-count" class="muted"></span></h2>
+    <p class="muted">
+      Reported by the proxy every few seconds — not an exact instant, but
+      close to it (no player-list caching beyond this page's own ~30s
+      refresh).
+    </p>
+    <div id="worlds">
+      <p class="loading">Loading…</p>
+    </div>
+  </div>
+</main>
+<footer>FoliaNexa player hub — data updates roughly every 30 seconds.</footer>
+<script src="portal.js"></script>
+<script>
+function formatWorldType(type) {
+  return type.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function renderWorlds(container, worlds) {
+  if (worlds.length === 0) {
+    container.innerHTML = '<p class="muted">No worlds are running right now.</p>';
+    return;
+  }
+  container.innerHTML = "";
+  for (const world of worlds) {
+    const section = document.createElement("div");
+    section.className = "world-section";
+    const playersHtml = world.players.length
+      ? world.players
+          .map(
+            (p) => `
+        <a class="player-card" href="player.html?uuid=${encodeURIComponent(p.uuid)}">
+          <img src="${avatarUrl(p.uuid)}" alt="${p.username}" loading="lazy">
+          <span class="name">${p.username}</span>
+        </a>`
+          )
+          .join("")
+      : '<p class="muted">Nobody here right now.</p>';
+    section.innerHTML = `
+      <div class="world-heading">
+        <h3>${world.world}</h3>
+        <span class="world-type">${formatWorldType(world.type)}</span>
+        <span class="world-count">${world.player_count} online</span>
+      </div>
+      <div class="player-grid">${playersHtml}</div>
+    `;
+    container.appendChild(section);
+  }
+}
+
+async function load() {
+  const container = document.getElementById("worlds");
+  const totalEl = document.getElementById("total-count");
+  try {
+    const { worlds, total_players } = await apiGet("/worlds");
+    totalEl.textContent = `— ${total_players} player${total_players === 1 ? "" : "s"} across ${worlds.length} world${worlds.length === 1 ? "" : "s"}`;
+    renderWorlds(container, worlds);
+  } catch (err) {
+    showError(container, err);
+  }
+}
+
+load();
+</script>
+</body>
+</html>

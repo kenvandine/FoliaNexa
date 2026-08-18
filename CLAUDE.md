@@ -27,7 +27,7 @@ host.
 | `docs/plugin-dev/` | Three-part how-to series: dev environment setup, Folia-safe plugin architecture, submitting a plugin for catalog review | Markdown |
 | `.claude/skills/folia-plugin-scaffold/` | Claude Code skill that operationalizes `docs/plugin-dev/` — scaffolds and writes a real Folia/Paper plugin, from a description or a Modrinth mod/plugin link | Markdown + templates |
 | `.claude/skills/cluster-onboarding/` | Claude Code skill that operationalizes CLAUDE.md's bootstrap phases + `docs/vps-edge-deployment.md` into an interactive runbook for standing up the VPS edge, DNS, and trusting LXD hosts | Markdown |
-| `portal/` | Public player hub (leaderboards, profiles, playtime heatmaps) — static site, no build step, deployed to the VPS edge (PLAN.md §7A) | HTML/CSS/vanilla JS |
+| `portal/` | `folia-nexa-portal` — public player hub (leaderboards, profiles, playtime heatmaps, who's online) — static HTML/CSS/JS (no build step) served by a small stdlib Python daemon, deployed to the VPS edge as its own snap like every other component (PLAN.md §7A) | HTML/CSS/vanilla JS + Python 3.12+ (server), pytest |
 | `deploy/vps/` | WireGuard tunnel + Caddy config for the VPS edge (PLAN.md §7A) — see `docs/vps-edge-deployment.md` | Bash, Caddyfile, WireGuard config templates |
 
 In-house plugin source doesn't live in this repo — it's in the sibling
@@ -37,16 +37,21 @@ repo (one top-level directory per plugin, e.g. `campus-lobby/` for the
 for-review.md`. `catalog.yaml`'s `download_url` points at a release
 built from there; this repo only ever needs that URL, not the source.
 
-Each of `mgmt/`, `node/`, `proxy/`, `bot/`, `db/` is an independent,
-independently testable component with its own `snapcraft.yaml`. **All
-five build successfully with real `snapcraft` 9.0.1** (`snapcraft` from
-each directory) — confirmed in this environment against a real LXD-based
-build backend, not just reviewed. That build pass caught two real bugs
-that a review wouldn't have: `proxy/snapcraft.yaml` was pointed at
+Each of `mgmt/`, `node/`, `proxy/`, `bot/`, `db/`, `portal/` is an
+independent, independently testable component with its own
+`snapcraft.yaml`. **All six build successfully with real `snapcraft`
+9.0.1** (`snapcraft` from each directory) — confirmed in this
+environment against a real LXD-based build backend, not just reviewed.
+That build pass caught two real bugs that a review wouldn't have:
+`proxy/snapcraft.yaml` was pointed at
 `api.papermc.io/v2`, which PaperMC has since sunset in favor of
 `fill.papermc.io/v3` (different host, different response shape); and
 `bot/snapcraft.yaml`'s `summary` field exceeded snap metadata's 78-
-character limit. Both fixed. (`proxy/snapcraft.yaml`'s later Bedrock/
+character limit. Both fixed. (`portal/`'s build was verified further
+than a bare pass/fail — the resulting `.snap` was unsquashed and its
+contents listed, confirming `snapcraft.yaml`'s `override-build` actually
+copied the static HTML/CSS/JS into the snap alongside the Python venv,
+not just that `snapcraft` exited 0.) (`proxy/snapcraft.yaml`'s later Bedrock/
 GeyserMC addition — the `geyser-plugins` part, PLAN.md §7B — was not
 re-verified against a real `snapcraft` build *in this AI dev-sandbox
 environment*; no `snapcraft`/`snapd` was available in the environment
@@ -61,17 +66,17 @@ what that run caught and what's still open.) `db/bin/run-folia-nexa-db.sh`
 was additionally run end-to-end against the real MariaDB binaries
 (outside snap confinement, extracted from the `.deb`s directly) — see
 its own comments for what that did and didn't prove. None of `mgmt/`,
-`node/`, `bot/`, or `db/` have been **installed** (`snap install ...
---dangerous`) or actually started in this AI dev-sandbox environment —
-no root/interactive-sudo access was available for that — so their
-runtime behavior under real strict confinement is still unverified;
-only the build step is confirmed for those four. `proxy/` is the
-exception, per the above.
+`node/`, `bot/`, `db/`, or `portal/` have been **installed** (`snap
+install ... --dangerous`) or actually started in this AI dev-sandbox
+environment — no root/interactive-sudo access was available for that —
+so their runtime behavior under real strict confinement is still
+unverified; only the build step is confirmed for those five. `proxy/`
+is the exception, per the above.
 
 ## Running the test suites
 
 ```bash
-# mgmt (Python) — 294 tests
+# mgmt (Python) — 314 tests
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
@@ -83,8 +88,12 @@ cd node && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 cd bot && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
-# proxy (Java) — 35 tests, real Gradle + real velocity-api jar
+# proxy (Java) — 39 tests, real Gradle + real velocity-api jar
 cd proxy && ./gradlew test   # needs a JDK 21 on JAVA_HOME, plus a JDK 25 installed
+
+# portal (Python) — 4 tests, real HTTP against the actual static file server
+cd portal && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+.venv/bin/pytest -q
 ```
 
 `proxy/build.gradle.kts` compiles against `velocity-api:4.0.0` (bumped
@@ -112,11 +121,12 @@ mkdir -p ~/.local/jdk25 && tar -xzf /tmp/jdk25.tar.gz -C ~/.local/jdk25 --strip-
 cd proxy && JAVA_HOME=~/.local/jdk21 ./gradlew test
 ```
 
-All three suites are independent — no shared fixtures, no ordering
+All five suites are independent — no shared fixtures, no ordering
 requirement. `mgmt`'s and `node`'s tests never touch a real LXD host or
 Mojang/Discord API (everything's faked/mocked); `proxy`'s tests compile
 and run against the *real* `velocity-api` jar but don't start a real
-Velocity server.
+Velocity server; `portal`'s tests start the real `serve.py` HTTP server
+on a real (ephemeral) socket rather than mocking it.
 
 ## Bootstrapping a fresh host from scratch
 
@@ -446,9 +456,9 @@ Everything above assumes players reach the cluster on your home network
 directly. This phase adds a public VPS (Linode or otherwise) in front of
 it instead — a WireGuard tunnel so nothing needs to be forwarded at home,
 `folia-nexa-proxy` relocated onto the VPS as the actual public-facing
-Minecraft port, Caddy for TLS, and the `portal/` static player hub
-(leaderboards/profiles/playtime). `folia-nexa-mgmt` itself **never
-moves** — it stays on the home network for all of this.
+Minecraft port, Caddy for TLS, and the `folia-nexa-portal` player hub
+snap (leaderboards/profiles/playtime/who's-online). `folia-nexa-mgmt`
+itself **never moves** — it stays on the home network for all of this.
 
 Full walkthrough: [`docs/vps-edge-deployment.md`](docs/vps-edge-deployment.md).
 Supporting config lives in [`deploy/vps/`](deploy/vps/). Short version:
@@ -465,8 +475,12 @@ sudo systemctl enable --now wg-quick@wg0   # both ends
 sudo cp deploy/vps/Caddyfile /etc/caddy/Caddyfile   # filled in first
 sudo systemctl reload caddy
 
-# Deploy the static portal:
-./deploy/vps/deploy-portal.sh --vps-host root@<vps-ip>
+# Build and install the portal snap (also on the VPS — build it wherever
+# you build your other snaps, then copy the .snap over if that's not the
+# VPS itself):
+cd portal && snapcraft
+sudo snap install ./folia-nexa-portal_0.1_amd64.snap --dangerous
+sudo snap start folia-nexa-portal.daemon
 ```
 
 The player hub's data (leaderboards, profiles) comes from a new mgmt-side
@@ -618,6 +632,24 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   producing configs `wg-quick strip` parses cleanly. See
   `docs/vps-edge-deployment.md`'s own "what's real vs. unverified"
   section for the full breakdown.
+- The portal's "who's online" view (`portal/online.html`,
+  `mgmt/src/folia_mgmt/routers/presence.py`'s `POST
+  /api/v1/presence/report` and `GET /api/v1/public/worlds`, and
+  `FoliaRoutesSyncPlugin`'s new presence-reporting job in `proxy/`):
+  real pytest coverage (`mgmt/tests/test_presence.py`,
+  `test_public_stats.py`'s `test_worlds_online_*`) and a real Gradle
+  build/test of the proxy-side JSON (`PresenceJsonTest`). The page itself
+  was also exercised the same way as the rest of `portal/` — a real
+  running `folia-nexa-mgmt`, seeded via real `POST
+  /api/v1/presence/report` calls against real Mojang UUIDs, loaded in
+  real headless Chromium — confirming the per-world player cards,
+  avatars, and the stale-presence-falls-back-to-"0 online" behavior all
+  render correctly from real API responses. See `portal/README.md`'s own
+  "what's real" section. Not verified: a real Velocity proxy actually
+  calling `RegisteredServer.getPlayersConnected()` and that report
+  reaching a live mgmt instance — no live cluster was available in this
+  environment, so the browser check above posted directly to the report
+  endpoint in place of a real proxy.
 
 Written against documented API contracts but **not** exercised against
 live infrastructure:

@@ -21,6 +21,7 @@ import org.slf4j.Logger;
 
 import java.net.InetSocketAddress;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,7 +31,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * Two related jobs, both driven by polling folia-nexa-mgmt:
+ * Three related jobs, all driven by polling folia-nexa-mgmt:
  *
  * <ol>
  *   <li>Keeps Velocity's backend server list in sync with
@@ -40,6 +41,10 @@ import java.util.concurrent.atomic.AtomicReference;
  *       {@code GET /api/v1/access-requests/approved-uuids} — only
  *       Discord-approved players get past the proxy at all (PLAN.md
  *       §11C).</li>
+ *   <li>Reports who's connected to which backend world via
+ *       {@code POST /api/v1/presence/report}, from Velocity's own
+ *       {@code RegisteredServer.getPlayersConnected()} — feeds the public
+ *       player hub's "who's online" view (PLAN.md §7A).</li>
  * </ol>
  *
  * Configuration is via environment variables — matching how the rest of
@@ -92,11 +97,12 @@ public final class FoliaRoutesSyncPlugin {
         MgmtDisplayClient displayClient = new MgmtDisplayClient(mgmtUrl, apiToken, Duration.ofSeconds(10));
         ChatClient chat = new ChatClient(mgmtUrl, apiToken, Duration.ofSeconds(10));
         chatClient.set(chat);
+        PresenceClient presenceClient = new PresenceClient(mgmtUrl, apiToken, Duration.ofSeconds(10));
 
         logger.info("polling {} every {}s (access gate: {})", mgmtUrl, pollSeconds, accessGateEnabled.get() ? "enabled" : "disabled");
 
         server.getScheduler()
-                .buildTask(this, () -> pollAndReconcile(routesClient, accessGateClient, displayClient, chat))
+                .buildTask(this, () -> pollAndReconcile(routesClient, accessGateClient, displayClient, chat, presenceClient))
                 .repeat(Duration.ofSeconds(pollSeconds))
                 .schedule();
     }
@@ -161,13 +167,31 @@ public final class FoliaRoutesSyncPlugin {
     }
 
     private void pollAndReconcile(
-            MgmtRoutesClient routesClient, AccessGateClient accessGateClient, MgmtDisplayClient displayClient, ChatClient chat) {
+            MgmtRoutesClient routesClient, AccessGateClient accessGateClient, MgmtDisplayClient displayClient,
+            ChatClient chat, PresenceClient presenceClient) {
         reconcileRoutes(routesClient);
         if (accessGateEnabled.get()) {
             refreshApprovedUuids(accessGateClient);
         }
         refreshDisplay(displayClient);
         deliverPendingChat(chat);
+        reportPresence(presenceClient);
+    }
+
+    private void reportPresence(PresenceClient client) {
+        Map<String, List<OnlinePlayer>> worldPlayers = new HashMap<>();
+        for (RegisteredServer registered : server.getAllServers()) {
+            List<OnlinePlayer> players = new ArrayList<>();
+            for (Player player : registered.getPlayersConnected()) {
+                players.add(new OnlinePlayer(player.getUniqueId().toString(), player.getUsername()));
+            }
+            worldPlayers.put(registered.getServerInfo().getName(), players);
+        }
+        try {
+            client.report(worldPlayers);
+        } catch (Exception e) {
+            logger.debug("failed to report player presence to mgmt: {}", e.getMessage());
+        }
     }
 
     private void deliverPendingChat(ChatClient client) {

@@ -1,0 +1,24 @@
+[project]
+name = "folia-nexa-portal"
+version = "0.1.0"
+description = "Static file server for FoliaNexa's public player-hub portal (see PLAN.md §7A)"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+]
+
+[project.scripts]
+folia-nexa-portal = "folia_portal.serve:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

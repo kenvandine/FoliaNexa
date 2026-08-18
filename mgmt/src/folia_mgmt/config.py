@@ -87,6 +87,14 @@ class Settings(BaseSettings):
     public_api_cache_seconds: float = 30.0
     public_api_rate_limit_per_minute: int = 60
 
+    # A world's WorldPresence row (routers/presence.py) is treated as
+    # stale — shown as empty rather than a frozen player list — once it's
+    # older than this. folia-routes-sync reports on its own
+    # FOLIA_ROUTES_POLL_SECONDS cadence (default 5s), so this default (12x
+    # that) tolerates a handful of missed polls before assuming the proxy
+    # itself, or that one world, has gone dark.
+    public_presence_stale_seconds: float = 60.0
+
     # Velocity "modern" forwarding secret, shared between folia-nexa-proxy
     # and every world's paper-global.yml (see PLAN.md §7 and
     # docs.papermc.io/velocity/player-information-forwarding). mgmt is the

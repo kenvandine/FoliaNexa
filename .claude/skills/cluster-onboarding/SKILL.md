@@ -125,9 +125,12 @@ Work through in order, flipping the matching `phases.*` key once each is
    `curl https://api.<domain>/api/v1/public/players` — but only after
    DNS (§3) is actually live; if the operator hits this out of order,
    say so rather than treating a failed curl as a Caddy bug.
-5. **Portal** (`portal`) — `./deploy/vps/deploy-portal.sh --vps-host
-   root@<vps-ip>`. Verify by fetching `https://play.<domain>/` (once DNS
-   is live).
+5. **Portal** (`portal`) — build and install the `folia-nexa-portal` snap
+   *on the VPS* (`cd portal && snapcraft`, then `snap install
+   ./folia-nexa-portal_0.1_amd64.snap --dangerous && snap start
+   folia-nexa-portal.daemon`) — same pattern as every other component,
+   not a bare rsync anymore. Verify by fetching `https://play.<domain>/`
+   (once DNS is live).
 6. **Proxy relocation** (`proxy_relocated`) — CLAUDE.md Phase 7's
    `snapcraft` + `snap install --dangerous` for `folia-nexa-proxy`, run
    *on the VPS* instead of home, with `FOLIA_MGMT_URL` pointed at mgmt's
