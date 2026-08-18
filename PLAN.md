@@ -78,7 +78,9 @@ trusted host's LXD API directly (`scheduler.check_host_health`) and flips
 status based on reachability, so a host that loses power or network stops
 showing as `online` within one reconcile interval. `draining`/`cordoned`
 are exclusively operator-set (`POST /hosts/{name}/drain`, or a future
-cordon action) and are never touched by the automatic check.
+cordon action) and are never touched by the automatic health check —
+but draining a host *does* actively evacuate it: see §5's "Host health"
+section for the migration behavior that runs against it.
 
 ### World
 
@@ -189,6 +191,21 @@ world crashed below; there's no consecutive-failure debounce. This runs
 first in the pass specifically so a host that just went dark is excluded
 from that same tick's placement decisions, not just the next one.
 
+### Draining a host
+
+`POST /hosts/{name}/drain` sets `Host.status: draining` — this both stops
+new placements from landing there (the `status: online` filter in
+Placement below already excludes it) and, since `scheduler.
+migrate_worlds_off_draining_hosts` runs every reconcile pass, actively
+evacuates it: every world still sitting on a draining host is migrated
+(stop → export → import → start, same as the manual per-world
+`POST /worlds/{name}/migrate`, §13 — a brief outage is expected) to
+whichever `online` host currently has the most free capacity left after
+the move. A world that can't be moved yet (no online host with room)
+stays put and is retried on the next pass. There is no "undrain" — taking
+a drained host back into service is a direct DB edit or re-enrollment,
+not an API call, since nothing in this codebase ever needed one before.
+
 ### Placement
 
 On each reconcile pass, for every world in `phase: pending`:
@@ -204,7 +221,7 @@ On each reconcile pass, for every world in `phase: pending`:
 `pending → provisioning → running → (crashed → restarting) → draining → deleted`
 
 - **crashed**: node agent's local health endpoint stops responding or JVM exits non-zero; mgmt restarts the container (not a fresh reschedule — data and identity stay put).
-- **draining**: operator-initiated (host maintenance, decommission). Mgmt snapshots the world, and either leaves it stopped or migrates it (§13) to another host with capacity.
+- **draining** (a *World*'s phase, distinct from a *Host*'s `draining` status above): operator-initiated via `DELETE /worlds/{name}` — a transient state on the way to permanent deletion, not a stop/park state; `scheduler.teardown_world` deletes the container and hard-deletes the row as soon as it's confirmed gone. Snapshot first (`worlds snapshot`) if the data needs to survive — this is not reversible. Evacuating a world off a *host* being decommissioned, without deleting it, is the `Host.status: draining` behavior in "Draining a host" above instead.
 
 ### What the scheduler deliberately does *not* do (v1)
 
