@@ -89,7 +89,9 @@ def test_drain_host(client, admin_token, operator_token):
     assert resp.json()["status"] == "draining"
 
 
-def test_powered_off_host_flips_to_offline_on_next_reconcile(client, admin_token, operator_token, fake_lxd):
+def test_powered_off_host_flips_to_offline_on_next_reconcile(
+    client, admin_token, operator_token, fake_lxd, trigger_reconcile
+):
     """Reproduces the bug: enrolling a host used to leave it 'online' in
     the dashboard forever, even after it lost power — nothing ever
     re-checked reachability. Now every reconcile pass (scheduler.
@@ -99,23 +101,12 @@ def test_powered_off_host_flips_to_offline_on_next_reconcile(client, admin_token
     assert client.get("/api/v1/hosts", headers=auth_header(admin_token)).json()[0]["status"] == "online"
 
     fake_lxd.unreachable.add("node-a")
-    # A world create is the simplest way to force a reconcile pass through
-    # the API surface under test, same trick test_health_recovery.py uses.
-    resp = client.post(
-        "/api/v1/worlds",
-        json={"name": "world-trigger", "type": "lobby", "cpu_cores": 1, "memory_gb": 1},
-        headers=auth_header(operator_token),
-    )
-    assert resp.status_code == 200
+    trigger_reconcile()
 
     assert client.get("/api/v1/hosts", headers=auth_header(admin_token)).json()[0]["status"] == "offline"
 
     fake_lxd.unreachable.discard("node-a")
-    client.post(
-        "/api/v1/worlds",
-        json={"name": "world-trigger-2", "type": "lobby", "cpu_cores": 1, "memory_gb": 1},
-        headers=auth_header(operator_token),
-    )
+    trigger_reconcile()
     assert client.get("/api/v1/hosts", headers=auth_header(admin_token)).json()[0]["status"] == "online"
 
 
@@ -133,7 +124,9 @@ def _world_by_name(client, operator_token, name):
     return next(w for w in worlds if w["name"] == name)
 
 
-def test_draining_a_host_migrates_its_worlds_elsewhere(client, admin_token, operator_token, fake_lxd):
+def test_draining_a_host_migrates_its_worlds_elsewhere(
+    client, admin_token, operator_token, fake_lxd, trigger_reconcile
+):
     """Draining used to only stop *new* placements — a world already on
     that host just kept running there forever. Now every reconcile pass
     actively evacuates worlds off a draining host, PLAN.md §2/§5."""
@@ -148,13 +141,8 @@ def test_draining_a_host_migrates_its_worlds_elsewhere(client, admin_token, oper
     assert resp.status_code == 200
 
     # Pass 1: migrate_worlds_off_draining_hosts moves the container to
-    # node-b and flips world-a to provisioning (same trigger trick as
-    # test_health_recovery.py — a world create forces one reconcile pass).
-    client.post(
-        "/api/v1/worlds",
-        json={"name": "world-trigger-1", "type": "lobby", "cpu_cores": 1, "memory_gb": 1},
-        headers=auth_header(operator_token),
-    )
+    # node-b and flips world-a to provisioning.
+    trigger_reconcile()
     world = _world_by_name(client, operator_token, "world-a")
     assert world["host_name"] == "node-b"
     assert world["phase"] == "provisioning"
@@ -163,11 +151,7 @@ def test_draining_a_host_migrates_its_worlds_elsewhere(client, admin_token, oper
 
     # Pass 2: finalize_provisioning re-polls for an address and flips it
     # back to running on its new host.
-    client.post(
-        "/api/v1/worlds",
-        json={"name": "world-trigger-2", "type": "lobby", "cpu_cores": 1, "memory_gb": 1},
-        headers=auth_header(operator_token),
-    )
+    trigger_reconcile()
     world = _world_by_name(client, operator_token, "world-a")
     assert world["phase"] == "running"
     assert world["host_name"] == "node-b"

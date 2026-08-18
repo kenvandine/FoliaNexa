@@ -9,6 +9,7 @@ from folia_mgmt.db import get_engine, init_db
 from folia_mgmt.deps import get_health_check, get_lxd_client, get_uuid_resolver
 from folia_mgmt.lxd_client import LXDError
 from folia_mgmt.models import User, UserRole
+from folia_mgmt.scheduler import reconcile
 
 
 class FakeLXDClient:
@@ -19,6 +20,8 @@ class FakeLXDClient:
         self.launched: list[tuple[str, str]] = []  # (host_name, container_name)
         self.deleted: list[tuple[str, str]] = []
         self.restarted: list[tuple[str, str]] = []
+        self.stopped: list[tuple[str, str]] = []
+        self.started: list[tuple[str, str]] = []
         self.snapshots: list[tuple[str, str, str]] = []
         self.restores: list[tuple[str, str, str]] = []
         self._next_ip = 10
@@ -62,6 +65,12 @@ class FakeLXDClient:
 
     def restart_container(self, host, name):
         self.restarted.append((host.name, name))
+
+    def stop_container(self, host, name):
+        self.stopped.append((host.name, name))
+
+    def start_container(self, host, name):
+        self.started.append((host.name, name))
 
     def update_config(self, host, name, config):
         self.updated_config[(host.name, name)] = config
@@ -155,6 +164,25 @@ def db_session(app):
     engine = get_engine(app.state.test_settings)
     with Session(engine) as session:
         yield session
+
+
+@pytest.fixture
+def trigger_reconcile(app, fake_lxd, fake_health_check):
+    """Runs one real reconcile() pass directly against the test's own
+    engine/fake LXD client/fake health check — used by tests that need to
+    force a pass through scheduler logic (health recovery, host draining,
+    migration) without waiting on the periodic background loop. POST
+    /worlds used to double as a way to trigger this (it ran a full
+    reconcile()), but that's no longer true — world creation now only
+    places the world being created, not the whole cluster — so tests that
+    need a full pass call this directly instead."""
+
+    def _trigger():
+        engine = get_engine(app.state.test_settings)
+        with Session(engine) as session:
+            reconcile(session, fake_lxd, settings=app.state.test_settings, health_check=fake_health_check)
+
+    return _trigger
 
 
 @pytest.fixture

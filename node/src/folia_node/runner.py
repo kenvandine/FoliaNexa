@@ -6,6 +6,7 @@ import collections
 import subprocess
 import threading
 from pathlib import Path
+from typing import Callable
 
 LOG_TAIL_LINES = 200
 
@@ -48,12 +49,16 @@ class JVMRunner:
     """Wraps a running (or not-yet-started) JVM process, keeping a rolling
     tail of its output for crash diagnostics (PLAN.md §9 step 5)."""
 
-    def __init__(self, command: list[str], cwd: Path):
+    def __init__(self, command: list[str], cwd: Path, on_line: Callable[[str], None] | None = None):
         self._command = command
         self._cwd = cwd
         self._process: subprocess.Popen | None = None
         self._log_tail: collections.deque[str] = collections.deque(maxlen=LOG_TAIL_LINES)
         self._reader_thread: threading.Thread | None = None
+        # Live fan-out for a /logs/console/stream viewer (health.py's
+        # LogBroadcaster.append) — optional and decoupled by type so this
+        # module doesn't need to import health.py just for a callback.
+        self._on_line = on_line
 
     def start(self) -> None:
         self._cwd.mkdir(parents=True, exist_ok=True)
@@ -70,8 +75,11 @@ class JVMRunner:
 
     def _drain_output(self) -> None:
         assert self._process is not None and self._process.stdout is not None
-        for line in self._process.stdout:
-            self._log_tail.append(line.rstrip("\n"))
+        for raw_line in self._process.stdout:
+            line = raw_line.rstrip("\n")
+            self._log_tail.append(line)
+            if self._on_line is not None:
+                self._on_line(line)
 
     def is_running(self) -> bool:
         return self._process is not None and self._process.poll() is None

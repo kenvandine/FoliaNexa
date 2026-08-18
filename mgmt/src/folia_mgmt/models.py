@@ -42,6 +42,7 @@ class WorldPhase(str, enum.Enum):
     running = "running"
     crashed = "crashed"
     restarting = "restarting"
+    stopped = "stopped"
     draining = "draining"
     deleted = "deleted"
 

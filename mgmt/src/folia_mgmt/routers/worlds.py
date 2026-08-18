@@ -5,7 +5,9 @@ from __future__ import annotations
 import logging
 import secrets
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -14,13 +16,13 @@ from folia_mgmt.auth import require_operator, require_viewer
 from folia_mgmt.config import Settings
 from folia_mgmt.datapack_catalog import load_catalog as load_datapack_catalog
 from folia_mgmt.db import get_session
-from folia_mgmt.deps import get_health_check, get_lxd_client, get_uuid_resolver, settings_dependency
+from folia_mgmt.deps import get_lxd_client, get_uuid_resolver, settings_dependency
 from folia_mgmt.lxd_client import LXDClient, LXDError
 from folia_mgmt.models import Host, HostStatus, MinecraftVersionConfig, World, WorldPhase, WorldType, utcnow
 from folia_mgmt.routers.cluster import migrate_world_to_current_version
 from folia_mgmt.plugin_catalog import load_catalog
 from folia_mgmt.rcon import RconError, execute_rcon_command
-from folia_mgmt.scheduler import HealthCheck, allocated_capacity, reconcile, _node_config
+from folia_mgmt.scheduler import allocated_capacity, finalize_provisioning, place_world, teardown_world, _node_config
 
 # Minecraft's conventional RCON port — not configurable per-world today
 # (mirrors the fixed 25565 game port every world already uses), just a
@@ -86,18 +88,40 @@ def _to_response(world: World) -> WorldResponse:
     )
 
 
-def _reconcile_best_effort(session: Session, lxd_client: LXDClient, health_check: HealthCheck) -> None:
-    """Immediate placement/teardown attempt using the request's own DI-
-    provided session, LXD client, and health checker, so behavior (and test
-    overrides) match exactly what the periodic loop in main.py does. A
-    slow/unreachable host delays the response by however long that one
-    host's HTTP call takes (bounded by LXDClient's request timeout) rather
-    than hanging indefinitely; the periodic loop retries regardless if this
-    fails."""
+def _place_best_effort(session: Session, lxd_client: LXDClient, world: World, settings: Settings) -> None:
+    """Immediate placement attempt for just this one world, using the
+    request's own DI-provided session/LXD client, so a newly created world
+    doesn't sit in 'pending' for up to reconcile's periodic interval. This
+    used to call the full reconcile() here instead — which also
+    synchronously re-health-checked every *other* running world in the
+    cluster (plus whitelist/LuckPerms/stats sync for all of them) inside
+    this one request, making world creation feel unresponsive for several
+    seconds on anything but a tiny cluster, for work that has nothing to
+    do with the world being created. A slow/unreachable host still bounds
+    the delay to that one host's LXD request timeout rather than hanging
+    indefinitely; the periodic loop retries regardless if this fails."""
     try:
-        reconcile(session, lxd_client, health_check=health_check)
+        place_world(session, lxd_client, world, settings)
+        # place_world only gets as far as 'provisioning' (LXD hasn't
+        # necessarily handed out an address yet) — also try the very next
+        # step for this same world, same as a full reconcile() would have,
+        # so a world that can go all the way to 'running' in one shot
+        # still does rather than sitting in 'provisioning' until the next
+        # periodic tick.
+        if world.phase == WorldPhase.provisioning:
+            finalize_provisioning(session, lxd_client, world)
     except Exception:
-        logger.exception("immediate reconcile after world create/delete failed; periodic loop will retry")
+        logger.exception("immediate placement of '%s' failed; periodic loop will retry", world.name)
+
+
+def _teardown_best_effort(session: Session, lxd_client: LXDClient, world: World) -> None:
+    """Same idea as _place_best_effort, for deletion — tears down just this
+    world's container immediately rather than waiting on the periodic
+    loop's next draining sweep."""
+    try:
+        teardown_world(session, lxd_client, world)
+    except Exception:
+        logger.exception("immediate teardown of '%s' failed; periodic loop will retry", world.name)
 
 
 def _get_world_or_404(session: Session, name: str) -> World:
@@ -202,7 +226,6 @@ def create_world(
     body: CreateWorldRequest,
     session: Session = Depends(get_session),
     lxd_client: LXDClient = Depends(get_lxd_client),
-    health_check: HealthCheck = Depends(get_health_check),
     settings: Settings = Depends(settings_dependency),
 ) -> WorldResponse:
     if session.exec(select(World).where(World.name == body.name)).first():
@@ -237,7 +260,7 @@ def create_world(
     session.commit()
     session.refresh(world)
 
-    _reconcile_best_effort(session, lxd_client, health_check)
+    _place_best_effort(session, lxd_client, world, settings)
     session.refresh(world)
     return _to_response(world)
 
@@ -325,6 +348,67 @@ def restart_world(
     return {"restarted": world.container_name}
 
 
+@router.post("/{name}/stop", dependencies=[Depends(require_operator)])
+def stop_world(
+    name: str,
+    session: Session = Depends(get_session),
+    lxd_client: LXDClient = Depends(get_lxd_client),
+) -> dict[str, str]:
+    """Stops a world's container without deleting it — the container and
+    its save data stay put, just powered off, until /start brings it back.
+    Distinct from DELETE (tears the container down for good) and from a
+    crash (mgmt tries to auto-recover those): a deliberately stopped world
+    sits in phase 'stopped', which check_running_worlds and
+    recover_crashed_worlds don't touch (they only act on 'running'/
+    'crashed'), so the reconcile loop leaves it alone until /start."""
+    world, host = _host_and_world(session, name)
+    if world.phase not in (WorldPhase.running, WorldPhase.crashed):
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"world '{name}' is not running (phase: {world.phase.value})"
+        )
+    try:
+        lxd_client.stop_container(host, world.container_name)
+    except LXDError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    world.phase = WorldPhase.stopped
+    world.address = None
+    world.updated_at = utcnow()
+    session.add(world)
+    session.commit()
+    return {"stopped": world.container_name}
+
+
+@router.post("/{name}/start", dependencies=[Depends(require_operator)])
+def start_world(
+    name: str,
+    session: Session = Depends(get_session),
+    lxd_client: LXDClient = Depends(get_lxd_client),
+) -> dict[str, str]:
+    """Starts a previously-stopped world's container back up. Also makes
+    one immediate finalize_provisioning attempt for this world (same
+    best-effort pattern as world creation — see _place_best_effort) so it
+    can reach 'running' in this same request rather than sitting in
+    'provisioning' until the next periodic reconcile tick."""
+    world, host = _host_and_world(session, name)
+    if world.phase != WorldPhase.stopped:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT, f"world '{name}' is not stopped (phase: {world.phase.value})"
+        )
+    try:
+        lxd_client.start_container(host, world.container_name)
+    except LXDError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    world.phase = WorldPhase.provisioning
+    world.updated_at = utcnow()
+    session.add(world)
+    session.commit()
+    try:
+        finalize_provisioning(session, lxd_client, world)
+    except Exception:
+        logger.exception("immediate finalize after starting '%s' failed; periodic loop will retry", name)
+    return {"started": world.container_name}
+
+
 class MigrateVersionResponse(BaseModel):
     migrated: bool
     detail: str | None = None
@@ -391,12 +475,61 @@ def run_rcon_command(
     return {"response": response}
 
 
+def _stream_world_log(name: str, log_type: str, session: Session, settings: Settings) -> StreamingResponse:
+    """Shared body for the two /logs endpoints below — proxies
+    folia-nexa-node's own /logs/{log_type}/stream (health.py's
+    LogBroadcaster, PLAN.md §9) straight through to the caller. Plain
+    chunked text, not re-framed — matches node's wire format exactly
+    since the dashboard reads it as a raw byte stream, not SSE.
+
+    world.address is re-resolved fresh on every call (not cached) so a
+    reconnect after a migration/restart picks up the world's current IP
+    rather than proxying to a stale one.
+    """
+    world = _get_world_or_404(session, name)
+    if not world.address:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"world '{name}' is not placed on a host yet")
+    host = world.address.split(":", 1)[0]
+    url = f"http://{host}:{settings.node_health_port}/logs/{log_type}/stream"
+
+    def generate():
+        with httpx.Client(timeout=None) as client:
+            with client.stream("GET", url) as resp:
+                yield from resp.iter_bytes()
+
+    return StreamingResponse(generate(), media_type="text/plain")
+
+
+@router.get("/{name}/logs/console", dependencies=[Depends(require_viewer)])
+def stream_console_log(
+    name: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(settings_dependency),
+) -> StreamingResponse:
+    """Live Folia/Paper server console (JVM stdout) — plugin activity,
+    player joins, crashes. See _stream_world_log."""
+    return _stream_world_log(name, "console", session, settings)
+
+
+@router.get("/{name}/logs/agent", dependencies=[Depends(require_viewer)])
+def stream_agent_log(
+    name: str,
+    session: Session = Depends(get_session),
+    settings: Settings = Depends(settings_dependency),
+) -> StreamingResponse:
+    """Live folia-nexa-node operational log — staging, jar downloads,
+    devlxd/config sync. Distinct from the server console: the failures
+    debugged in this cluster historically (a 404'd jar download, a TLS
+    scheme mismatch on the manifest fetch) only ever showed up here,
+    before the JVM ever started. See _stream_world_log."""
+    return _stream_world_log(name, "agent", session, settings)
+
+
 @router.delete("/{name}", response_model=WorldResponse, dependencies=[Depends(require_operator)])
 def delete_world(
     name: str,
     session: Session = Depends(get_session),
     lxd_client: LXDClient = Depends(get_lxd_client),
-    health_check: HealthCheck = Depends(get_health_check),
 ) -> WorldResponse:
     world = _get_world_or_404(session, name)
     world_id = world.id
@@ -407,7 +540,7 @@ def delete_world(
     session.refresh(world)
     draining_snapshot = _to_response(world)
 
-    _reconcile_best_effort(session, lxd_client, health_check)
+    _teardown_best_effort(session, lxd_client, world)
 
     # teardown_world (scheduler.py) hard-deletes the row once its
     # container is actually gone — freeing the name for reuse. Refreshing

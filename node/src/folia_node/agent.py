@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 from folia_node.devlxd import DevLXDClient, DevLXDError
-from folia_node.health import AgentState, start_health_server
+from folia_node.health import AgentState, BroadcastLogHandler, start_health_server
 from folia_node.runner import JVMRunner, build_java_command
 from folia_node.staging import ensure_staged, sync_world_config
 
@@ -30,6 +30,16 @@ def main() -> None:
     health_port = int(os.environ.get("FOLIA_NODE_HEALTH_PORT", "8123"))
     devlxd_socket = os.environ.get("DEVLXD_SOCKET", "/dev/lxd/sock")
 
+    # AgentState (and its agent_log broadcaster) is created — and the
+    # broadcast handler attached to the root logger — before the very
+    # first devlxd call, not after, so a failure right here (like the
+    # jar-download 404s and the devlxd/SSL errors this was built to
+    # surface) is already captured in agent_log's history. Nothing can
+    # *serve* it live yet (start_health_server hasn't run), but the
+    # history backfill still has it once a viewer connects.
+    state = AgentState()
+    logging.getLogger().addHandler(BroadcastLogHandler(state.agent_log))
+
     devlxd = DevLXDClient(devlxd_socket)
     try:
         assignment = devlxd.get_world_assignment()
@@ -37,7 +47,7 @@ def main() -> None:
         logger.exception("could not read world assignment from devlxd — nothing to run")
         raise
 
-    state = AgentState(world_name=assignment.world_name)
+    state.world_name = assignment.world_name
     start_health_server(state, port=health_port)
     logger.info("health server up on :%d for world '%s'", health_port, assignment.world_name)
 
@@ -50,7 +60,7 @@ def main() -> None:
     while True:
         command = build_java_command(java_bin, jar_path, memory_gb=_detect_memory_gb())
         logger.info("starting JVM: %s", " ".join(command))
-        runner = JVMRunner(command, cwd=world_dir)
+        runner = JVMRunner(command, cwd=world_dir, on_line=state.console_log.append)
         runner.start()
 
         with state.lock:

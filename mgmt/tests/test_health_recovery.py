@@ -35,20 +35,8 @@ def _world_phase(client, operator_token, name):
     return next(w for w in worlds if w["name"] == name)["phase"]
 
 
-def _trigger_reconcile(client, operator_token, trigger_name):
-    """A world create is the simplest way to force one reconcile pass
-    through the API surface under test (matches how a real operator
-    action, not just the 15s background loop, gets a crash noticed)."""
-    resp = client.post(
-        "/api/v1/worlds",
-        json={"name": trigger_name, "type": "lobby", "cpu_cores": 1, "memory_gb": 1},
-        headers=auth_header(operator_token),
-    )
-    assert resp.status_code == 200
-
-
 def test_unhealthy_running_world_is_recovered_across_two_reconciles(
-    client, admin_token, operator_token, fake_lxd, fake_health_check
+    client, admin_token, operator_token, fake_lxd, fake_health_check, trigger_reconcile
 ):
     _enroll_host(client, admin_token)
     _create_running_world(client, operator_token, "world-overworld")
@@ -58,7 +46,7 @@ def test_unhealthy_running_world_is_recovered_across_two_reconciles(
     # Pass 1: check_running_worlds marks it crashed, recover_crashed_worlds
     # restarts the container and moves it to provisioning in the same pass
     # (that ordering is deliberate — see scheduler.reconcile).
-    _trigger_reconcile(client, operator_token, "world-trigger-1")
+    trigger_reconcile()
     assert _world_phase(client, operator_token, "world-overworld") == "provisioning"
     assert ("node-a", "world-overworld") in fake_lxd.restarted
 
@@ -68,13 +56,19 @@ def test_unhealthy_running_world_is_recovered_across_two_reconciles(
 
     # Pass 2: finalize_provisioning re-polls for an address and flips it
     # back to running.
-    _trigger_reconcile(client, operator_token, "world-trigger-2")
+    trigger_reconcile()
     assert _world_phase(client, operator_token, "world-overworld") == "running"
 
 
-def test_healthy_world_is_never_touched(client, admin_token, operator_token, fake_lxd, fake_health_check):
+def test_healthy_world_is_never_touched(
+    client, admin_token, operator_token, fake_lxd, fake_health_check, trigger_reconcile
+):
     _enroll_host(client, admin_token)
     _create_running_world(client, operator_token, "world-overworld")
 
+    # World creation itself no longer health-checks the whole cluster (see
+    # trigger_reconcile's docstring) — force one real pass to confirm a
+    # healthy world sails through check_running_worlds untouched.
+    trigger_reconcile()
     assert "world-overworld" in fake_health_check.calls
     assert ("node-a", "world-overworld") not in fake_lxd.restarted

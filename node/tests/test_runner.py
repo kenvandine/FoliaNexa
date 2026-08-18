@@ -60,6 +60,15 @@ def test_jvm_runner_captures_exit_code_and_log_tail(tmp_path):
     assert not runner.is_running()
 
 
+def test_jvm_runner_calls_on_line_for_live_streaming(tmp_path):
+    fake_java = _fake_java_script(tmp_path, exit_code=0, output_lines=["hello", "world"])
+    seen: list[str] = []
+    runner = JVMRunner([fake_java], cwd=tmp_path, on_line=seen.append)
+    runner.start()
+    runner.wait()
+    assert seen == ["hello", "world"]
+
+
 def test_jvm_runner_stop_terminates_running_process(tmp_path):
     script = tmp_path / "sleeper.sh"
     script.write_text("#!/bin/sh\nsleep 30\n")

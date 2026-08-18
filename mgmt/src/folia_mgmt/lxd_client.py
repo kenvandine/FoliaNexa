@@ -122,7 +122,7 @@ class LXDClient:
         resp = client.get(f"{op_url}/wait")
         resp.raise_for_status()
         result = resp.json()
-        metadata = result.get("metadata", {})
+        metadata = result.get("metadata") or {}
         if metadata.get("status") == "Failure":
             raise LXDError(f"LXD operation failed: {metadata.get('err')}")
         return metadata
@@ -237,6 +237,30 @@ class LXDClient:
             )
             if resp.status_code not in (200, 202):
                 raise LXDError(f"restart of '{name}' on '{host.name}' failed: {resp.text}")
+            if resp.status_code == 202:
+                self._wait_operation(client, resp.json())
+
+    def stop_container(self, host: Host, name: str) -> None:
+        with self._client_for(host) as client:
+            resp = client.put(
+                f"/1.0/instances/{name}/state",
+                params={"project": host.project},
+                json={"action": "stop", "timeout": 30, "force": True},
+            )
+            if resp.status_code not in (200, 202):
+                raise LXDError(f"stop of '{name}' on '{host.name}' failed: {resp.text}")
+            if resp.status_code == 202:
+                self._wait_operation(client, resp.json())
+
+    def start_container(self, host: Host, name: str) -> None:
+        with self._client_for(host) as client:
+            resp = client.put(
+                f"/1.0/instances/{name}/state",
+                params={"project": host.project},
+                json={"action": "start", "timeout": 30, "force": True},
+            )
+            if resp.status_code not in (200, 202):
+                raise LXDError(f"start of '{name}' on '{host.name}' failed: {resp.text}")
             if resp.status_code == 202:
                 self._wait_operation(client, resp.json())
 

@@ -221,6 +221,89 @@ def test_restart_requires_operator_role(client, viewer_token):
     assert resp.status_code == 403
 
 
+def test_stop_world_calls_lxd_stop_and_clears_address(client, admin_token, operator_token, fake_lxd):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    resp = client.post("/api/v1/worlds/world-overworld/stop", headers=auth_header(operator_token))
+    assert resp.status_code == 200, resp.text
+    assert ("node-a", "world-overworld") in fake_lxd.stopped
+
+    world = next(w for w in client.get("/api/v1/worlds", headers=auth_header(operator_token)).json()
+                 if w["name"] == "world-overworld")
+    assert world["phase"] == "stopped"
+    assert world["address"] is None
+
+
+def test_stop_requires_running_or_crashed_world(client, admin_token, operator_token):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    client.post("/api/v1/worlds/world-overworld/stop", headers=auth_header(operator_token))
+    # Already stopped — a second stop is a conflict, not a silent no-op.
+    resp = client.post("/api/v1/worlds/world-overworld/stop", headers=auth_header(operator_token))
+    assert resp.status_code == 409
+
+
+def test_stop_requires_placed_world(client, operator_token):
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-stuck", "type": "overworld", "cpu_cores": 999, "memory_gb": 999},
+        headers=auth_header(operator_token),
+    )
+    resp = client.post("/api/v1/worlds/world-stuck/stop", headers=auth_header(operator_token))
+    assert resp.status_code == 409
+
+
+def test_stop_requires_operator_role(client, viewer_token):
+    resp = client.post("/api/v1/worlds/no-such-world/stop", headers=auth_header(viewer_token))
+    assert resp.status_code == 403
+
+
+def test_start_world_calls_lxd_start_and_becomes_running(client, admin_token, operator_token, fake_lxd):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    client.post("/api/v1/worlds/world-overworld/stop", headers=auth_header(operator_token))
+
+    resp = client.post("/api/v1/worlds/world-overworld/start", headers=auth_header(operator_token))
+    assert resp.status_code == 200, resp.text
+    assert ("node-a", "world-overworld") in fake_lxd.started
+
+    world = next(w for w in client.get("/api/v1/worlds", headers=auth_header(operator_token)).json()
+                 if w["name"] == "world-overworld")
+    # finalize_provisioning runs immediately (fake LXD returns an address
+    # right away), so this reaches 'running' in the same request.
+    assert world["phase"] == "running"
+    assert world["address"]
+
+
+def test_start_requires_stopped_world(client, admin_token, operator_token):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    # Currently running, not stopped.
+    resp = client.post("/api/v1/worlds/world-overworld/start", headers=auth_header(operator_token))
+    assert resp.status_code == 409
+
+
+def test_start_requires_operator_role(client, viewer_token):
+    resp = client.post("/api/v1/worlds/no-such-world/start", headers=auth_header(viewer_token))
+    assert resp.status_code == 403
+
+
 def test_create_world_generates_rcon_password_not_exposed_in_response(client, operator_token, db_session):
     resp = client.post(
         "/api/v1/worlds",

@@ -80,6 +80,7 @@
   }
   button.btn.danger { background: var(--danger); }
   button.btn.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  button.btn.ghost.active { background: var(--accent); color: #fff; border-color: var(--accent); }
   .pill {
     display: inline-block;
     padding: 0.1rem 0.5rem;
@@ -89,7 +90,7 @@
   }
   .pill.running, .pill.online { color: var(--ok); border-color: var(--ok); }
   .pill.crashed { color: var(--danger); border-color: var(--danger); }
-  .pill.pending, .pill.provisioning, .pill.draining { color: var(--muted); }
+  .pill.pending, .pill.provisioning, .pill.draining, .pill.stopped { color: var(--muted); }
   #login-screen {
     max-width: 320px;
     margin: 15vh auto;
@@ -176,7 +177,7 @@
               <span class="hint">Loading catalog…</span>
             </div>
           </div>
-          <button class="btn" type="submit">Create</button>
+          <button class="btn" type="submit" id="w-create-btn">Create</button>
         </form>
         <div id="worlds-error" class="error"></div>
       </div>
@@ -190,7 +191,7 @@
       </div>
 
       <div class="card" id="world-edit-card" style="display:none">
-        <h2>Edit world: <span id="edit-world-name"></span></h2>
+        <h2>Configure world: <span id="edit-world-name"></span></h2>
         <p class="hint">Saved changes apply on this world's next restart — folia-nexa-node only re-syncs plugins/data packs/server.properties at its own startup.</p>
         <div style="flex-basis:100%">
           <div class="hint" style="margin-bottom:0.3rem">Plugins:</div>
@@ -211,14 +212,32 @@
         </div>
         <div id="world-edit-error" class="error"></div>
         <div id="world-edit-saved" class="hint"></div>
+      </div>
 
-        <div style="margin-top:1rem;padding-top:0.8rem;border-top:1px solid var(--border)">
-          <div class="hint" style="margin-bottom:0.3rem">Run a live command via RCON (instant — no restart; only works while the world is running, and only for things Minecraft lets you change live, e.g. <code>gamerule</code>, <code>difficulty</code>, <code>whitelist</code>, <code>op</code> — server.properties keys like <code>allow-flight</code> above still need a restart):</div>
+      <div class="card" id="world-details-card" style="display:none">
+        <h2>World details: <span id="details-world-name"></span></h2>
+        <p class="hint">Read-only — RCON commands here apply instantly and don't touch this world's saved configuration.</p>
+
+        <div>
+          <div class="hint" style="margin-bottom:0.3rem">Run a live command via RCON (instant — no restart; only works while the world is running, and only for things Minecraft lets you change live, e.g. <code>gamerule</code>, <code>difficulty</code>, <code>whitelist</code>, <code>op</code>):</div>
           <form class="inline" onsubmit="return runRconCommand(event)">
             <input id="edit-rcon-command" placeholder="gamerule doDaylightCycle false" style="flex:1;min-width:16rem">
             <button class="btn" type="submit">Run</button>
           </form>
           <pre id="edit-rcon-output" class="hint" style="white-space:pre-wrap;margin-top:0.4rem"></pre>
+        </div>
+
+        <div style="margin-top:1rem;padding-top:0.8rem;border-top:1px solid var(--border)">
+          <div class="hint" style="margin-bottom:0.3rem">Live logs (streams while this panel is open; reconnects automatically if the world restarts):</div>
+          <div class="inline" style="margin-bottom:0.4rem">
+            <button class="btn ghost" id="log-tab-console" onclick="switchLogTab('console')">Server console</button>
+            <button class="btn ghost" id="log-tab-agent" onclick="switchLogTab('agent')">Agent log</button>
+          </div>
+          <pre id="world-log-output" class="hint" style="white-space:pre-wrap;background:var(--bg-alt,#0000000d);max-height:16rem;overflow-y:auto;padding:0.5rem"></pre>
+        </div>
+
+        <div style="margin-top:0.8rem">
+          <button class="btn ghost" onclick="closeWorldDetails()">Close</button>
         </div>
       </div>
     </section>
@@ -423,7 +442,10 @@ const state = {
   datapackCatalog: [],
   worlds: [],
   editingWorld: null,
+  detailsWorld: null,
   minecraftVersion: null,
+  logTab: 'console',
+  logController: null,
 };
 
 async function api(path, options) {
@@ -600,7 +622,11 @@ async function loadWorlds() {
         <td>${escapeHtml(w.address || '—')}</td>
         <td>${w.whitelist_enabled ? 'whitelist on' : 'open'}${w.ops.length ? ', ' + w.ops.length + ' op(s)' : ''}</td>
         <td class="row-actions">
-          <button class="btn ghost" onclick="openWorldEdit('${escapeHtml(w.name)}')">Edit</button>
+          <button class="btn ghost" onclick="openWorldDetails('${escapeHtml(w.name)}')">Details</button>
+          <button class="btn ghost" onclick="openWorldEdit('${escapeHtml(w.name)}')">Configure</button>
+          ${w.phase === 'running' ? `<button class="btn ghost" onclick="restartWorld('${escapeHtml(w.name)}')">Restart</button>` : ''}
+          ${w.phase === 'running' ? `<button class="btn ghost" onclick="stopWorld('${escapeHtml(w.name)}')">Stop</button>` : ''}
+          ${w.phase === 'stopped' ? `<button class="btn ghost" onclick="startWorld('${escapeHtml(w.name)}')">Start</button>` : ''}
           ${stale && w.phase === 'running' ? `<button class="btn ghost" onclick="migrateWorldVersion('${escapeHtml(w.name)}')">Migrate to ${escapeHtml(target.engine)} ${escapeHtml(target.version)}</button>` : ''}
           <button class="btn ghost" onclick="snapshotWorld('${escapeHtml(w.name)}')">Snapshot</button>
           <button class="btn ghost" onclick="toggleWhitelist('${escapeHtml(w.name)}', ${w.whitelist_enabled})">${w.whitelist_enabled ? 'Disable' : 'Enable'} whitelist</button>
@@ -628,6 +654,9 @@ async function createWorld(event) {
   }
   const plugins = Array.from(document.querySelectorAll('#w-plugins-picker input[type=checkbox]:checked')).map(cb => cb.value);
   const datapacks = Array.from(document.querySelectorAll('#w-datapacks-picker input[type=checkbox]:checked')).map(cb => cb.value);
+  const createBtn = document.getElementById('w-create-btn');
+  createBtn.disabled = true;
+  createBtn.textContent = 'Creating…';
   try {
     await api('/worlds', {
       method: 'POST',
@@ -648,6 +677,9 @@ async function createWorld(event) {
     await loadWorlds();
   } catch (e) {
     errorEl.textContent = e.message;
+  } finally {
+    createBtn.disabled = false;
+    createBtn.textContent = 'Create';
   }
   return false;
 }
@@ -677,8 +709,6 @@ function openWorldEdit(name) {
     .map(([k, v]) => `${k}=${v}`).join('\n');
   document.getElementById('world-edit-error').textContent = '';
   document.getElementById('world-edit-saved').textContent = '';
-  document.getElementById('edit-rcon-command').value = '';
-  document.getElementById('edit-rcon-output').textContent = '';
   document.getElementById('world-edit-card').style.display = 'block';
   document.getElementById('world-edit-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
@@ -686,6 +716,77 @@ function openWorldEdit(name) {
 function closeWorldEdit() {
   state.editingWorld = null;
   document.getElementById('world-edit-card').style.display = 'none';
+}
+
+function openWorldDetails(name) {
+  const world = state.worlds.find(w => w.name === name);
+  if (!world) return;
+  state.detailsWorld = name;
+  document.getElementById('details-world-name').textContent = name;
+  document.getElementById('edit-rcon-command').value = '';
+  document.getElementById('edit-rcon-output').textContent = '';
+  document.getElementById('world-details-card').style.display = 'block';
+  document.getElementById('world-details-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  switchLogTab('console');
+}
+
+function closeWorldDetails() {
+  state.detailsWorld = null;
+  stopLogStream();
+  document.getElementById('world-details-card').style.display = 'none';
+}
+
+function switchLogTab(tab) {
+  state.logTab = tab;
+  document.getElementById('log-tab-console').classList.toggle('active', tab === 'console');
+  document.getElementById('log-tab-agent').classList.toggle('active', tab === 'agent');
+  startLogStream(tab);
+}
+
+function stopLogStream() {
+  if (state.logController) {
+    state.logController.abort();
+    state.logController = null;
+  }
+}
+
+async function startLogStream(tab) {
+  stopLogStream();
+  const name = state.detailsWorld;
+  if (!name) return;
+  const outputEl = document.getElementById('world-log-output');
+  outputEl.textContent = '';
+  const controller = new AbortController();
+  state.logController = controller;
+
+  while (state.detailsWorld === name && state.logTab === tab && !controller.signal.aborted) {
+    try {
+      const resp = await fetch('/api/v1/worlds/' + encodeURIComponent(name) + '/logs/' + tab, {
+        headers: { 'Authorization': 'Bearer ' + state.token },
+        signal: controller.signal,
+      });
+      if (!resp.ok || !resp.body) {
+        outputEl.textContent += '\n[log stream error: HTTP ' + resp.status + ']';
+      } else {
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          outputEl.textContent += decoder.decode(value, { stream: true });
+          outputEl.scrollTop = outputEl.scrollHeight;
+        }
+      }
+    } catch (e) {
+      if (controller.signal.aborted) return;  // modal closed / tab switched — not an error
+      outputEl.textContent += '\n[log stream error: ' + e.message + ']';
+    }
+    if (controller.signal.aborted) return;
+    // Stream ended (world restarted, network blip) — reconnect after a
+    // short delay rather than leaving the viewer dead until the operator
+    // notices and re-opens the panel.
+    await new Promise(r => setTimeout(r, 2000));
+  }
 }
 
 function _parseProperties(text) {
@@ -742,7 +843,7 @@ async function restartWorldEdit() {
 async function runRconCommand(event) {
   event.preventDefault();
   const outputEl = document.getElementById('edit-rcon-output');
-  const name = state.editingWorld;
+  const name = state.detailsWorld;
   if (!name) return false;
   const command = document.getElementById('edit-rcon-command').value.trim();
   if (!command) return false;
@@ -920,6 +1021,35 @@ async function deleteWorld(name) {
   if (!confirm('Delete world "' + name + '"? This tears down its container.')) return;
   try {
     await api('/worlds/' + encodeURIComponent(name), { method: 'DELETE' });
+    await loadWorlds();
+  } catch (e) {
+    document.getElementById('worlds-error').textContent = e.message;
+  }
+}
+
+async function restartWorld(name) {
+  if (!confirm('Restart "' + name + '" now? Players on it will be briefly disconnected.')) return;
+  try {
+    await api('/worlds/' + encodeURIComponent(name) + '/restart', { method: 'POST' });
+    await loadWorlds();
+  } catch (e) {
+    document.getElementById('worlds-error').textContent = e.message;
+  }
+}
+
+async function stopWorld(name) {
+  if (!confirm('Stop "' + name + '"? Players on it will be disconnected until it\'s started again.')) return;
+  try {
+    await api('/worlds/' + encodeURIComponent(name) + '/stop', { method: 'POST' });
+    await loadWorlds();
+  } catch (e) {
+    document.getElementById('worlds-error').textContent = e.message;
+  }
+}
+
+async function startWorld(name) {
+  try {
+    await api('/worlds/' + encodeURIComponent(name) + '/start', { method: 'POST' });
     await loadWorlds();
   } catch (e) {
     document.getElementById('worlds-error').textContent = e.message;
