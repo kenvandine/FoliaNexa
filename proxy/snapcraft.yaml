@@ -71,9 +71,15 @@ parts:
       # Resolve the latest PaperMC ("Fill" — api.papermc.io/v2 was sunset;
       # this is its documented replacement, confirmed live) build for this
       # Velocity version at build time rather than pinning a build number
-      # that goes stale.
+      # that goes stale. The /builds list comes back newest-first (confirmed
+      # live against the folia project, which has more than one build to
+      # actually order — max()-by-id below is deliberate, not just style:
+      # an earlier version of this picked [-1], which happened to work only
+      # because Velocity 4.0.0 has had exactly one build so far, and would
+      # have silently grabbed the OLDEST build the moment a second one is
+      # published.
       DOWNLOAD_URL=$(curl -sf "https://fill.papermc.io/v3/projects/velocity/versions/${CRAFT_PROJECT_VERSION}/builds" \
-        | python3 -c "import json,sys; print(json.load(sys.stdin)[-1]['downloads']['server:default']['url'])")
+        | python3 -c "import json,sys; b=json.load(sys.stdin); print(max(b, key=lambda x: x['id'])['downloads']['server:default']['url'])")
       curl -sf -o $CRAFT_PART_INSTALL/velocity.jar "$DOWNLOAD_URL"
 
       # A from-scratch velocity.toml: Velocity itself would happily
