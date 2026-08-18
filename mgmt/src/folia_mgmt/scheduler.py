@@ -20,7 +20,7 @@ from folia_mgmt.config import Settings, get_settings
 from folia_mgmt.folianexa_stats import apply_stats_config
 from folia_mgmt.luckperms import apply_luckperms_config
 from folia_mgmt.lxd_client import LXDClient, LXDError, extract_ipv4
-from folia_mgmt.models import Host, HostStatus, MinecraftVersionConfig, World, WorldPhase
+from folia_mgmt.models import Host, HostStatus, MinecraftVersionConfig, World, WorldPhase, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -77,14 +77,20 @@ def check_host_health(session: Session, lxd_client: LXDClient) -> None:
             session.commit()
 
 
-def select_host(session: Session, world: World) -> Host | None:
+def select_host(session: Session, world: World, exclude: str | None = None) -> Host | None:
     """Fullest-fit-remaining bin-packing: PLAN.md §5 step 3 — pick the host
     with the most free capacity left *after* placement, spreading load
-    rather than stacking everything on the first host that fits."""
+    rather than stacking everything on the first host that fits.
+
+    `exclude` is a host name to skip regardless of its status — used by
+    migrate_worlds_off_draining_hosts to pick a *different* host for a
+    world currently sitting on the draining one being evacuated."""
     best: Host | None = None
     best_remaining = -1
 
     for host in session.exec(select(Host).where(Host.status == HostStatus.online)).all():
+        if host.name == exclude:
+            continue
         if not _labels_match(host, world):
             continue
         used_cpu, used_mem = allocated_capacity(session, host.name)
@@ -277,6 +283,76 @@ def check_running_worlds(session: Session, settings: Settings, health_check: Hea
             session.commit()
 
 
+def migrate_worlds_off_draining_hosts(session: Session, lxd_client: LXDClient) -> None:
+    """`POST /hosts/{name}/drain` (routers/hosts.py) used to only stop new
+    placements from landing on a host — worlds already there just kept
+    running there forever, with no automatic evacuation, contradicting
+    PLAN.md §2's documented "host maintenance/decommission" intent for
+    the status. This is the fix: every reconcile pass, any world still
+    sitting on a `draining` host gets moved to whichever `online` host
+    currently has the most free capacity after the move, via the same
+    stop/export/import/start path as the manual per-world `POST
+    /worlds/{name}/migrate` endpoint (PLAN.md §13 — a brief outage is
+    expected, this isn't live migration).
+
+    Runs before check_running_worlds/recover_crashed_worlds in reconcile()
+    so a world (including a crashed one) leaves a draining host by being
+    migrated, not by being health-checked or restarted in place — a
+    restart wouldn't get it off the host the operator is trying to empty.
+
+    A world that can't currently be moved (no online host with room, or
+    the drain target's labels don't match) is left in place and retried
+    next tick, same "stays put" convention as place_world for a pending
+    world with nowhere to go yet.
+    """
+    worlds = session.exec(
+        select(World).where(World.phase.in_([WorldPhase.running, WorldPhase.provisioning, WorldPhase.crashed]))
+    ).all()
+    for world in worlds:
+        if not world.host_name or not world.container_name:
+            continue
+        source_host = session.exec(select(Host).where(Host.name == world.host_name)).first()
+        if source_host is None or source_host.status != HostStatus.draining:
+            continue
+
+        target = select_host(session, world, exclude=source_host.name)
+        if target is None:
+            logger.warning(
+                "world '%s' stuck on draining host '%s' — no online host with capacity to migrate to yet",
+                world.name,
+                source_host.name,
+            )
+            continue
+
+        try:
+            lxd_client.migrate_container(source_host, world.container_name, target)
+        except LXDError:
+            logger.exception(
+                "failed to migrate world '%s' off draining host '%s', will retry next tick",
+                world.name,
+                source_host.name,
+            )
+            continue
+
+        world.host_name = target.name
+        world.sticky_host = target.name
+        world.phase = WorldPhase.provisioning
+        world.address = None
+        world.updated_at = utcnow()
+        session.add(world)
+        session.commit()
+        logger.info("migrated world '%s' off draining host '%s' to '%s'", world.name, source_host.name, target.name)
+
+        try:
+            lxd_client.delete_container(source_host, world.container_name)
+        except LXDError:
+            logger.exception(
+                "migrated world '%s' off '%s' but failed to delete the old container there — clean up manually",
+                world.name,
+                source_host.name,
+            )
+
+
 def recover_crashed_worlds(session: Session, lxd_client: LXDClient) -> None:
     for world in session.exec(select(World).where(World.phase == WorldPhase.crashed)).all():
         host = session.exec(select(Host).where(Host.name == world.host_name)).first()
@@ -357,6 +433,7 @@ def reconcile(
     for world in session.exec(select(World).where(World.phase == WorldPhase.provisioning)).all():
         finalize_provisioning(session, lxd_client, world)
 
+    migrate_worlds_off_draining_hosts(session, lxd_client)
     check_running_worlds(session, settings, health_check)
     recover_crashed_worlds(session, lxd_client)
     sync_whitelisted_worlds(session, lxd_client)

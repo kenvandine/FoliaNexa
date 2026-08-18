@@ -117,3 +117,57 @@ def test_powered_off_host_flips_to_offline_on_next_reconcile(client, admin_token
         headers=auth_header(operator_token),
     )
     assert client.get("/api/v1/hosts", headers=auth_header(admin_token)).json()[0]["status"] == "online"
+
+
+def _create_running_world(client, operator_token, name, **overrides):
+    body = {"name": name, "type": "overworld", "cpu_cores": 4, "memory_gb": 8}
+    body.update(overrides)
+    resp = client.post("/api/v1/worlds", json=body, headers=auth_header(operator_token))
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["phase"] == "running"
+    return resp.json()
+
+
+def _world_by_name(client, operator_token, name):
+    worlds = client.get("/api/v1/worlds", headers=auth_header(operator_token)).json()
+    return next(w for w in worlds if w["name"] == name)
+
+
+def test_draining_a_host_migrates_its_worlds_elsewhere(client, admin_token, operator_token, fake_lxd):
+    """Draining used to only stop *new* placements — a world already on
+    that host just kept running there forever. Now every reconcile pass
+    actively evacuates worlds off a draining host, PLAN.md §2/§5."""
+    join_a = _get_join_token(client, admin_token)
+    client.post("/api/v1/hosts/enroll", json=_enroll_body(name="node-a", address="10.0.1.11:8443"), headers=auth_header(join_a))
+    _create_running_world(client, operator_token, "world-a")
+
+    join_b = _get_join_token(client, admin_token)
+    client.post("/api/v1/hosts/enroll", json=_enroll_body(name="node-b", address="10.0.1.12:8443"), headers=auth_header(join_b))
+
+    resp = client.post("/api/v1/hosts/node-a/drain", headers=auth_header(operator_token))
+    assert resp.status_code == 200
+
+    # Pass 1: migrate_worlds_off_draining_hosts moves the container to
+    # node-b and flips world-a to provisioning (same trigger trick as
+    # test_health_recovery.py — a world create forces one reconcile pass).
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-trigger-1", "type": "lobby", "cpu_cores": 1, "memory_gb": 1},
+        headers=auth_header(operator_token),
+    )
+    world = _world_by_name(client, operator_token, "world-a")
+    assert world["host_name"] == "node-b"
+    assert world["phase"] == "provisioning"
+    assert ("node-a", "world-a", "node-b") in fake_lxd.migrations
+    assert ("node-a", "world-a") in fake_lxd.deleted
+
+    # Pass 2: finalize_provisioning re-polls for an address and flips it
+    # back to running on its new host.
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-trigger-2", "type": "lobby", "cpu_cores": 1, "memory_gb": 1},
+        headers=auth_header(operator_token),
+    )
+    world = _world_by_name(client, operator_token, "world-a")
+    assert world["phase"] == "running"
+    assert world["host_name"] == "node-b"
