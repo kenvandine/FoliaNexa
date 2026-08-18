@@ -29,3 +29,238 @@
     `assets/` (custom sounds) alongside its `data/` folder — normal for
     this pack, both land together under datapacks/ since it's a single
     zip.
+
+- id: Terralith
+  category: worldgen
+  source: external
+  version: "2.6.4"
+  download_url: "https://cdn.modrinth.com/data/8oi3bsk5/versions/CzijfXJQ/Terralith_26.2_v2.6.4.zip"
+  sha256: "5ac86ed13cc9fc617cbb57e14ce02b1ecac2f2776c36f0536a519378e546e23e"
+  homepage: "https://modrinth.com/datapack/terralith"
+  verified: true
+  notes: >
+    Verified 2026-08-18 — downloaded from Modrinth's CDN and sha256'd
+    directly (Modrinth only publishes sha1/sha512 for this file). Adds
+    ~85 new overworld biomes and reworked terrain generation, no mod
+    loader required — pure vanilla data pack. pack.mcmeta declares
+    min_format/max_format both 107 (Modrinth lists it as built for game
+    version "26.2"), same check-before-use caveat as Matcha above.
+    Overworld worldgen data packs only affect chunks generated after
+    they're active — same `<level-name>/datapacks/` staging and
+    first-boot/world-generation timing constraint as every entry in this
+    catalog (see the `LEVEL_NAME` note in node/src/folia_node/staging.py
+    and CLAUDE.md's Phase 5), but doubly important here since retrofitting
+    it onto an already-explored world leaves old terrain unchanged and
+    only new chunks get Terralith's biomes.
+
+- id: Incendium
+  category: worldgen
+  source: external
+  version: "5.5.0"
+  download_url: "https://cdn.modrinth.com/data/ZVzW5oNS/versions/znNBZB6M/Incendium_Legacy_26.2_v5.5.0.zip"
+  sha256: "5fbce5019dac4a9dcd31b561e0b8f924aaa87557f75f7ed75e35cfaa27f3b2cc"
+  homepage: "https://modrinth.com/datapack/incendium"
+  verified: true
+  notes: >
+    Verified 2026-08-18 — downloaded from Modrinth's CDN and sha256'd
+    directly. Nether-biome counterpart to Terralith above, from the same
+    Stardust Labs team. This is the "Incendium Legacy" project
+    specifically — the same Modrinth listing also ships a separate
+    Fabric/Forge/NeoForge/Quilt mod build under the same version number
+    for modded installs; this entry deliberately pins the vanilla
+    data-pack zip, not that jar. pack.mcmeta declares min_format/
+    max_format both [107, 1] (Modrinth lists it as built for game version
+    "26.2") — check against the target world's version. Same
+    generate-only-in-new-chunks caveat as Terralith; install before first
+    world generation for full effect, and note Modrinth's own filename
+    for several recent builds carries an "_UNSUPPORTED" suffix on older
+    game-version builds (not this one) — a signal from the author that
+    those specific builds aren't actively supported, worth checking
+    before pinning an older version than this entry.
+
+- id: Nullscape
+  category: worldgen
+  source: external
+  version: "1.2.20"
+  download_url: "https://cdn.modrinth.com/data/LPjGiSO4/versions/prWWpjSv/Nullscape_26.2_v1.2.20.zip"
+  sha256: "ec7b0dfcd1add8c127c985dac1466a44168449b3b6641dd20e6b2e16153b66aa"
+  homepage: "https://modrinth.com/datapack/nullscape"
+  verified: true
+  notes: >
+    Verified 2026-08-18 — downloaded from Modrinth's CDN and sha256'd
+    directly. End-dimension counterpart to Terralith/Incendium above,
+    same Stardust Labs team, pure vanilla data pack (loaders: datapack
+    only, no separate mod build unlike Incendium). pack.mcmeta declares
+    min_format/max_format both [107, 1] (Modrinth lists it as built for
+    game version "26.2"). Same generate-only-in-new-chunks caveat as the
+    other two Stardust Labs packs above — install before a world first
+    generates its End dimension for full effect.
+
+- id: Timber
+  category: gameplay-tweaks
+  source: external
+  version: "1.1"
+  download_url: "https://cdn.modrinth.com/data/nHGrx1Ur/versions/LRl7yk9t/Timber%20v1.1.zip"
+  sha256: "12bb4b4038907e29807222948ffbb985092c18f69a390011868c25bb73360713"
+  homepage: "https://modrinth.com/datapack/timber"
+  verified: true
+  notes: >
+    Verified 2026-08-18 — downloaded from Modrinth's CDN and sha256'd
+    directly. Chop one log and the whole connected tree falls with it —
+    pure vanilla data pack (advancement/function-based), no JVM plugin
+    needed. Covers the operator's "Timber or TreeAssist" ask; unlike the
+    TreeAssist entry in catalog.yaml (an old, no-folia-flag SpigotMC
+    plugin of uncertain Folia-safety), this is a real Folia-native option
+    since data packs run through vanilla's own advancement/function
+    system rather than a Bukkit plugin's threading model — prefer this
+    entry unless a world specifically needs the plugin's finer-grained
+    config. pack.mcmeta declares supported_formats 48-88 inclusive
+    (older than the other packs above) — double-check against the
+    target world's version before relying on it, it may need a newer
+    build for current Minecraft versions.
+
+# The dozen entries below were requested by name from Vanilla Tweaks
+# (vanillatweaks.net) — Double Shulker Shells, Player Head Drops,
+# Wandering Trades, Anti-Creeper Grief, Anti-Enderman Grief, Armor
+# Statues, Cauldron Concrete, Silence Mobs, Unlock All Recipes, AFK
+# Display, Universal Dyeing, Unpackable Items. Confirmed 2026-08-18: none
+# of these can resolve to a real download_url the way this catalog
+# expects. Vanilla Tweaks doesn't publish static per-pack file URLs at
+# all — every download on the site (single pack or multi-pack bundle) is
+# generated on demand by POSTing a JSON selection to their zip-builder
+# API, which returns a fresh, non-deterministic zip each time rather than
+# serving a stable file from a fixed path (confirmed by probing several
+# guessed static-asset paths under vanillatweaks.net — all 404, unlike
+# Modrinth/Hangar/GitHub Releases/SpigotMC's file-hosting patterns this
+# catalog's other entries rely on). These are also not mirrored on
+# Modrinth, Hangar, or GitHub Releases under their Vanilla Tweaks names
+# specifically. This is the same shape as HuskClaims/AxAuctions/ItemsAdder
+# above (source is real, plugin.yml-equivalent details are real, but a
+# plain public download_url this catalog can pin doesn't exist) — an
+# operator who wants these should build the exact multi-pack zip
+# themselves at vanillatweaks.net (picking their world's Minecraft
+# version) and host it via a plugin-catalog-override.yaml entry (or,
+# since Vanilla Tweaks bundles are usually installed as one combined zip
+# rather than one-pack-per-id, host the whole bundle under a single
+# override id and skip these dozen placeholders' individual `--datapack`
+# flags entirely).
+
+- id: DoubleShulkerShells
+  category: vanilla-tweaks
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://vanillatweaks.net/picker/datapacks/category/utilities"
+  verified: false
+  notes: "Vanilla Tweaks datapack — see the block comment above this entry for why download_url is unresolvable."
+
+- id: PlayerHeadDrops
+  category: vanilla-tweaks
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://vanillatweaks.net/picker/datapacks/category/hermitcraft"
+  verified: false
+  notes: "Vanilla Tweaks datapack — see the block comment above this entry for why download_url is unresolvable."
+
+- id: WanderingTrades
+  category: vanilla-tweaks
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://vanillatweaks.net/picker/datapacks/category/hermitcraft"
+  verified: false
+  notes: "Vanilla Tweaks datapack — see the block comment above this entry for why download_url is unresolvable."
+
+- id: AntiCreeperGrief
+  category: vanilla-tweaks
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://vanillatweaks.net/picker/datapacks/category/mobGriefing"
+  verified: false
+  notes: "Vanilla Tweaks datapack — see the block comment above this entry for why download_url is unresolvable."
+
+- id: AntiEndermanGrief
+  category: vanilla-tweaks
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://vanillatweaks.net/picker/datapacks/category/mobGriefing"
+  verified: false
+  notes: "Vanilla Tweaks datapack — see the block comment above this entry for why download_url is unresolvable."
+
+- id: ArmorStatues
+  category: vanilla-tweaks
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://vanillatweaks.net/picker/datapacks/category/hermitcraft"
+  verified: false
+  notes: "Vanilla Tweaks datapack — see the block comment above this entry for why download_url is unresolvable."
+
+- id: CauldronConcrete
+  category: vanilla-tweaks
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://vanillatweaks.net/picker/datapacks/category/hermitcraft"
+  verified: false
+  notes: "Vanilla Tweaks datapack — see the block comment above this entry for why download_url is unresolvable."
+
+- id: SilenceMobs
+  category: vanilla-tweaks
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://vanillatweaks.net/picker/datapacks/category/utilities"
+  verified: false
+  notes: "Vanilla Tweaks datapack — see the block comment above this entry for why download_url is unresolvable."
+
+- id: UnlockAllRecipes
+  category: vanilla-tweaks
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://vanillatweaks.net/picker/datapacks/category/unlockAllRecipes"
+  verified: false
+  notes: "Vanilla Tweaks datapack — see the block comment above this entry for why download_url is unresolvable."
+
+- id: AFKDisplay
+  category: vanilla-tweaks
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://vanillatweaks.net/picker/datapacks/category/utilities"
+  verified: false
+  notes: "Vanilla Tweaks datapack — see the block comment above this entry for why download_url is unresolvable."
+
+- id: UniversalDyeing
+  category: vanilla-tweaks
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://vanillatweaks.net/picker/datapacks/category/utilities"
+  verified: false
+  notes: "Vanilla Tweaks datapack — see the block comment above this entry for why download_url is unresolvable."
+
+- id: UnpackableItems
+  category: vanilla-tweaks
+  source: external
+  version: "unknown"
+  download_url: null
+  sha256: null
+  homepage: "https://vanillatweaks.net/picker/datapacks/category/utilities"
+  verified: false
+  notes: "Vanilla Tweaks datapack — see the block comment above this entry for why download_url is unresolvable."
