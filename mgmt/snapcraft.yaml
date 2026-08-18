@@ -32,8 +32,13 @@ apps:
 # `snap set folia-nexa-mgmt public-url=<url>` overrides Settings.public_url
 # (unset by default — required before any world can declare plugins/
 # datapacks, see routers/worlds.py) the same way.
-# scripts/run-mgmt-daemon.sh reads both via snapctl at every daemon start;
-# snap/hooks/configure restarts the daemon whenever either is changed.
+# `snap set folia-nexa-mgmt artifacts-base-url=<url>` overrides
+# Settings.artifacts_base_url (default the unreachable placeholder
+# https://artifacts.internal — every world's engine-jar download fails
+# with a DNS error until this is set to a real host, see config.py's own
+# comment) the same way.
+# scripts/run-mgmt-daemon.sh reads all three via snapctl at every daemon
+# start; snap/hooks/configure restarts the daemon whenever any is changed.
 parts:
   mgmt:
     plugin: python

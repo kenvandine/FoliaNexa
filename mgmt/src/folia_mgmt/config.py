@@ -21,6 +21,13 @@ class Settings(BaseSettings):
     # https://artifacts.internal/folia/1.21.4/folia.jar. Plugin *manifests*
     # (not the plugin jars themselves) come from this mgmt instance's own
     # API instead — see public_url below and PLAN.md §14's plugin catalog.
+    # The default is a deliberately unreachable placeholder, not a real
+    # host — every deployment must set this to a real, world-reachable
+    # static file host or every world placement will fail at the node
+    # agent's jar download with a DNS error. For the snap, set it with
+    # `snap set folia-nexa-mgmt artifacts-base-url=<url>` (see
+    # snapcraft.yaml/run-mgmt-daemon.sh) rather than hand-rolling a
+    # systemd environment override.
     artifacts_base_url: str = "https://artifacts.internal"
 
     # This mgmt instance's own network-reachable address, e.g.

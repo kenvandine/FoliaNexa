@@ -229,9 +229,18 @@ plugins list`; see `configs/worlds/create-all.sh`). **Before running
 these**, note two separate things need to be reachable:
 
 - The engine jar comes from `folia-nexa-mgmt`'s `artifacts_base_url`
-  setting (default `https://artifacts.internal`, overridable via
-  `FOLIA_MGMT_ARTIFACTS_BASE_URL`) — `folia-nexa-node` fetches
-  `{artifacts_base_url}/{engine}/{version}/{engine}.jar` from there.
+  setting (default a deliberately unreachable placeholder,
+  `https://artifacts.internal` — every world placement fails at the node
+  agent's jar download with a DNS error until this is set for real) —
+  `folia-nexa-node` fetches `{artifacts_base_url}/{engine}/{version}/
+  {engine}.jar` from there. For the snap, set it with `sudo snap set
+  folia-nexa-mgmt artifacts-base-url=http://<a-real-reachable-host>:<port>`
+  (same mechanism as `public-url` below — `run-mgmt-daemon.sh` re-reads it
+  via snapctl on every daemon start, `snap/hooks/configure` restarts the
+  daemon when it changes) rather than a hand-rolled systemd environment
+  override. The target host just needs to serve the jar as a static file
+  at exactly that path — nothing in this repo runs that file server for
+  you.
 - Declaring any `--plugin` requires `FOLIA_MGMT_PUBLIC_URL` to be set to
   this mgmt instance's own reachable address — worlds fetch their plugin
   manifest from `{public_url}/api/v1/worlds/{name}/plugins-manifest`,
