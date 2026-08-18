@@ -725,6 +725,32 @@
     no folia-supported key in plugin.yml (checked directly). Verify
     Folia compatibility before relying on it.
 
+- id: RealisticSeasons
+  category: gameplay-tweaks
+  source: external
+  version: "26.2"
+  download_url: null
+  sha256: null
+  homepage: "https://www.spigotmc.org/resources/realisticseasons.93275/"
+  verified: false
+  notes: >
+    Checked 2026-08-18: premium/paid SpigotMC resource (currently 11.99
+    EUR, listing id 93275) — a real license gate, not a free-download
+    gap. Spiget's resource-download proxy (the mechanism this catalog
+    uses for other SpigotMC-only entries) 404s on it
+    ("File with such name does not exist") exactly as it does for other
+    confirmed-premium resources in this catalog (e.g. ItemsAdder);
+    Spiget only mirrors free resources. There IS a same-named "
+    RealisticSeasons" listing on Modrinth (project LfIePOyW, author
+    perusi) with a real downloadable jar — downloaded and inspected
+    directly, and it is NOT this plugin: its plugin.yml declares
+    version 2.0.0 (vs. the real SpigotMC listing's 26.2) and its class
+    files live under the placeholder package com.example.realisticseasons
+    with only a stub /season command — an unrelated, low-effort
+    same-name upload, not a real distribution of Casper Swagerman's
+    plugin. Do not point download_url at it. A real download needs a
+    purchased license from the SpigotMC listing above.
+
 # Example in-house entry: demonstrates a catalog entry pointing at a
 # separate repository's releases rather than a third-party plugin host.
 # folianexa-plugins doesn't exist yet — replace with your real in-house
