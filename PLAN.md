@@ -755,6 +755,27 @@ from DB settings (§11B), not something an operator edits freely.
   time — a plugin removed from a world (`PATCH /{name}`) stops having its
   stale override re-pushed forever, matching what the read/write
   endpoints already enforce via `_require_declared_plugin`.
+- **Managed plugins are off-limits, reads included**: `LuckPerms` and
+  `FoliaNexaStats` are the two exceptions to "any plugin in a world's
+  declared list" above — `luckperms.py`/`folianexa_stats.py` already
+  render and push their `config.yml` from live cluster secrets (the
+  shared MySQL password, an operator-scoped mgmt API token), at exactly
+  the container paths this browser would otherwise serve.
+  `plugin_files.MANAGED_PLUGIN_IDS` is checked in all four
+  `plugin_config.py` handlers (`_require_not_managed`, right after
+  `_require_declared_plugin`) and rejects with 403 — including `GET`,
+  since a `viewer`-role token (e.g. the proxy's own service account,
+  deliberately provisioned viewer-only) reading either secret back out
+  would be a viewer→operator privilege escalation, not just an unwanted
+  write. `sync_plugin_config_files` independently skips any
+  `WorldPluginConfigFile` row whose `plugin_id` is managed, as defense in
+  depth against a row that predates this check — without it, that
+  reconcile loop (which runs *after* `sync_luckperms_configs`/
+  `sync_stats_configs` in `reconcile()`) would silently and permanently
+  overwrite the real config with the stale override on every tick. The
+  dashboard's plugin picker filters `MANAGED_PLUGIN_IDS` out of
+  `world.plugins` client-side too, purely as UX — the actual boundary is
+  server-side and enforced regardless of what the picker offers.
 - **File browser, not just `config.yml`**: `GET .../files` recursively
   walks a plugin's folder (`plugin_files.py`, capped at depth 6 / 500
   files) merging what's live in the container with any mgmt overrides, so
@@ -775,16 +796,21 @@ from DB settings (§11B), not something an operator edits freely.
   `PATCH /{name}` for the same "edit now, apply on restart" world-update
   flow) gives an operator a manual way to apply one on demand — this
   feature doesn't need its own restart endpoint, it just reuses that one.
-- **Dashboard**: a "Configs" button per world (Worlds tab) opens the
-  app's first modal — a plugin picker, a file tree, and a text editor,
-  built from the same `api()`/`escapeHtml()` conventions and `.card`/
-  `.btn`/`.hint` classes every other tab already uses. See
+- **Dashboard**: a "Plugin configs" button per world (Worlds tab, next to
+  "Configure"/"Restart"/etc.) opens the app's first modal — a plugin
+  picker, a file tree, and a text editor, built from the same
+  `api()`/`escapeHtml()` conventions and `.card`/`.btn`/`.hint` classes
+  every other tab already uses. Its own "Restart world to apply" button
+  reports into the modal's own `#config-modal-error`, not the page-level
+  `#worlds-error` (hidden behind the modal overlay) — same pattern the
+  inline world-edit panel's `restartWorldEdit()` already established. See
   `static/index.html`'s plugin config modal functions.
 - **CLI**: `folia-nexa-mgmt worlds plugin-config list|show|set|revert
   <world> <plugin-id> [path]`, and `worlds restart <world>`.
 - Only plugins already in a world's declared `plugins` list are editable
-  (404 otherwise) — this isn't a general container file browser, it's
-  scoped to what §14A already lets a world run.
+  (404 otherwise), and never `LuckPerms`/`FoliaNexaStats` (403 — see
+  above) — this isn't a general container file browser, it's scoped to
+  what §14A already lets a world run, minus what mgmt manages itself.
 
 ---
 

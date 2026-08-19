@@ -13,6 +13,17 @@ from folia_mgmt.lxd_client import Host, LXDClient, LXDError
 MAX_DEPTH = 6
 MAX_FILES = 500
 
+# Plugin ids whose config.yml mgmt renders and pushes itself from live
+# secrets (luckperms.py's shared MySQL password, folianexa_stats.py's
+# operator-scoped mgmt API token) rather than static catalog content.
+# The generic file browser/editor in routers/plugin_config.py must never
+# read or write these — a viewer-role caller could otherwise read out an
+# operator-scoped token (viewer -> operator privilege escalation), and an
+# operator-role override would silently and permanently win over the
+# managed config on every reconcile tick (sync_plugin_config_files runs
+# after sync_luckperms_configs/sync_stats_configs in scheduler.reconcile).
+MANAGED_PLUGIN_IDS = frozenset({"LuckPerms", "FoliaNexaStats"})
+
 
 def plugin_root(plugin_id: str) -> str:
     return f"{NODE_WORLD_DIR}/plugins/{plugin_id}"

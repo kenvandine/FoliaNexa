@@ -23,11 +23,15 @@ def _world(name="world-overworld", plugins=None, host_name="node-a", container_n
         host_name=host_name,
         container_name=container_name,
         address="10.0.1.20:25565",
-        plugins=plugins or ["LuckPerms"],
+        # Spark, not LuckPerms — LuckPerms is one of the two mgmt-managed
+        # plugin ids (plugin_files.MANAGED_PLUGIN_IDS) this browser now
+        # refuses to serve; see the dedicated managed-plugin tests below
+        # for that behavior.
+        plugins=plugins or ["Spark"],
     )
 
 
-def _files_url(world="world-overworld", plugin="LuckPerms", path=None):
+def _files_url(world="world-overworld", plugin="Spark", path=None):
     base = f"/api/v1/worlds/{world}/plugins/{plugin}/files"
     return f"{base}/{path}" if path else base
 
@@ -37,8 +41,8 @@ def test_list_files_merges_live_and_override(client, operator_token, viewer_toke
     db_session.add(_world())
     db_session.commit()
 
-    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/LuckPerms/config.yml")] = b"live: true"
-    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/LuckPerms/lang/en.yml")] = b"hello: world"
+    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Spark/config.yml")] = b"live: true"
+    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Spark/lang/en.yml")] = b"hello: world"
 
     put_resp = client.put(
         _files_url(path="lang/en.yml"), json={"content": "hello: overridden"}, headers=auth_header(operator_token)
@@ -52,11 +56,31 @@ def test_list_files_merges_live_and_override(client, operator_token, viewer_toke
     assert files == {"config.yml": "live", "lang/en.yml": "both"}
 
 
+def test_list_files_recurses_through_empty_directory_without_misclassifying_it(
+    client, viewer_token, db_session, fake_lxd
+):
+    # Regresses the file-vs-directory probe in plugin_files.py's _walk: an
+    # empty subdirectory (e.g. a freshly-created "lang/" before any
+    # translation file lands in it) must not be treated as a file just
+    # because it has no children.
+    db_session.add(_host())
+    db_session.add(_world())
+    db_session.commit()
+
+    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Spark/config.yml")] = b"live: true"
+    fake_lxd.container_dirs.add(("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Spark/lang"))
+
+    resp = client.get(_files_url(), headers=auth_header(viewer_token))
+    assert resp.status_code == 200, resp.text
+    paths = {f["path"] for f in resp.json()["files"]}
+    assert paths == {"config.yml"}
+
+
 def test_get_file_prefers_override_over_live(client, operator_token, viewer_token, db_session, fake_lxd):
     db_session.add(_host())
     db_session.add(_world())
     db_session.commit()
-    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/LuckPerms/config.yml")] = b"live: true"
+    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Spark/config.yml")] = b"live: true"
 
     client.put(_files_url(path="config.yml"), json={"content": "override: true"}, headers=auth_header(operator_token))
 
@@ -72,7 +96,7 @@ def test_get_file_falls_back_to_live(client, viewer_token, db_session, fake_lxd)
     db_session.add(_host())
     db_session.add(_world())
     db_session.commit()
-    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/LuckPerms/config.yml")] = b"live: true"
+    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Spark/config.yml")] = b"live: true"
 
     resp = client.get(_files_url(path="config.yml"), headers=auth_header(viewer_token))
     assert resp.status_code == 200
@@ -85,7 +109,7 @@ def test_get_file_detects_binary(client, viewer_token, db_session, fake_lxd):
     db_session.add(_host())
     db_session.add(_world())
     db_session.commit()
-    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/LuckPerms/data.bin")] = b"\xff\xfe\x00\x01"
+    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Spark/data.bin")] = b"\xff\xfe\x00\x01"
 
     resp = client.get(_files_url(path="data.bin"), headers=auth_header(viewer_token))
     assert resp.status_code == 200
@@ -131,7 +155,7 @@ def test_delete_reverts_override(client, operator_token, viewer_token, db_sessio
     db_session.add(_host())
     db_session.add(_world())
     db_session.commit()
-    live_path = "/var/snap/folia-nexa-node/common/world/plugins/LuckPerms/config.yml"
+    live_path = "/var/snap/folia-nexa-node/common/world/plugins/Spark/config.yml"
     fake_lxd.container_files[("node-a", "world-overworld", live_path)] = b"live: true"
     # Simulate the live push failing so the container's own copy stays
     # untouched — proving DELETE reverts to the live file, not to whatever
@@ -212,7 +236,7 @@ def test_get_file_rejects_path_traversal_over_http(client, viewer_token, db_sess
     db_session.commit()
 
     resp = client.get(
-        "/api/v1/worlds/world-overworld/plugins/LuckPerms/files/..%2F..%2F..%2Fetc%2Fshadow",
+        "/api/v1/worlds/world-overworld/plugins/Spark/files/..%2F..%2F..%2Fetc%2Fshadow",
         headers=auth_header(viewer_token),
     )
     assert resp.status_code == 400
@@ -224,8 +248,66 @@ def test_put_file_rejects_path_traversal_over_http(client, operator_token, db_se
     db_session.commit()
 
     resp = client.put(
-        "/api/v1/worlds/world-overworld/plugins/LuckPerms/files/..%2F..%2Fescape.yml",
+        "/api/v1/worlds/world-overworld/plugins/Spark/files/..%2F..%2Fescape.yml",
         json={"content": "pwned"},
         headers=auth_header(operator_token),
     )
     assert resp.status_code == 400
+
+
+# -- managed plugins (LuckPerms/FoliaNexaStats) are off-limits ---------------
+#
+# Their config.yml carries live secrets mgmt renders itself (a shared MySQL
+# password, an operator-scoped API token) — this browser must refuse every
+# operation on them, read included, since the read side is exactly how a
+# viewer-role caller could otherwise read out an operator-scoped token.
+
+
+@pytest.mark.parametrize("plugin_id", ["LuckPerms", "FoliaNexaStats"])
+def test_list_files_rejects_managed_plugin(client, viewer_token, db_session, plugin_id):
+    db_session.add(_host())
+    db_session.add(_world(plugins=[plugin_id]))
+    db_session.commit()
+
+    resp = client.get(_files_url(plugin=plugin_id), headers=auth_header(viewer_token))
+    assert resp.status_code == 403
+
+
+@pytest.mark.parametrize("plugin_id", ["LuckPerms", "FoliaNexaStats"])
+def test_get_file_rejects_managed_plugin_even_as_viewer(client, viewer_token, db_session, fake_lxd, plugin_id):
+    db_session.add(_host())
+    db_session.add(_world(plugins=[plugin_id]))
+    db_session.commit()
+    # Seed a live config.yml as luckperms.py/folianexa_stats.py's own
+    # reconcile-loop sync would — the point of this test is that a viewer
+    # can't read it back out through this endpoint even though it exists.
+    fake_lxd.container_files[
+        ("node-a", "world-overworld", f"/var/snap/folia-nexa-node/common/world/plugins/{plugin_id}/config.yml")
+    ] = b"mysql-password: super-secret"
+
+    resp = client.get(_files_url(plugin=plugin_id, path="config.yml"), headers=auth_header(viewer_token))
+    assert resp.status_code == 403
+
+
+@pytest.mark.parametrize("plugin_id", ["LuckPerms", "FoliaNexaStats"])
+def test_put_file_rejects_managed_plugin_even_as_operator(client, operator_token, db_session, plugin_id):
+    db_session.add(_host())
+    db_session.add(_world(plugins=[plugin_id]))
+    db_session.commit()
+
+    resp = client.put(
+        _files_url(plugin=plugin_id, path="config.yml"),
+        json={"content": "mysql-password: overwritten"},
+        headers=auth_header(operator_token),
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.parametrize("plugin_id", ["LuckPerms", "FoliaNexaStats"])
+def test_delete_file_rejects_managed_plugin(client, operator_token, db_session, plugin_id):
+    db_session.add(_host())
+    db_session.add(_world(plugins=[plugin_id]))
+    db_session.commit()
+
+    resp = client.delete(_files_url(plugin=plugin_id, path="config.yml"), headers=auth_header(operator_token))
+    assert resp.status_code == 403

@@ -151,8 +151,18 @@ a general audience.
 installed **on the lobby world itself** (not the proxy — it talks to
 Velocity over the standard BungeeCord/Velocity plugin-messaging
 channel, which needs no proxy-side config). Add it to the lobby world's
-plugin list, then edit its `config.yml` (on the lobby's container) to
-add an entry whose `id:` is your world's name:
+plugin list, then edit its `config.yml` to add an entry whose `id:` is
+your world's name. Do this from the dashboard's "Plugin configs" button
+on the lobby world's row (pick `ServerSelector`, edit `config.yml`,
+Save), or from the CLI:
+
+```bash
+folia-nexa-mgmt worlds plugin-config show world-lobby ServerSelector config.yml > /tmp/selector-config.yml
+# edit /tmp/selector-config.yml, then:
+folia-nexa-mgmt worlds plugin-config set world-lobby ServerSelector config.yml --file /tmp/selector-config.yml
+```
+
+Add an entry whose `id:` is your world's name:
 
 ```yaml
 servers:
@@ -165,10 +175,12 @@ servers:
     slot: 15
 ```
 
-`/selector reload` on the lobby world picks up the change without a
-restart. It's a small, single-maintainer plugin (see its catalog
-`notes`) — the download itself is verified, but test it before an event
-rather than trusting it blind at scale.
+Either path saves the edit in mgmt (so it survives restarts/migrations,
+re-applied every reconcile tick) and pushes it live immediately if the
+world is reachable; `/selector reload` on the lobby world picks up the
+change without a restart either way. It's a small, single-maintainer
+plugin (see its catalog `notes`) — the download itself is verified, but
+test it before an event rather than trusting it blind at scale.
 
 ## 6. Iterating on the design
 
@@ -186,6 +198,22 @@ folia-nexa-mgmt worlds create world-minigame-parkour --type minigame --cpu 2 --m
 after deleting the old one — see below. If the world has player-created
 state you care about (unlikely for most minigame arenas, which are
 usually regenerated per round anyway, but possible), snapshot first.
+
+**Changing an existing plugin's config, without recreating the world:**
+unlike the plugin *list*, an already-declared plugin's config *files*
+can be edited in place — the dashboard's "Plugin configs" button per
+world row, or `folia-nexa-mgmt worlds plugin-config
+{list,show,set,revert}` from the CLI (same commands as the lobby
+`ServerSelector` example in §5, generalized to any plugin). mgmt saves
+the edit as the source of truth and re-pushes it every reconcile tick,
+same as `world.plugins` itself, so it survives restarts. Most plugins
+only read their config at boot, though — save an edit, then `folia-nexa-mgmt
+worlds restart world-minigame-parkour` (or the dashboard's "Restart
+world to apply" button in that same modal) for it to actually take
+effect. `LuckPerms` and `FoliaNexaStats` are the two exceptions: mgmt
+renders and manages their `config.yml` itself from live cluster secrets
+(the shared MySQL backend, an API token) and the file browser refuses
+to show or accept edits to either — nothing to configure there by hand.
 
 **Snapshotting / restoring:**
 

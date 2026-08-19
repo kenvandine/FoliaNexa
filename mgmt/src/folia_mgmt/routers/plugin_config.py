@@ -23,7 +23,7 @@ from folia_mgmt.db import get_session
 from folia_mgmt.deps import get_lxd_client
 from folia_mgmt.lxd_client import LXDClient, LXDError
 from folia_mgmt.models import Host, World, WorldPluginConfigFile, utcnow
-from folia_mgmt.plugin_files import list_plugin_files, plugin_root
+from folia_mgmt.plugin_files import MANAGED_PLUGIN_IDS, list_plugin_files, plugin_root
 
 router = APIRouter(prefix="/worlds", tags=["plugin-config"])
 
@@ -39,6 +39,20 @@ def _require_declared_plugin(world: World, plugin_id: str) -> None:
     if plugin_id not in world.plugins:
         raise HTTPException(
             status.HTTP_404_NOT_FOUND, f"plugin '{plugin_id}' is not declared on world '{world.name}'"
+        )
+
+
+def _require_not_managed(plugin_id: str) -> None:
+    """LuckPerms/FoliaNexaStats's config.yml is rendered by mgmt itself from
+    live secrets (a shared MySQL password, an operator-scoped API token) —
+    this browser is for freely-editable plugin config, not a window onto
+    those secrets or a way to silently override them. Applies to every
+    handler below, reads included: the read side is exactly how a
+    viewer-role caller could otherwise read out an operator-scoped token."""
+    if plugin_id in MANAGED_PLUGIN_IDS:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            f"'{plugin_id}' config is managed by mgmt itself and can't be browsed or edited here",
         )
 
 
@@ -115,6 +129,7 @@ def list_files(
 ) -> FileListResponse:
     world = _get_world_or_404(session, name)
     _require_declared_plugin(world, plugin_id)
+    _require_not_managed(plugin_id)
 
     live_paths: set[str] = set()
     host = _host_for(session, world)
@@ -160,6 +175,7 @@ def get_file(
 ) -> FileContentResponse:
     world = _get_world_or_404(session, name)
     _require_declared_plugin(world, plugin_id)
+    _require_not_managed(plugin_id)
     path = _safe_relative_path(path)
 
     override = _override(session, name, plugin_id, path)
@@ -209,6 +225,7 @@ def put_file(
 ) -> FileUpdateResponse:
     world = _get_world_or_404(session, name)
     _require_declared_plugin(world, plugin_id)
+    _require_not_managed(plugin_id)
     path = _safe_relative_path(path)
 
     content = body.content.encode("utf-8")
@@ -249,6 +266,7 @@ def delete_file_override(
 ) -> dict:
     world = _get_world_or_404(session, name)
     _require_declared_plugin(world, plugin_id)
+    _require_not_managed(plugin_id)
     path = _safe_relative_path(path)
 
     existing = _override(session, name, plugin_id, path)

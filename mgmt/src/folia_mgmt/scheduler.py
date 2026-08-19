@@ -21,7 +21,7 @@ from folia_mgmt.folianexa_stats import apply_stats_config
 from folia_mgmt.luckperms import apply_luckperms_config
 from folia_mgmt.lxd_client import LXDClient, LXDError, extract_ipv4
 from folia_mgmt.models import Host, HostStatus, MinecraftVersionConfig, World, WorldPhase, WorldPluginConfigFile, utcnow
-from folia_mgmt.plugin_files import plugin_root
+from folia_mgmt.plugin_files import MANAGED_PLUGIN_IDS, plugin_root
 
 logger = logging.getLogger(__name__)
 
@@ -445,6 +445,15 @@ def sync_plugin_config_files(session: Session, lxd_client: LXDClient) -> None:
             # _require_declared_plugin; this is the reconcile-loop half of
             # the same rule.
             if row.plugin_id not in world.plugins:
+                continue
+            # Defense in depth: put_file already refuses to create a row
+            # for a managed plugin (routers/plugin_config.py's
+            # _require_not_managed), but a row could still exist from
+            # before that check shipped. Skip it rather than push it —
+            # pushing here would silently and permanently clobber
+            # sync_luckperms_configs'/sync_stats_configs' own config on
+            # every tick, since this runs after both of them below.
+            if row.plugin_id in MANAGED_PLUGIN_IDS:
                 continue
             try:
                 lxd_client.push_file(host, world.container_name, f"{plugin_root(row.plugin_id)}/{row.path}", row.content)

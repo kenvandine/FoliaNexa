@@ -38,6 +38,14 @@ class FakeLXDClient:
         # first-boot-generated config) without going through push_file.
         self.container_files: dict[tuple[str, str, str], bytes] = {}
         self.fail_push_for: set[str] = set()  # absolute paths to raise LXDError for
+        # Directories that exist but currently have no children — the real
+        # LXDClient.list_files returns [] for these (LXD's file API 200s
+        # with metadata: [] for a genuinely empty directory); container_files
+        # alone can't represent that since it only has entries for files,
+        # so "no children" and "doesn't exist" would otherwise be
+        # indistinguishable. Tests can seed one directly: (host_name,
+        # container, absolute_path) -> "this directory exists and is empty".
+        self.container_dirs: set[tuple[str, str, str]] = set()
 
     def ping_host(self, host) -> bool:
         self.ping_calls.append(host.name)
@@ -105,7 +113,9 @@ class FakeLXDClient:
                 continue
             if p.startswith(norm_path + "/"):
                 children.add(p[len(norm_path) + 1 :].split("/", 1)[0])
-        if is_a_file or not children:
+        if is_a_file:
+            raise LXDError(f"'{path}' on '{name}' is not a directory or does not exist")
+        if not children and (host.name, name, norm_path) not in self.container_dirs:
             raise LXDError(f"'{path}' on '{name}' is not a directory or does not exist")
         return sorted(children)
 

@@ -569,24 +569,24 @@ def test_sync_plugin_config_files_pushes_to_running_worlds_only():
         World(
             name="world-running", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
             phase=WorldPhase.running, host_name="node-a", container_name="world-running",
-            plugins=["LuckPerms"],
+            plugins=["Spark"],
         )
     )
     session.add(
         World(
             name="world-pending", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
-            phase=WorldPhase.pending, plugins=["LuckPerms"],
+            phase=WorldPhase.pending, plugins=["Spark"],
         )
     )
-    session.add(WorldPluginConfigFile(world_name="world-running", plugin_id="LuckPerms", path="config.yml", content=b"x", updated_by="op"))
-    session.add(WorldPluginConfigFile(world_name="world-pending", plugin_id="LuckPerms", path="config.yml", content=b"x", updated_by="op"))
+    session.add(WorldPluginConfigFile(world_name="world-running", plugin_id="Spark", path="config.yml", content=b"x", updated_by="op"))
+    session.add(WorldPluginConfigFile(world_name="world-pending", plugin_id="Spark", path="config.yml", content=b"x", updated_by="op"))
     session.commit()
 
     lxd = _RecordingLXDClient()
     sync_plugin_config_files(session, lxd)
 
     assert list(lxd.pushed.keys()) == [
-        ("world-running", "/var/snap/folia-nexa-node/common/world/plugins/LuckPerms/config.yml")
+        ("world-running", "/var/snap/folia-nexa-node/common/world/plugins/Spark/config.yml")
     ]
 
 
@@ -597,19 +597,19 @@ def test_sync_plugin_config_files_tolerates_push_failure_and_continues():
         World(
             name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
             phase=WorldPhase.running, host_name="node-a", container_name="world-a",
-            plugins=["LuckPerms"],
+            plugins=["Spark"],
         )
     )
-    session.add(WorldPluginConfigFile(world_name="world-a", plugin_id="LuckPerms", path="broken.yml", content=b"x", updated_by="op"))
-    session.add(WorldPluginConfigFile(world_name="world-a", plugin_id="LuckPerms", path="ok.yml", content=b"y", updated_by="op"))
+    session.add(WorldPluginConfigFile(world_name="world-a", plugin_id="Spark", path="broken.yml", content=b"x", updated_by="op"))
+    session.add(WorldPluginConfigFile(world_name="world-a", plugin_id="Spark", path="ok.yml", content=b"y", updated_by="op"))
     session.commit()
 
     lxd = _RecordingLXDClient()
-    lxd.fail_push_for.add("/var/snap/folia-nexa-node/common/world/plugins/LuckPerms/broken.yml")
+    lxd.fail_push_for.add("/var/snap/folia-nexa-node/common/world/plugins/Spark/broken.yml")
     sync_plugin_config_files(session, lxd)  # must not raise
 
-    assert ("world-a", "/var/snap/folia-nexa-node/common/world/plugins/LuckPerms/ok.yml") in lxd.pushed
-    assert ("world-a", "/var/snap/folia-nexa-node/common/world/plugins/LuckPerms/broken.yml") not in lxd.pushed
+    assert ("world-a", "/var/snap/folia-nexa-node/common/world/plugins/Spark/ok.yml") in lxd.pushed
+    assert ("world-a", "/var/snap/folia-nexa-node/common/world/plugins/Spark/broken.yml") not in lxd.pushed
 
 
 def test_sync_plugin_config_files_stops_pushing_once_plugin_removed_from_world():
@@ -619,10 +619,35 @@ def test_sync_plugin_config_files_stops_pushing_once_plugin_removed_from_world()
         World(
             name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
             phase=WorldPhase.running, host_name="node-a", container_name="world-a",
-            plugins=[],  # LuckPerms already removed from the declared list
+            plugins=[],  # Spark already removed from the declared list
         )
     )
-    session.add(WorldPluginConfigFile(world_name="world-a", plugin_id="LuckPerms", path="config.yml", content=b"x", updated_by="op"))
+    session.add(WorldPluginConfigFile(world_name="world-a", plugin_id="Spark", path="config.yml", content=b"x", updated_by="op"))
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    sync_plugin_config_files(session, lxd)
+
+    assert lxd.pushed == {}
+
+
+def test_sync_plugin_config_files_skips_managed_plugin_rows():
+    # Defense in depth: put_file (routers/plugin_config.py) already refuses
+    # to create a WorldPluginConfigFile row for a managed plugin id, but a
+    # row could still exist from before that check shipped (or from direct
+    # DB manipulation). This reconcile loop must not push it — doing so
+    # would silently and permanently clobber sync_luckperms_configs' own
+    # config, since sync_plugin_config_files runs after it in reconcile().
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+            plugins=["LuckPerms"],
+        )
+    )
+    session.add(WorldPluginConfigFile(world_name="world-a", plugin_id="LuckPerms", path="config.yml", content=b"malicious-override", updated_by="op"))
     session.commit()
 
     lxd = _RecordingLXDClient()

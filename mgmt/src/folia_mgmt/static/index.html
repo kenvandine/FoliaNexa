@@ -489,7 +489,7 @@
         <div class="config-actions">
           <button class="btn" id="config-save-btn" onclick="saveConfigFile()" disabled>Save</button>
           <button class="btn ghost" id="config-revert-btn" onclick="revertConfigFile()" disabled>Revert to plugin default</button>
-          <button class="btn danger" onclick="restartWorld(configModal.world)">Restart world to apply</button>
+          <button class="btn danger" onclick="restartWorldFromConfigModal()">Restart world to apply</button>
         </div>
       </div>
     </div>
@@ -1431,6 +1431,14 @@ async function createUser(event) {
 
 let configModal = { world: null, plugins: [], selectedPlugin: null, selectedPath: null, files: [] };
 
+// Mirrors plugin_files.py's MANAGED_PLUGIN_IDS — mgmt renders these two
+// plugins' config.yml itself from live secrets (a shared MySQL password,
+// an operator-scoped API token), so the picker shouldn't offer them at
+// all. This is UX only: the actual security boundary is server-side
+// (_require_not_managed, enforced on every request regardless of what
+// the picker shows).
+const MANAGED_PLUGIN_IDS = ['LuckPerms', 'FoliaNexaStats'];
+
 function encodeFilePath(path) {
   return path.split('/').map(encodeURIComponent).join('/');
 }
@@ -1438,7 +1446,8 @@ function encodeFilePath(path) {
 function openConfigModal(worldName) {
   const world = state.worlds.find(w => w.name === worldName);
   if (!world) return;
-  configModal = { world: worldName, plugins: world.plugins || [], selectedPlugin: null, selectedPath: null, files: [] };
+  const plugins = (world.plugins || []).filter(p => !MANAGED_PLUGIN_IDS.includes(p));
+  configModal = { world: worldName, plugins, selectedPlugin: null, selectedPath: null, files: [] };
   document.getElementById('config-modal-title').textContent = 'Plugin configs — ' + worldName;
   document.getElementById('config-modal-error').textContent = '';
   document.getElementById('config-file-list').innerHTML = '<div class="hint" style="padding:0.5rem">Select a plugin.</div>';
@@ -1447,6 +1456,24 @@ function openConfigModal(worldName) {
   document.getElementById('config-modal-overlay').classList.add('active');
   if (configModal.plugins.length === 1) {
     selectConfigPlugin(configModal.plugins[0]);
+  }
+}
+
+async function restartWorldFromConfigModal() {
+  // Reports into #config-modal-error, not the page-level #worlds-error —
+  // that element sits behind this modal's overlay and would silently
+  // swallow any feedback while the modal is open (same pattern as
+  // restartWorldEdit() reporting into #world-edit-error).
+  const errorEl = document.getElementById('config-modal-error');
+  const name = configModal.world;
+  if (!name) return;
+  if (!confirm(`Restart "${name}" now? Players on it will be briefly disconnected.`)) return;
+  try {
+    await api('/worlds/' + encodeURIComponent(name) + '/restart', { method: 'POST' });
+    errorEl.textContent = '';
+    await loadWorlds();
+  } catch (e) {
+    errorEl.textContent = e.message;
   }
 }
 

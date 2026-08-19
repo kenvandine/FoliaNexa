@@ -76,7 +76,7 @@ is the exception, per the above.
 ## Running the test suites
 
 ```bash
-# mgmt (Python) — 341 tests
+# mgmt (Python) — 351 tests
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
@@ -662,9 +662,15 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
 - Plugin config file viewing/editing (PLAN.md §14D): `WorldPluginConfigFile`,
   the new `GET`/`PUT`/`DELETE` `.../plugins/{id}/files[/{path}]` endpoints,
   and `scheduler.py`'s `sync_plugin_config_files` — real pytest suite
-  (341 tests total, up from 314), including a live end-to-end smoke test
+  (351 tests total, up from 314), including a live end-to-end smoke test
   against a real running `folia-nexa-mgmt` instance (bootstrap-admin,
-  login, create a world, hit the new endpoints with curl). Reuses main's
+  login, create a world, hit the new endpoints with curl, including
+  confirming `..%2F..`-style path-traversal payloads 400 and that
+  `LuckPerms`/`FoliaNexaStats` 403 on every verb per `plugin_files.
+  MANAGED_PLUGIN_IDS` — a code review on the PR that shipped this feature
+  flagged both the traversal path and, in a second pass after the first
+  fix, that the file browser had no concept of mgmt-managed secrets;
+  both are now closed, see PLAN.md §14D's own notes). Reuses main's
   existing `POST /worlds/{name}/restart` (added since this feature's
   first draft — no separate restart endpoint needed). `LXDClient.list_files`/
   `read_file` (the read/list counterparts to `push_file`) are written
