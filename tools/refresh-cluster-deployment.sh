@@ -117,6 +117,40 @@ done
 # prompt shows but nothing you type reaches it. Confirmed for real: this
 # happened on the second host in a run, right after two scp calls to it.
 SSH_T=(ssh -t -o ControlMaster=no -o ControlPath=none)
+SSH_PLAIN=(ssh -o ControlMaster=no -o ControlPath=none)
+
+# Snap files (proxy's especially — it bundles a full JRE, 250MB+) used to
+# get scp'd to plain /tmp on every target host and never cleaned up
+# afterward. Confirmed for real this broke a deploy outright: a VPS whose
+# /tmp is a small, size-capped filesystem (unlike a big host's tmpfs) ran
+# out of room mid-transfer on exactly the proxy snap, the one big enough
+# to hit that ceiling while mgmt/node/portal's smaller ones never did.
+# Every snap now goes to a fresh per-host directory under $HOME instead
+# (ordinary disk, not /tmp, and not shared with anything else that might
+# be filling /tmp) — created right before its scp, removed right after
+# its install. REMOTE_TMP_DIRS + the EXIT trap below are a fallback for
+# whichever directory was open when a `set -e` failure elsewhere cuts the
+# script short, so a failed run doesn't still leave one behind.
+REMOTE_TMP_DIRS=()
+
+cleanup_remote_tmp_dirs() {
+  local entry host dir
+  for entry in "${REMOTE_TMP_DIRS[@]:-}"; do
+    [[ -z "$entry" ]] && continue
+    host="${entry%%|*}"
+    dir="${entry#*|}"
+    "${SSH_PLAIN[@]}" "$host" "rm -rf -- '$dir'" 2>/dev/null || true
+  done
+}
+trap cleanup_remote_tmp_dirs EXIT
+
+# Prints the new directory's path on stdout — callers must separately
+# append "$host|$dir" to REMOTE_TMP_DIRS themselves (this runs inside a
+# command-substitution subshell, so an array append made in here would
+# never be visible back in the main shell).
+make_remote_tmp_dir() {
+  "${SSH_PLAIN[@]}" "$1" 'mktemp -d "$HOME/.folia-deploy.XXXXXX"'
+}
 
 # -- build ---------------------------------------------------------------
 
@@ -143,8 +177,11 @@ fi
 
 if [[ -z "$SKIP_MGMT" ]]; then
   echo "==> Deploying mgmt to $MGMT_HOST"
-  scp "$REPO_ROOT"/mgmt/folia-nexa-mgmt_*.snap "$MGMT_HOST:/tmp/"
-  "${SSH_T[@]}" "$MGMT_HOST" 'sudo snap install /tmp/folia-nexa-mgmt_*.snap --dangerous'
+  MGMT_TMP_DIR="$(make_remote_tmp_dir "$MGMT_HOST")"
+  REMOTE_TMP_DIRS+=("$MGMT_HOST|$MGMT_TMP_DIR")
+  scp "$REPO_ROOT"/mgmt/folia-nexa-mgmt_*.snap "$MGMT_HOST:$MGMT_TMP_DIR/"
+  "${SSH_T[@]}" "$MGMT_HOST" "sudo snap install $MGMT_TMP_DIR/folia-nexa-mgmt_*.snap --dangerous"
+  "${SSH_PLAIN[@]}" "$MGMT_HOST" "rm -rf -- '$MGMT_TMP_DIR'"
 fi
 
 # -- node / folia-node-base --------------------------------------------
@@ -154,9 +191,12 @@ if [[ -z "$SKIP_NODE" ]]; then
   for host in "${hosts[@]}"; do
     echo "==> Refreshing folia-node-base on $host"
     NODE_SNAP="$(ls "$REPO_ROOT"/node/folia-nexa-node_*.snap | head -1)"
-    scp "$NODE_SNAP" "$host:/tmp/"
-    scp "$REPO_ROOT/tools/refresh-node-base-image.sh" "$host:/tmp/"
-    "${SSH_T[@]}" "$host" "sudo bash /tmp/refresh-node-base-image.sh '$LXD_PROJECT' '/tmp/$(basename "$NODE_SNAP")'"
+    NODE_TMP_DIR="$(make_remote_tmp_dir "$host")"
+    REMOTE_TMP_DIRS+=("$host|$NODE_TMP_DIR")
+    scp "$NODE_SNAP" "$host:$NODE_TMP_DIR/"
+    scp "$REPO_ROOT/tools/refresh-node-base-image.sh" "$host:$NODE_TMP_DIR/"
+    "${SSH_T[@]}" "$host" "sudo bash '$NODE_TMP_DIR/refresh-node-base-image.sh' '$LXD_PROJECT' '$NODE_TMP_DIR/$(basename "$NODE_SNAP")'"
+    "${SSH_PLAIN[@]}" "$host" "rm -rf -- '$NODE_TMP_DIR'"
   done
 fi
 
@@ -164,8 +204,11 @@ fi
 
 if [[ -z "$SKIP_PORTAL" ]]; then
   echo "==> Deploying portal to $PORTAL_HOST"
-  scp "$REPO_ROOT"/portal/folia-nexa-portal_*.snap "$PORTAL_HOST:/tmp/"
-  "${SSH_T[@]}" "$PORTAL_HOST" 'sudo snap install /tmp/folia-nexa-portal_*.snap --dangerous'
+  PORTAL_TMP_DIR="$(make_remote_tmp_dir "$PORTAL_HOST")"
+  REMOTE_TMP_DIRS+=("$PORTAL_HOST|$PORTAL_TMP_DIR")
+  scp "$REPO_ROOT"/portal/folia-nexa-portal_*.snap "$PORTAL_HOST:$PORTAL_TMP_DIR/"
+  "${SSH_T[@]}" "$PORTAL_HOST" "sudo snap install $PORTAL_TMP_DIR/folia-nexa-portal_*.snap --dangerous"
+  "${SSH_PLAIN[@]}" "$PORTAL_HOST" "rm -rf -- '$PORTAL_TMP_DIR'"
 fi
 
 # -- proxy -----------------------------------------------------------------
@@ -178,8 +221,11 @@ if [[ -z "$SKIP_PROXY" ]]; then
   fi
   if [[ -n "$proceed" ]]; then
     echo "==> Deploying proxy to $PROXY_HOST"
-    scp "$REPO_ROOT"/proxy/folia-nexa-proxy_*.snap "$PROXY_HOST:/tmp/"
-    "${SSH_T[@]}" "$PROXY_HOST" 'sudo snap install /tmp/folia-nexa-proxy_*.snap --dangerous'
+    PROXY_TMP_DIR="$(make_remote_tmp_dir "$PROXY_HOST")"
+    REMOTE_TMP_DIRS+=("$PROXY_HOST|$PROXY_TMP_DIR")
+    scp "$REPO_ROOT"/proxy/folia-nexa-proxy_*.snap "$PROXY_HOST:$PROXY_TMP_DIR/"
+    "${SSH_T[@]}" "$PROXY_HOST" "sudo snap install $PROXY_TMP_DIR/folia-nexa-proxy_*.snap --dangerous"
+    "${SSH_PLAIN[@]}" "$PROXY_HOST" "rm -rf -- '$PROXY_TMP_DIR'"
   else
     echo "==> Skipping proxy deploy"
   fi
