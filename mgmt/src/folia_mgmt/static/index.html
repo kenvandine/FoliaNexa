@@ -101,6 +101,44 @@
   .hint { color: var(--muted); font-size: 0.8rem; margin-top: 0.4rem; }
   .row-actions button { margin-right: 0.35rem; }
   code { background: #0b0d12; padding: 0.1rem 0.35rem; border-radius: 4px; }
+  textarea {
+    background: #0b0d12;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 5px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.82rem;
+  }
+  .modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 1.5rem;
+  }
+  .modal-overlay.active { display: flex; }
+  .modal {
+    width: min(920px, 100%);
+    max-height: 88vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; }
+  .modal-header h2 { margin: 0; font-size: 0.95rem; }
+  .plugin-pills { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.75rem; }
+  .plugin-pills button.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .config-layout { display: flex; gap: 1rem; flex: 1; min-height: 0; }
+  .config-file-list { width: 220px; flex-shrink: 0; border: 1px solid var(--border); border-radius: 6px; overflow-y: auto; }
+  .config-file-list div.file-row { padding: 0.4rem 0.6rem; cursor: pointer; font-size: 0.82rem; border-bottom: 1px solid var(--border); word-break: break-all; }
+  .config-file-list div.file-row:hover { background: #1d212b; }
+  .config-file-list div.file-row.active { background: var(--accent); color: #fff; }
+  .config-editor-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .config-editor { flex: 1; min-height: 320px; resize: vertical; padding: 0.6rem; }
+  .config-actions { margin-top: 0.6rem; display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
 </style>
 </head>
 <body>
@@ -433,6 +471,31 @@
   </main>
 </div>
 
+<div id="config-modal-overlay" class="modal-overlay">
+  <div class="modal card">
+    <div class="modal-header">
+      <h2 id="config-modal-title">Plugin configs</h2>
+      <button class="btn ghost" onclick="closeConfigModal()">Close</button>
+    </div>
+    <div id="config-modal-error" class="error"></div>
+    <div id="config-plugin-pills" class="plugin-pills"></div>
+    <div class="config-layout">
+      <div id="config-file-list" class="config-file-list">
+        <div class="hint" style="padding:0.5rem">Select a plugin.</div>
+      </div>
+      <div class="config-editor-pane">
+        <div id="config-file-status" class="hint" style="margin-bottom:0.4rem">&nbsp;</div>
+        <textarea id="config-editor" class="config-editor" placeholder="Select a file to view/edit" disabled></textarea>
+        <div class="config-actions">
+          <button class="btn" id="config-save-btn" onclick="saveConfigFile()" disabled>Save</button>
+          <button class="btn ghost" id="config-revert-btn" onclick="revertConfigFile()" disabled>Revert to plugin default</button>
+          <button class="btn danger" onclick="restartWorld(configModal.world)">Restart world to apply</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <script>
 const state = {
   token: localStorage.getItem('folia_token') || null,
@@ -624,6 +687,7 @@ async function loadWorlds() {
         <td class="row-actions">
           <button class="btn ghost" onclick="openWorldDetails('${escapeHtml(w.name)}')">Details</button>
           <button class="btn ghost" onclick="openWorldEdit('${escapeHtml(w.name)}')">Configure</button>
+          <button class="btn ghost" onclick="openConfigModal('${escapeHtml(w.name)}')">Plugin configs</button>
           ${w.phase === 'running' ? `<button class="btn ghost" onclick="restartWorld('${escapeHtml(w.name)}')">Restart</button>` : ''}
           ${w.phase === 'running' ? `<button class="btn ghost" onclick="stopWorld('${escapeHtml(w.name)}')">Stop</button>` : ''}
           ${w.phase === 'stopped' ? `<button class="btn ghost" onclick="startWorld('${escapeHtml(w.name)}')">Start</button>` : ''}
@@ -1358,6 +1422,153 @@ async function createUser(event) {
     errorEl.textContent = e.message;
   }
   return false;
+}
+
+// -- Plugin config modal ----------------------------------------------------
+// (view/edit a world's plugin config files, PLAN.md's plugin config editing
+// section — the app's only modal, reusing the existing .card/.btn/.hint
+// classes and the same api()/escapeHtml() helpers every other tab uses.)
+
+let configModal = { world: null, plugins: [], selectedPlugin: null, selectedPath: null, files: [] };
+
+function encodeFilePath(path) {
+  return path.split('/').map(encodeURIComponent).join('/');
+}
+
+function openConfigModal(worldName) {
+  const world = state.worlds.find(w => w.name === worldName);
+  if (!world) return;
+  configModal = { world: worldName, plugins: world.plugins || [], selectedPlugin: null, selectedPath: null, files: [] };
+  document.getElementById('config-modal-title').textContent = 'Plugin configs — ' + worldName;
+  document.getElementById('config-modal-error').textContent = '';
+  document.getElementById('config-file-list').innerHTML = '<div class="hint" style="padding:0.5rem">Select a plugin.</div>';
+  resetConfigEditor();
+  renderConfigPluginPills();
+  document.getElementById('config-modal-overlay').classList.add('active');
+  if (configModal.plugins.length === 1) {
+    selectConfigPlugin(configModal.plugins[0]);
+  }
+}
+
+function closeConfigModal() {
+  document.getElementById('config-modal-overlay').classList.remove('active');
+}
+
+function renderConfigPluginPills() {
+  const el = document.getElementById('config-plugin-pills');
+  if (!configModal.plugins.length) {
+    el.innerHTML = '<span class="hint">This world has no plugins declared.</span>';
+    return;
+  }
+  el.innerHTML = configModal.plugins.map(p => `
+    <button type="button" class="btn ghost${p === configModal.selectedPlugin ? ' active' : ''}" onclick="selectConfigPlugin('${escapeHtml(p)}')">${escapeHtml(p)}</button>
+  `).join('');
+}
+
+async function selectConfigPlugin(pluginId) {
+  configModal.selectedPlugin = pluginId;
+  configModal.selectedPath = null;
+  configModal.files = [];
+  renderConfigPluginPills();
+  resetConfigEditor();
+  document.getElementById('config-file-list').innerHTML = '<div class="hint" style="padding:0.5rem">Loading…</div>';
+  try {
+    await loadConfigFileList();
+  } catch (e) {
+    document.getElementById('config-modal-error').textContent = e.message;
+  }
+}
+
+async function loadConfigFileList() {
+  const body = await api('/worlds/' + encodeURIComponent(configModal.world) + '/plugins/' + encodeURIComponent(configModal.selectedPlugin) + '/files');
+  configModal.files = body.files;
+  renderConfigFileList();
+}
+
+function renderConfigFileList() {
+  const listEl = document.getElementById('config-file-list');
+  if (!configModal.files.length) {
+    listEl.innerHTML = '<div class="hint" style="padding:0.5rem">No files yet — the plugin may not have booted for the first time.</div>';
+    return;
+  }
+  listEl.innerHTML = configModal.files.map(f => `
+    <div class="file-row${f.path === configModal.selectedPath ? ' active' : ''}" onclick="selectConfigFile('${escapeHtml(f.path)}')">
+      ${escapeHtml(f.path)} <span class="hint">(${escapeHtml(f.source)})</span>
+    </div>
+  `).join('');
+}
+
+function resetConfigEditor() {
+  document.getElementById('config-file-status').innerHTML = '&nbsp;';
+  const textarea = document.getElementById('config-editor');
+  textarea.value = '';
+  textarea.disabled = true;
+  document.getElementById('config-save-btn').disabled = true;
+  document.getElementById('config-revert-btn').disabled = true;
+}
+
+async function selectConfigFile(path) {
+  configModal.selectedPath = path;
+  renderConfigFileList();
+  document.getElementById('config-modal-error').textContent = '';
+  const statusEl = document.getElementById('config-file-status');
+  const textarea = document.getElementById('config-editor');
+  statusEl.textContent = 'Loading…';
+  textarea.value = '';
+  textarea.disabled = true;
+  document.getElementById('config-save-btn').disabled = true;
+  document.getElementById('config-revert-btn').disabled = true;
+  try {
+    const body = await api('/worlds/' + encodeURIComponent(configModal.world) + '/plugins/' + encodeURIComponent(configModal.selectedPlugin) + '/files/' + encodeFilePath(path));
+    if (body.is_binary) {
+      statusEl.textContent = 'Binary file — not editable here.';
+    } else {
+      textarea.value = body.content || '';
+      textarea.disabled = false;
+      document.getElementById('config-save-btn').disabled = false;
+      const sourceNote = body.source === 'override' ? 'Saved in mgmt' : 'Live from the container';
+      const editNote = body.updated_at ? (' — last edited ' + body.updated_at + ' by ' + escapeHtml(body.updated_by)) : '';
+      statusEl.innerHTML = sourceNote + editNote;
+    }
+    document.getElementById('config-revert-btn').disabled = body.source !== 'override';
+  } catch (e) {
+    document.getElementById('config-modal-error').textContent = e.message;
+    statusEl.innerHTML = '&nbsp;';
+  }
+}
+
+async function saveConfigFile() {
+  if (!configModal.selectedPath) return;
+  const errorEl = document.getElementById('config-modal-error');
+  errorEl.textContent = '';
+  const content = document.getElementById('config-editor').value;
+  try {
+    const body = await api('/worlds/' + encodeURIComponent(configModal.world) + '/plugins/' + encodeURIComponent(configModal.selectedPlugin) + '/files/' + encodeFilePath(configModal.selectedPath), {
+      method: 'PUT',
+      body: JSON.stringify({ content }),
+    });
+    document.getElementById('config-file-status').textContent = body.pushed_live
+      ? 'Saved and applied live.'
+      : 'Saved — will apply once the world is reachable, or after a restart.';
+    document.getElementById('config-revert-btn').disabled = false;
+    await loadConfigFileList();
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+}
+
+async function revertConfigFile() {
+  if (!configModal.selectedPath) return;
+  if (!confirm('Revert "' + configModal.selectedPath + '" to whatever the plugin itself has? This discards the mgmt-saved edit — the live file, if any, is left as-is.')) return;
+  const errorEl = document.getElementById('config-modal-error');
+  errorEl.textContent = '';
+  try {
+    await api('/worlds/' + encodeURIComponent(configModal.world) + '/plugins/' + encodeURIComponent(configModal.selectedPlugin) + '/files/' + encodeFilePath(configModal.selectedPath), { method: 'DELETE' });
+    await loadConfigFileList();
+    await selectConfigFile(configModal.selectedPath);
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
 }
 
 if (state.token) {

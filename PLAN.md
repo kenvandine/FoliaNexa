@@ -544,7 +544,9 @@ No join token, no outbound registration call — the container's own config *is*
 | `POST` | `/api/v1/worlds/{name}/snapshot` | On-demand snapshot |
 | `POST` | `/api/v1/worlds/{name}/restore/{snapshot}` | Roll back to a snapshot |
 | `POST` | `/api/v1/worlds/{name}/migrate` | Stop → export → import → start on another host → cut over |
+| `POST` | `/api/v1/worlds/{name}/restart` | Restart a world's container in place (§14D) |
 | `GET`/`PUT` | `/api/v1/worlds/{name}/access` | Per-world whitelist toggle + ops list (§11) |
+| `GET`/`PUT`/`DELETE` | `/api/v1/worlds/{name}/plugins/{id}/files[/{path}]` | View/edit/revert a plugin's config file(s) (§14D) |
 | `GET` | `/api/v1/routes` | Live routing table for `folia-nexa-proxy` |
 | `POST` | `/api/v1/plugins/stage` | Upload + validate a plugin jar against a staging clone |
 | `POST` | `/api/v1/plugins/promote` | Promote a staged plugin into a world template |
@@ -614,8 +616,9 @@ API surface:
 Same spirit as the old plan's single-page dashboard, extended with the concepts above:
 
 - **Hosts view:** list of trusted LXD hosts, capacity bars, "Add host" flow (generates a join token for `folia-host-join`, §4).
-- **Worlds view:** table of all worlds with type, host, TPS, players, phase; "Add world" (pick type/template, resource request, placement labels); per-world drain/snapshot/restore/migrate actions.
+- **Worlds view:** table of all worlds with type, host, TPS, players, phase; "Add world" (pick type/template, resource request, placement labels); per-world drain/snapshot/restore/migrate/restart actions.
 - **Access panel:** per-world whitelist/ops toggle (§11B), deep link to LuckPerms' web editor; operator user/role management (§11A, admin only).
+- **Plugin config modal (§14D):** per-world, per-plugin file browser + text editor, reachable from a "Configs" button on the Worlds view — view/edit any file under an installed plugin's folder, with a "restart to apply" action alongside it.
 - **Staging panel:** unchanged concept from the old plan (§13 below), now backed by LXD copy-from-snapshot instead of shell scripts.
 
 ---
@@ -717,6 +720,71 @@ node-fetch shape, in a second, parallel instance of it:
   `pack_format`/`min_format`/`max_format` against the world's actual
   Minecraft version. Mismatches fail at world load, not at
   `worlds create` time.
+
+### 14D. Plugin Config File Editing
+
+§14A gets a plugin *installed* on a world; nothing before this let an
+operator see or change what's *inside* the plugin's own config once it's
+running — every plugin only writes its own `config.yml` (and whatever
+else — lang files, sub-configs) after its own first boot, and the only
+prior precedent, `luckperms.py`, pushes a config mgmt itself templates
+from DB settings (§11B), not something an operator edits freely.
+
+- **Storage**: `WorldPluginConfigFile` (`models.py`) — one row per
+  (world, plugin, relative file path) an operator has edited, holding the
+  raw content as the source of truth. Absence of a row means "defer to
+  whatever the plugin itself wrote"; deleting a row reverts to that — it
+  never deletes the live file, since mgmt has no delete-file LXD call and
+  removing a plugin's own generated file could break it.
+- **Reading**: an mgmt-stored override always wins; otherwise mgmt reads
+  the live file straight out of the world's container over LXD's file API
+  (`LXDClient.read_file`/`list_files`, the read/list counterparts to the
+  existing `push_file` — PLAN.md §6's snapshot/restore already use the
+  same instance API family). UTF-8 decode failure is reported as
+  `is_binary: true` rather than an error, since a plugin folder can
+  contain non-text files (data/db files, images) the browser shouldn't
+  try to render as editable text.
+- **Writing**: `PUT .../files/{path}` upserts the DB row and attempts an
+  immediate live `push_file`; on failure (world unreachable) the edit is
+  still saved and retried by `scheduler.py`'s `sync_plugin_config_files`
+  on every reconcile tick — the exact same "overwrite unconditionally,
+  swallow `LXDError`, retry next tick" pattern `sync_luckperms_configs`
+  already established, generalized from one hardcoded plugin to any
+  plugin in a world's declared list. That reconcile loop also re-checks
+  `row.plugin_id in world.plugins` on every tick, not just at request
+  time — a plugin removed from a world (`PATCH /{name}`) stops having its
+  stale override re-pushed forever, matching what the read/write
+  endpoints already enforce via `_require_declared_plugin`.
+- **File browser, not just `config.yml`**: `GET .../files` recursively
+  walks a plugin's folder (`plugin_files.py`, capped at depth 6 / 500
+  files) merging what's live in the container with any mgmt overrides, so
+  plugins with lang files or nested sub-configs are all reachable, not
+  just one fixed filename.
+- **Path traversal is rejected, not just the plugin id**: the `{path}`
+  segment of `GET`/`PUT`/`DELETE .../files/{path}` is a client-controlled
+  catch-all — `_require_declared_plugin` alone only validates `plugin_id`,
+  leaving `path` free to walk out of the plugin's own folder with `../`
+  segments. `routers/plugin_config.py`'s `_safe_relative_path` normalizes
+  the path (`posixpath.normpath`) and 400s anything that still escapes
+  upward or is absolute *before* it's ever joined onto `plugin_root(...)`
+  and handed to `LXDClient.read_file`/`push_file`/the override lookup —
+  applied in all three handlers, not just the read path.
+- **Applying an edit**: most plugins only read their config at boot, so
+  an edit sits inert until the world restarts. `POST
+  /api/v1/worlds/{name}/restart` (added alongside `/stop`/`/start`/
+  `PATCH /{name}` for the same "edit now, apply on restart" world-update
+  flow) gives an operator a manual way to apply one on demand — this
+  feature doesn't need its own restart endpoint, it just reuses that one.
+- **Dashboard**: a "Configs" button per world (Worlds tab) opens the
+  app's first modal — a plugin picker, a file tree, and a text editor,
+  built from the same `api()`/`escapeHtml()` conventions and `.card`/
+  `.btn`/`.hint` classes every other tab already uses. See
+  `static/index.html`'s plugin config modal functions.
+- **CLI**: `folia-nexa-mgmt worlds plugin-config list|show|set|revert
+  <world> <plugin-id> [path]`, and `worlds restart <world>`.
+- Only plugins already in a world's declared `plugins` list are editable
+  (404 otherwise) — this isn't a general container file browser, it's
+  scoped to what §14A already lets a world run.
 
 ---
 

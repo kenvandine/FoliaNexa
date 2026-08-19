@@ -24,11 +24,13 @@ from folia_mgmt.models import User, UserRole
 app = typer.Typer(help="folia-nexa-mgmt: cluster orchestrator CLI")
 hosts_app = typer.Typer(help="Manage trusted LXD hosts")
 worlds_app = typer.Typer(help="Manage worlds")
+plugin_config_app = typer.Typer(help="View/edit a world's plugin config files")
 plugins_app = typer.Typer(help="Browse the curated plugin catalog")
 datapacks_app = typer.Typer(help="Browse the curated data pack catalog")
 cluster_app = typer.Typer(help="Cluster-wide settings")
 app.add_typer(hosts_app, name="hosts")
 app.add_typer(worlds_app, name="worlds")
+worlds_app.add_typer(plugin_config_app, name="plugin-config")
 app.add_typer(plugins_app, name="plugins")
 app.add_typer(datapacks_app, name="datapacks")
 app.add_typer(cluster_app, name="cluster")
@@ -209,6 +211,62 @@ def worlds_restore(name: str, snapshot_name: str, mgmt_url: str | None = None) -
         resp = client.post(f"/api/v1/worlds/{name}/restore/{snapshot_name}")
         _fail_on_error(resp)
     typer.echo(f"restored '{name}' from snapshot '{snapshot_name}'")
+
+
+@worlds_app.command("restart")
+def worlds_restart(name: str, mgmt_url: str | None = None) -> None:
+    """Restart a world's container — e.g. to apply an edited plugin config
+    file, since most plugins only read their config at boot."""
+    with _client(mgmt_url) as client:
+        resp = client.post(f"/api/v1/worlds/{name}/restart")
+        _fail_on_error(resp)
+    typer.echo(f"restarting '{name}'")
+
+
+@plugin_config_app.command("list")
+def plugin_config_list(world: str, plugin_id: str, mgmt_url: str | None = None) -> None:
+    with _client(mgmt_url) as client:
+        resp = client.get(f"/api/v1/worlds/{world}/plugins/{plugin_id}/files")
+        _fail_on_error(resp)
+        for f in resp.json()["files"]:
+            typer.echo(f"{f['path']:<40} {f['source']}")
+
+
+@plugin_config_app.command("show")
+def plugin_config_show(world: str, plugin_id: str, path: str, mgmt_url: str | None = None) -> None:
+    with _client(mgmt_url) as client:
+        resp = client.get(f"/api/v1/worlds/{world}/plugins/{plugin_id}/files/{path}")
+        _fail_on_error(resp)
+        body = resp.json()
+    if body["is_binary"]:
+        typer.echo("(binary file, not shown)", err=True)
+        raise typer.Exit(1)
+    typer.echo(body["content"])
+
+
+@plugin_config_app.command("set")
+def plugin_config_set(
+    world: str,
+    plugin_id: str,
+    path: str,
+    file: Path = typer.Option(..., "--file", help="Local file whose contents to push"),
+    mgmt_url: str | None = None,
+) -> None:
+    content = file.read_text()
+    with _client(mgmt_url) as client:
+        resp = client.put(f"/api/v1/worlds/{world}/plugins/{plugin_id}/files/{path}", json={"content": content})
+        _fail_on_error(resp)
+        body = resp.json()
+    status_note = "pushed live" if body["pushed_live"] else "saved — will apply once the world is reachable/restarted"
+    typer.echo(f"'{path}' updated for '{plugin_id}' on '{world}' ({status_note})")
+
+
+@plugin_config_app.command("revert")
+def plugin_config_revert(world: str, plugin_id: str, path: str, mgmt_url: str | None = None) -> None:
+    with _client(mgmt_url) as client:
+        resp = client.delete(f"/api/v1/worlds/{world}/plugins/{plugin_id}/files/{path}")
+        _fail_on_error(resp)
+    typer.echo(f"reverted '{path}' for '{plugin_id}' on '{world}' to whatever the plugin itself has")
 
 
 @plugins_app.command("list")

@@ -316,6 +316,86 @@ def test_worlds_restore_calls_api(tmp_path, monkeypatch, mock_http):
     assert "restored 'world-overworld' from snapshot 'before-event'" in result.output
 
 
+def test_worlds_restart_calls_api(tmp_path, monkeypatch, mock_http):
+    _seed_login(tmp_path, monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/api/v1/worlds/world-overworld/restart"
+        return httpx.Response(200, json={})
+
+    mock_http(handler)
+    result = runner.invoke(cli.app, ["worlds", "restart", "world-overworld"])
+    assert result.exit_code == 0, result.output
+    assert "restarting 'world-overworld'" in result.output
+
+
+def test_plugin_config_list_formats_rows(tmp_path, monkeypatch, mock_http):
+    _seed_login(tmp_path, monkeypatch)
+    mock_http(
+        lambda r: httpx.Response(
+            200, json={"files": [{"path": "config.yml", "source": "live"}, {"path": "lang/en.yml", "source": "override"}]}
+        )
+    )
+    result = runner.invoke(cli.app, ["worlds", "plugin-config", "list", "world-overworld", "LuckPerms"])
+    assert result.exit_code == 0, result.output
+    assert "config.yml" in result.output
+    assert "lang/en.yml" in result.output
+
+
+def test_plugin_config_show_prints_content(tmp_path, monkeypatch, mock_http):
+    _seed_login(tmp_path, monkeypatch)
+    mock_http(
+        lambda r: httpx.Response(
+            200, json={"path": "config.yml", "content": "hello: world", "is_binary": False, "source": "live"}
+        )
+    )
+    result = runner.invoke(cli.app, ["worlds", "plugin-config", "show", "world-overworld", "LuckPerms", "config.yml"])
+    assert result.exit_code == 0, result.output
+    assert "hello: world" in result.output
+
+
+def test_plugin_config_show_rejects_binary(tmp_path, monkeypatch, mock_http):
+    _seed_login(tmp_path, monkeypatch)
+    mock_http(lambda r: httpx.Response(200, json={"path": "data.bin", "content": None, "is_binary": True, "source": "live"}))
+    result = runner.invoke(cli.app, ["worlds", "plugin-config", "show", "world-overworld", "LuckPerms", "data.bin"])
+    assert result.exit_code == 1
+
+
+def test_plugin_config_set_reads_local_file_and_puts(tmp_path, monkeypatch, mock_http):
+    _seed_login(tmp_path, monkeypatch)
+    local_file = tmp_path / "config.yml"
+    local_file.write_text("hello: world")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "PUT"
+        assert request.url.path == "/api/v1/worlds/world-overworld/plugins/LuckPerms/files/config.yml"
+        assert json.loads(request.content) == {"content": "hello: world"}
+        return httpx.Response(200, json={"path": "config.yml", "pushed_live": True})
+
+    mock_http(handler)
+    result = runner.invoke(
+        cli.app,
+        ["worlds", "plugin-config", "set", "world-overworld", "LuckPerms", "config.yml", "--file", str(local_file)],
+    )
+    assert result.exit_code == 0, result.output
+    assert "pushed live" in result.output
+
+
+def test_plugin_config_revert_calls_api(tmp_path, monkeypatch, mock_http):
+    _seed_login(tmp_path, monkeypatch)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "DELETE"
+        assert request.url.path == "/api/v1/worlds/world-overworld/plugins/LuckPerms/files/config.yml"
+        return httpx.Response(200, json={"reverted": "config.yml"})
+
+    mock_http(handler)
+    result = runner.invoke(cli.app, ["worlds", "plugin-config", "revert", "world-overworld", "LuckPerms", "config.yml"])
+    assert result.exit_code == 0, result.output
+    assert "reverted 'config.yml'" in result.output
+
+
 def test_plugins_list_formats_rows(tmp_path, monkeypatch, mock_http):
     _seed_login(tmp_path, monkeypatch)
     mock_http(

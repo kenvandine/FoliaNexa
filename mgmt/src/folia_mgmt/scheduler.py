@@ -20,7 +20,8 @@ from folia_mgmt.config import Settings, get_settings
 from folia_mgmt.folianexa_stats import apply_stats_config
 from folia_mgmt.luckperms import apply_luckperms_config
 from folia_mgmt.lxd_client import LXDClient, LXDError, extract_ipv4
-from folia_mgmt.models import Host, HostStatus, MinecraftVersionConfig, World, WorldPhase, utcnow
+from folia_mgmt.models import Host, HostStatus, MinecraftVersionConfig, World, WorldPhase, WorldPluginConfigFile, utcnow
+from folia_mgmt.plugin_files import plugin_root
 
 logger = logging.getLogger(__name__)
 
@@ -416,6 +417,44 @@ def sync_stats_configs(session: Session, lxd_client: LXDClient, settings: Settin
             apply_stats_config(session, lxd_client, host, world, settings)
 
 
+def sync_plugin_config_files(session: Session, lxd_client: LXDClient) -> None:
+    """Keeps every running world's operator-edited plugin config file
+    overrides (mgmt/src/folia_mgmt/routers/plugin_config.py) pushed to
+    their container — same "overwrite unconditionally every tick, swallow
+    LXDError and retry next time" pattern as sync_luckperms_configs above,
+    generalized to any plugin instead of one hardcoded integration."""
+    rows = session.exec(select(WorldPluginConfigFile)).all()
+    if not rows:
+        return
+
+    by_world: dict[str, list[WorldPluginConfigFile]] = {}
+    for row in rows:
+        by_world.setdefault(row.world_name, []).append(row)
+
+    for world_name, files in by_world.items():
+        world = session.exec(select(World).where(World.name == world_name)).first()
+        if world is None or world.phase != WorldPhase.running or not world.host_name or not world.container_name:
+            continue
+        host = session.exec(select(Host).where(Host.name == world.host_name)).first()
+        if host is None:
+            continue
+        for row in files:
+            # A plugin removed from the world's declared list is no longer
+            # ours to manage — stop re-creating its config file forever.
+            # The read/write endpoints already 404 on this via
+            # _require_declared_plugin; this is the reconcile-loop half of
+            # the same rule.
+            if row.plugin_id not in world.plugins:
+                continue
+            try:
+                lxd_client.push_file(host, world.container_name, f"{plugin_root(row.plugin_id)}/{row.path}", row.content)
+            except LXDError:
+                logger.debug(
+                    "failed to push plugin config '%s' for '%s' on world '%s', will retry next reconcile",
+                    row.path, row.plugin_id, world_name,
+                )
+
+
 def reconcile(
     session: Session,
     lxd_client: LXDClient,
@@ -439,6 +478,7 @@ def reconcile(
     sync_whitelisted_worlds(session, lxd_client)
     sync_luckperms_configs(session, lxd_client, settings)
     sync_stats_configs(session, lxd_client, settings)
+    sync_plugin_config_files(session, lxd_client)
 
     for world in session.exec(select(World).where(World.phase == WorldPhase.draining)).all():
         teardown_world(session, lxd_client, world)

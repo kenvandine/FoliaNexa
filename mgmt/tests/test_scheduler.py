@@ -12,6 +12,7 @@ from folia_mgmt.models import (
     MinecraftVersionConfig,
     World,
     WorldPhase,
+    WorldPluginConfigFile,
     WorldType,
 )
 from folia_mgmt.scheduler import (
@@ -21,6 +22,7 @@ from folia_mgmt.scheduler import (
     migrate_worlds_off_draining_hosts,
     recover_crashed_worlds,
     select_host,
+    sync_plugin_config_files,
     sync_whitelisted_worlds,
 )
 
@@ -115,11 +117,14 @@ class _RecordingLXDClient:
         self.migrated: list[tuple[str, str, str]] = []  # (source_host, name, target_host)
         self.deleted: list[tuple[str, str]] = []
         self.fail_migrate_for: set[str] = set()
+        self.fail_push_for: set[str] = set()  # paths to raise LXDError for
 
     def restart_container(self, host, name):
         self.restarted.append(name)
 
     def push_file(self, host, name, path, content, *, mode="0644"):
+        if path in self.fail_push_for:
+            raise LXDError(f"simulated push failure for {path}")
         self.pushed[(name, path)] = content
 
     def migrate_container(self, source_host, source_name, target_host):
@@ -555,3 +560,72 @@ def test_migrate_worlds_off_draining_hosts_ignores_worlds_on_online_hosts():
     assert lxd.migrated == []
     world = session.exec(select(World).where(World.name == "world-a")).first()
     assert world.host_name == "node-a"
+
+
+def test_sync_plugin_config_files_pushes_to_running_worlds_only():
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-running", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-running",
+            plugins=["LuckPerms"],
+        )
+    )
+    session.add(
+        World(
+            name="world-pending", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.pending, plugins=["LuckPerms"],
+        )
+    )
+    session.add(WorldPluginConfigFile(world_name="world-running", plugin_id="LuckPerms", path="config.yml", content=b"x", updated_by="op"))
+    session.add(WorldPluginConfigFile(world_name="world-pending", plugin_id="LuckPerms", path="config.yml", content=b"x", updated_by="op"))
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    sync_plugin_config_files(session, lxd)
+
+    assert list(lxd.pushed.keys()) == [
+        ("world-running", "/var/snap/folia-nexa-node/common/world/plugins/LuckPerms/config.yml")
+    ]
+
+
+def test_sync_plugin_config_files_tolerates_push_failure_and_continues():
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+            plugins=["LuckPerms"],
+        )
+    )
+    session.add(WorldPluginConfigFile(world_name="world-a", plugin_id="LuckPerms", path="broken.yml", content=b"x", updated_by="op"))
+    session.add(WorldPluginConfigFile(world_name="world-a", plugin_id="LuckPerms", path="ok.yml", content=b"y", updated_by="op"))
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    lxd.fail_push_for.add("/var/snap/folia-nexa-node/common/world/plugins/LuckPerms/broken.yml")
+    sync_plugin_config_files(session, lxd)  # must not raise
+
+    assert ("world-a", "/var/snap/folia-nexa-node/common/world/plugins/LuckPerms/ok.yml") in lxd.pushed
+    assert ("world-a", "/var/snap/folia-nexa-node/common/world/plugins/LuckPerms/broken.yml") not in lxd.pushed
+
+
+def test_sync_plugin_config_files_stops_pushing_once_plugin_removed_from_world():
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+            plugins=[],  # LuckPerms already removed from the declared list
+        )
+    )
+    session.add(WorldPluginConfigFile(world_name="world-a", plugin_id="LuckPerms", path="config.yml", content=b"x", updated_by="op"))
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    sync_plugin_config_files(session, lxd)
+
+    assert lxd.pushed == {}

@@ -76,7 +76,7 @@ is the exception, per the above.
 ## Running the test suites
 
 ```bash
-# mgmt (Python) — 314 tests
+# mgmt (Python) — 341 tests
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
@@ -659,6 +659,25 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   reaching a live mgmt instance — no live cluster was available in this
   environment, so the browser check above posted directly to the report
   endpoint in place of a real proxy.
+- Plugin config file viewing/editing (PLAN.md §14D): `WorldPluginConfigFile`,
+  the new `GET`/`PUT`/`DELETE` `.../plugins/{id}/files[/{path}]` endpoints,
+  and `scheduler.py`'s `sync_plugin_config_files` — real pytest suite
+  (341 tests total, up from 314), including a live end-to-end smoke test
+  against a real running `folia-nexa-mgmt` instance (bootstrap-admin,
+  login, create a world, hit the new endpoints with curl). Reuses main's
+  existing `POST /worlds/{name}/restart` (added since this feature's
+  first draft — no separate restart endpoint needed). `LXDClient.list_files`/
+  `read_file` (the read/list counterparts to `push_file`) are written
+  against LXD's documented file-API contract, same as every other
+  `LXDClient` method — not exercised against a real LXD daemon (see
+  below). The dashboard's new plugin-config modal (its first modal) —
+  the extracted inline `<script>` block passes `node --check`, and the
+  rendered page was loaded in real headless Chromium confirming the
+  modal's DOM (file list, editor, save/revert buttons) renders correctly;
+  not click-through tested (no Playwright/Selenium available in this
+  environment) — logins, plugin selection, and the save/revert flow were
+  traced by hand against the API's real behavior instead of driven
+  through an actual browser session.
 
 Written against documented API contracts but **not** exercised against
 live infrastructure:
