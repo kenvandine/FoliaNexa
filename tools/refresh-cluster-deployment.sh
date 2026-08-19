@@ -169,7 +169,13 @@ if [[ -z "$SKIP_BUILD" ]]; then
     # full rebuild every run instead of an incremental one, which is the
     # right trade for a script meant to be run occasionally, not in a
     # tight dev loop.
-    ( cd "$REPO_ROOT/$part" && snapcraft clean && rm -f ./*.snap && snapcraft )
+    #
+    # Goes through build-snap.sh, not a bare `snapcraft`, so the installed
+    # snap's version carries the commit it was actually built from
+    # (CLAUDE.md's "Building a snap with a traceable version") instead of
+    # every refresh silently producing the same hash-less 0.1 forever.
+    ( cd "$REPO_ROOT/$part" && snapcraft clean && rm -f ./*.snap )
+    "$REPO_ROOT/tools/build-snap.sh" "$part"
   done
 fi
 
