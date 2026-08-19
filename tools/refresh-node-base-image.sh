@@ -45,8 +45,17 @@ done
 # and replace before it's ever baked into the published image.
 sudo lxc exec "$CONTAINER" --project "$LXD_PROJECT" -- snap stop folia-nexa-node.daemon </dev/null >/dev/null 2>&1 || true
 sudo lxc exec "$CONTAINER" --project "$LXD_PROJECT" -- snap remove folia-nexa-node </dev/null >/dev/null 2>&1 || true
-sudo lxc file push "$SNAP_FILE" "$CONTAINER$SNAP_FILE" --project "$LXD_PROJECT"
-sudo lxc exec "$CONTAINER" --project "$LXD_PROJECT" -- snap install "$SNAP_FILE" --dangerous --devmode </dev/null
+# Pushed to a fixed in-container path, not $SNAP_FILE's own (host-side)
+# path — that path is wherever the caller staged it on the *host*
+# (refresh-cluster-deployment.sh currently uses a per-run directory under
+# $HOME), which has no reason to exist inside this fresh container at all.
+# `lxc file push` only auto-creates missing parent directories with
+# `-p`/`--create-dirs`, which this didn't pass — confirmed for real this
+# 404s ("Error: Not Found") once the host-side staging dir stopped being
+# something every container already has, like /tmp.
+IN_CONTAINER_SNAP="/root/$(basename "$SNAP_FILE")"
+sudo lxc file push "$SNAP_FILE" "$CONTAINER$IN_CONTAINER_SNAP" --project "$LXD_PROJECT"
+sudo lxc exec "$CONTAINER" --project "$LXD_PROJECT" -- snap install "$IN_CONTAINER_SNAP" --dangerous --devmode </dev/null
 
 echo "--- verifying no world save data got staged"
 if sudo lxc exec "$CONTAINER" --project "$LXD_PROJECT" -- test -e /var/snap/folia-nexa-node/common/world </dev/null; then
