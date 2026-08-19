@@ -492,10 +492,40 @@ def _stream_world_log(name: str, log_type: str, session: Session, settings: Sett
     host = world.address.split(":", 1)[0]
     url = f"http://{host}:{settings.node_health_port}/logs/{log_type}/stream"
 
+    # A non-200 here (most commonly the node agent 404ing because it
+    # predates this /logs endpoint — see health.py's do_GET) must not be
+    # forwarded as streamed body content under our own 200: the node
+    # agent's JSON error body would otherwise render in the log panel as
+    # if it were real log output, with no way to tell it apart. Check the
+    # status from the same stream we're about to consume rather than a
+    # separate probe request — on success this endpoint never closes
+    # (node's keepalive loop), so a second blocking GET would just hang.
+    client = httpx.Client(timeout=None)
+    try:
+        stream_ctx = client.stream("GET", url)
+        resp = stream_ctx.__enter__()
+    except httpx.HTTPError as exc:
+        client.close()
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY, f"could not reach folia-nexa-node on '{host}': {exc}"
+        ) from exc
+
+    if resp.status_code != 200:
+        body_preview = resp.read()[:200]
+        stream_ctx.__exit__(None, None, None)
+        client.close()
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            f"folia-nexa-node on '{host}' returned {resp.status_code} for {log_type} logs "
+            f"(node agent may predate this endpoint — check its snap revision): {body_preview!r}",
+        )
+
     def generate():
-        with httpx.Client(timeout=None) as client:
-            with client.stream("GET", url) as resp:
-                yield from resp.iter_bytes()
+        try:
+            yield from resp.iter_bytes()
+        finally:
+            stream_ctx.__exit__(None, None, None)
+            client.close()
 
     return StreamingResponse(generate(), media_type="text/plain")
 

@@ -15,14 +15,15 @@ class _FakeNodeLogServer:
     "genuine HTTP round trip, not a mocked httpx call" convention as
     test_chat.py's _FakeDiscordWebhookServer."""
 
-    def __init__(self, body_by_path: dict[str, bytes]):
+    def __init__(self, body_by_path: dict[str, bytes], status_by_path: dict[str, int] | None = None):
         received_paths = self.received_paths = []
+        status_by_path = status_by_path or {}
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 received_paths.append(self.path)
                 body = body_by_path.get(self.path, b"")
-                self.send_response(200)
+                self.send_response(status_by_path.get(self.path, 200))
                 self.send_header("Content-Type", "text/plain")
                 self.end_headers()
                 self.wfile.write(body)
@@ -90,6 +91,26 @@ def test_logs_require_placed_world(client, operator_token, viewer_token):
 def test_logs_404_for_unknown_world(client, viewer_token):
     resp = client.get("/api/v1/worlds/no-such-world/logs/console", headers=auth_header(viewer_token))
     assert resp.status_code == 404
+
+
+def test_logs_surfaces_node_error_instead_of_passthrough(
+    client, operator_token, viewer_token, db_session, monkeypatch
+):
+    # A node agent that predates the /logs endpoint (or otherwise errors)
+    # must not have its error body silently forwarded as a 200 — that
+    # renders in the log panel indistinguishable from real log content.
+    server = _FakeNodeLogServer(
+        {"/logs/console/stream": b'{"error": "not found"}'},
+        status_by_path={"/logs/console/stream": 404},
+    )
+    try:
+        monkeypatch.setenv("FOLIA_MGMT_NODE_HEALTH_PORT", str(server.port))
+        _create_and_place_world(client, operator_token, db_session, "world-overworld", "127.0.0.1:25565")
+        resp = client.get("/api/v1/worlds/world-overworld/logs/console", headers=auth_header(viewer_token))
+    finally:
+        server.close()
+    assert resp.status_code == 502, resp.text
+    assert "404" in resp.text
 
 
 def test_logs_viewer_role_is_sufficient(client, operator_token, viewer_token, db_session, monkeypatch):
