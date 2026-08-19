@@ -295,6 +295,35 @@ class LXDClient:
             if resp.status_code not in (200, 201):
                 raise LXDError(f"failed to push '{path}' to '{name}' on '{host.name}': {resp.text}")
 
+    def list_files(self, host: Host, name: str, path: str) -> list[str]:
+        """Lists entries directly under `path` inside the container (not
+        recursive — callers walk the tree themselves, see
+        plugin_files.py). Raises LXDError if `path` doesn't exist or isn't
+        a directory."""
+        with self._client_for(host) as client:
+            resp = client.get(f"/1.0/instances/{name}/files", params={"project": host.project, "path": path})
+            if resp.status_code == 404:
+                raise LXDError(f"no such path '{path}' on '{name}' on '{host.name}'")
+            if resp.status_code != 200:
+                raise LXDError(f"failed to list '{path}' on '{name}' on '{host.name}': {resp.text}")
+            if resp.headers.get("X-LXD-type") != "directory":
+                raise LXDError(f"'{path}' on '{name}' on '{host.name}' is not a directory")
+            return resp.json().get("metadata", [])
+
+    def read_file(self, host: Host, name: str, path: str) -> bytes:
+        """Reads a file's raw content back from a running container — the
+        read counterpart to push_file. Raises LXDError if `path` doesn't
+        exist or isn't a file."""
+        with self._client_for(host) as client:
+            resp = client.get(f"/1.0/instances/{name}/files", params={"project": host.project, "path": path})
+            if resp.status_code == 404:
+                raise LXDError(f"no such file '{path}' on '{name}' on '{host.name}'")
+            if resp.status_code != 200:
+                raise LXDError(f"failed to read '{path}' from '{name}' on '{host.name}': {resp.text}")
+            if resp.headers.get("X-LXD-type") != "file":
+                raise LXDError(f"'{path}' on '{name}' on '{host.name}' is not a file")
+            return resp.content
+
     def snapshot_container(self, host: Host, name: str, snapshot_name: str) -> None:
         with self._client_for(host) as client:
             resp = client.post(

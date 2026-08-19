@@ -6,7 +6,7 @@ import enum
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import JSON, Column
+from sqlalchemy import JSON, Column, LargeBinary, UniqueConstraint
 from sqlmodel import Field, SQLModel
 
 
@@ -120,6 +120,29 @@ class World(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class WorldPluginConfigFile(SQLModel, table=True):
+    """An operator-edited override for one file under a plugin's folder in
+    a world (PLAN.md — plugin config editing). Re-pushed on every
+    reconcile tick the same way luckperms.py's config is, so it survives
+    world restarts/migrations rather than being a one-shot push.
+
+    Absence of a row for a (world, plugin, path) means "defer to whatever
+    the plugin itself wrote" — deleting a row reverts to that; it never
+    deletes the live file, since mgmt has no delete-file LXD call and
+    removing a plugin's own generated file could break it.
+    """
+
+    __table_args__ = (UniqueConstraint("world_name", "plugin_id", "path", name="uq_world_plugin_path"),)
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    world_name: str = Field(index=True)
+    plugin_id: str = Field(index=True)
+    path: str  # relative to plugins/<plugin_id>/, e.g. "config.yml" or "lang/en.yml"
+    content: bytes = Field(sa_column=Column(LargeBinary))
+    updated_at: datetime = Field(default_factory=utcnow)
+    updated_by: str  # username from the authenticated request that wrote it
 
 
 class User(SQLModel, table=True):

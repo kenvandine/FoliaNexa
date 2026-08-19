@@ -20,6 +20,7 @@ from folia_mgmt.routers import (
     cluster,
     datapacks,
     hosts,
+    plugin_config,
     plugins,
     presence,
     public_stats,
@@ -79,6 +80,7 @@ def create_app() -> FastAPI:
     app.include_router(auth.router, prefix="/api/v1")
     app.include_router(hosts.router, prefix="/api/v1")
     app.include_router(worlds.router, prefix="/api/v1")
+    app.include_router(plugin_config.router, prefix="/api/v1")
     app.include_router(users.router, prefix="/api/v1")
     app.include_router(access_requests.router, prefix="/api/v1")
     app.include_router(routes.router, prefix="/api/v1")

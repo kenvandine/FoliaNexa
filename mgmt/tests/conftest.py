@@ -32,6 +32,20 @@ class FakeLXDClient:
         self.updated_config: dict[tuple[str, str], dict] = {}  # (host_name, container) -> last config pushed
         self.unreachable: set[str] = set()  # host names that ping_host should report as down
         self.ping_calls: list[str] = []
+        # In-memory "container filesystem" backing list_files/read_file, and
+        # what push_file writes into — (host_name, container, path) -> content.
+        # Tests can seed a "live" file directly (simulating a plugin's own
+        # first-boot-generated config) without going through push_file.
+        self.container_files: dict[tuple[str, str, str], bytes] = {}
+        self.fail_push_for: set[str] = set()  # absolute paths to raise LXDError for
+        # Directories that exist but currently have no children — the real
+        # LXDClient.list_files returns [] for these (LXD's file API 200s
+        # with metadata: [] for a genuinely empty directory); container_files
+        # alone can't represent that since it only has entries for files,
+        # so "no children" and "doesn't exist" would otherwise be
+        # indistinguishable. Tests can seed one directly: (host_name,
+        # container, absolute_path) -> "this directory exists and is empty".
+        self.container_dirs: set[tuple[str, str, str]] = set()
 
     def ping_host(self, host) -> bool:
         self.ping_calls.append(host.name)
@@ -82,7 +96,34 @@ class FakeLXDClient:
         self.restores.append((host.name, name, snapshot_name))
 
     def push_file(self, host, name, path, content, *, mode="0644"):
+        if path in self.fail_push_for:
+            raise LXDError(f"simulated push failure for {path}")
         self.pushed_files[(host.name, name, path)] = content
+        self.container_files[(host.name, name, path.rstrip("/"))] = content
+
+    def list_files(self, host, name, path):
+        norm_path = path.rstrip("/")
+        children: set[str] = set()
+        is_a_file = False
+        for (h, n, p), _content in self.container_files.items():
+            if (h, n) != (host.name, name):
+                continue
+            if p == norm_path:
+                is_a_file = True
+                continue
+            if p.startswith(norm_path + "/"):
+                children.add(p[len(norm_path) + 1 :].split("/", 1)[0])
+        if is_a_file:
+            raise LXDError(f"'{path}' on '{name}' is not a directory or does not exist")
+        if not children and (host.name, name, norm_path) not in self.container_dirs:
+            raise LXDError(f"'{path}' on '{name}' is not a directory or does not exist")
+        return sorted(children)
+
+    def read_file(self, host, name, path):
+        key = (host.name, name, path.rstrip("/"))
+        if key not in self.container_files:
+            raise LXDError(f"no such file '{path}' on '{name}'")
+        return self.container_files[key]
 
     def migrate_container(self, source_host, source_name, target_host):
         if source_name in self.fail_migrate_for:
