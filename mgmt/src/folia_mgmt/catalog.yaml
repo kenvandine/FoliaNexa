@@ -340,27 +340,40 @@
 - id: SkyWarsReloaded
   category: minigame
   source: external
-  version: "unknown"
-  download_url: null
-  sha256: null
-  homepage: null
-  verified: false
+  version: "5.6.34"
+  download_url: "https://api.spiget.org/v2/resources/69436/download"
+  sha256: "57b9dbaebe7cc85e585ca211a5c001205ef47bb56b2fccacdb08978f1ef9ddde"
+  homepage: "https://www.spigotmc.org/resources/skywarsreloaded-updated-recoded-1-21-support-new-decentholograms-supports-all-mc-versions.69436/"
+  verified: true
   notes: >
-    Checked 2026-08-16: this is not resolvable to a single trustworthy
-    download_url, not just an unfilled placeholder. The original
-    (walrusone/SkyWarsReloaded) has had no releases in years and its
-    GitHub Releases page is empty; at least a half-dozen community forks
-    exist (lukasvdgaag/SkyWarsReloaded, smessie/SkyWarsReloaded,
-    SpoopyDev/SkyWarsReloaded-Walruscode, dev-mart/SkyWarsReloaded, …),
-    none published to Modrinth or Hangar, each with divergent feature
-    sets/bugfixes and no clear "canonical successor." Picking one here
-    would be an editorial call this catalog shouldn't make silently —
-    an operator who wants this plugin should pick a fork deliberately
-    (check its last-commit date and issue tracker) and add it via
-    plugin-catalog-override.yaml, then verify Folia compatibility
-    themselves; classic Bukkit-era minigame plugins commonly assume
-    single-threaded world ticking that Folia's regionized scheduler
-    doesn't guarantee (see configs/worlds/create-minigame-skywars.sh).
+    Verified 2026-08-18, operator-directed pick among the several
+    community forks noted below — lukasvdgaag/SkyWarsReloaded (GCNT/
+    Devmart's actively maintained continuation, "the official
+    replacement" per its README). The GitHub repo itself still publishes
+    no Releases (has_downloads: false, /releases returns []) — its real
+    distribution channel is this SpigotMC listing (resource 69436),
+    marked "external" in Spiget's own metadata (hosted on GCNT's own
+    my.gcnt.net, not SpigotMC's CDN) but Spiget's /download endpoint
+    proxies it successfully regardless — downloaded and sha256'd for
+    real. Confirmed genuine, not a same-name decoy (see the
+    RealisticSeasons entry above for what that looks like): plugin.yml's
+    main class is com.walrusone.skywarsreloaded.SkyWarsReloaded, built
+    from the com.walrusone:skywarsreloaded-assembly Maven artifact — the
+    original author's own package, under GCNT's continued maintenance.
+    Folia caveat, sharper than usual here: plugin.yml declares
+    api-version: 1.13 with no folia-supported key at all — the oldest,
+    least Folia-aware signal of any entry in this catalog. Confirm this
+    actually works on a Folia world (or wait for an upstream fix) before
+    relying on it for real; classic Bukkit-era minigame plugins commonly
+    assume single-threaded world ticking that Folia's regionized
+    scheduler doesn't guarantee (see
+    configs/worlds/create-minigame-skywars.sh). Other forks considered
+    and passed over (smessie/SkyWarsReloaded,
+    SpoopyDev/SkyWarsReloaded-Walruscode, dev-mart/SkyWarsReloaded) —
+    none published to Modrinth/Hangar either; this one was picked for
+    having the clearest "official continuation" claim and an actual
+    resolvable download, not because it's necessarily the best-maintained
+    technically.
 
 - id: BedWars1058
   category: minigame
@@ -819,20 +832,3 @@
     project; deliberately pinned to 2.3.73, the newest entry on the
     "release" channel, since it's the newest one that still explicitly
     declares folia loader support (alongside bukkit/paper/purpur/spigot).
-
-# Example in-house entry: demonstrates a catalog entry pointing at a
-# separate repository's releases rather than a third-party plugin host.
-# folianexa-plugins doesn't exist yet — replace with your real in-house
-# plugin repo, or delete this entry entirely.
-- id: FoliaNexa-Welcome
-  category: in-house
-  source: in-house
-  version: "0.1.0"
-  download_url: "https://github.com/kenvandine/folianexa-plugins/releases/download/v0.1.0/folianexa-welcome-0.1.0.jar"
-  sha256: null
-  homepage: "https://github.com/kenvandine/folianexa-plugins"
-  verified: false
-  notes: >
-    Example entry only — that repo and release don't exist. Shows the
-    pattern for in-house plugins developed in a separate repo: the
-    catalog just needs a real download_url, wherever it's hosted.

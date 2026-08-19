@@ -60,8 +60,10 @@ new mgmt release (PLAN.md §14A). This is also how an in-house minigame
 plugin from your own repository gets in: the catalog only needs a
 `download_url` pointing at wherever you publish releases (your own
 GitHub releases, an internal artifact host — anywhere reachable over
-HTTP). See the `FoliaNexa-Welcome` entry in `catalog.yaml` for the
-shape of an in-house entry.
+HTTP), an `id`, and a real `sha256` once you've downloaded and hashed
+the jar yourself — see any `source: external` entry in `catalog.yaml`
+for the shape (`category`/`source` just become `in-house` for a plugin
+of your own).
 
 **Two things worth checking before you commit to a plugin:**
 
