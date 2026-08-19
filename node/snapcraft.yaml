@@ -1,5 +1,5 @@
 name: folia-nexa-node
-version: '0.1'
+adopt-info: node
 summary: In-container Folia/Paper world runner and health agent
 description: |
   Reads its world assignment off the container's own devlxd socket (no
@@ -73,7 +73,17 @@ parts:
     build-packages:
       - openjdk-25-jre-headless
       - ca-certificates-java
+    # adopt-info above sources this part's version from .build-commit —
+    # see mgmt/snapcraft.yaml's identical comment for why this reads a
+    # file written by tools/build-snap.sh rather than the repo's real
+    # .git directly (confirmed for real: not reachable from inside the
+    # LXD/multipass build instance, no matter how it's pulled).
     override-build: |
       craftctl default
+      if [ -f .build-commit ]; then
+        craftctl set version="0.1+git$(cat .build-commit)"
+      else
+        craftctl set version="0.1"
+      fi
       cp /etc/ssl/certs/java/cacerts \
         "$CRAFT_PART_INSTALL/usr/lib/jvm/java-25-openjdk-amd64/lib/security/cacerts"

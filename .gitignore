@@ -12,3 +12,8 @@ out/
 
 # Built snap packages — build artifacts, not source
 *.snap
+
+# Written by tools/build-snap.sh right before invoking snapcraft, read by
+# each component's snapcraft.yaml to stamp a commit hash into its version
+# — never meant to be committed, see build-snap.sh's own comment.
+.build-commit

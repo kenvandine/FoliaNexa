@@ -17,6 +17,7 @@ host.
 | `proxy/` | `folia-routes-sync` — Velocity plugin (routing sync + access gate) | Java 21, Gradle |
 | `bot/` | `folia-nexa-bot` — Discord bot (`/status`, `/request-access`, `/leaderboard`) | Python 3.12+, pytest |
 | `db/` | `folia-nexa-db` — self-contained MariaDB snap for LuckPerms' shared backend | Bash, bundled MariaDB |
+| `tools/build-snap.sh` | Wraps `snapcraft` for any of the six components below so the built snap's version string carries the exact commit (`+git<hash>`, `-dirty` if the tree isn't clean) it was built from — the recommended way to invoke `snapcraft` for all of them, see "Building a snap with a traceable version" below | Bash |
 | `tools/folia-host-join.sh` | Automates trusting an LXD host into the cluster | Bash |
 | `tools/folia-nexa-spawn.sh` | Local dev tool: spins up a single-machine Folia server with a plugin built from local source loaded, for fast plugin iteration — no cluster/mgmt/proxy involved. See `docs/plugin-dev/01-environment-setup.md` §1.8 | Bash |
 | `configs/worlds/*.sh` | Starter world declarations (CLI wrappers) | Bash |
@@ -40,8 +41,10 @@ built from there; this repo only ever needs that URL, not the source.
 Each of `mgmt/`, `node/`, `proxy/`, `bot/`, `db/`, `portal/` is an
 independent, independently testable component with its own
 `snapcraft.yaml`. **All six build successfully with real `snapcraft`
-9.0.1** (`snapcraft` from each directory) — confirmed in this
-environment against a real LXD-based build backend, not just reviewed.
+9.0.1** (`tools/build-snap.sh <dir>` from the repo root, or plain
+`snapcraft` from each directory — see "Building a snap with a traceable
+version" below for the difference) — confirmed in this environment
+against a real LXD-based build backend, not just reviewed.
 That build pass caught two real bugs that a review wouldn't have:
 `proxy/snapcraft.yaml` was pointed at
 `api.papermc.io/v2`, which PaperMC has since sunset in favor of
@@ -128,6 +131,49 @@ and run against the *real* `velocity-api` jar but don't start a real
 Velocity server; `portal`'s tests start the real `serve.py` HTTP server
 on a real (ephemeral) socket rather than mocking it.
 
+## Building a snap with a traceable version
+
+Every component's `snapcraft.yaml` stamps a commit hash into its own
+snap's version (`adopt-info`, e.g. `folia-nexa-mgmt 0.1+git7b56ad6` —
+`+git<hash>-dirty` if the tree wasn't clean at build time) so `snap list`
+on a running host actually tells you which commit is installed, instead
+of every revision showing the same static `0.1` forever. Use
+`tools/build-snap.sh <dir>` in place of a bare `snapcraft` wherever this
+file says `cd <dir> && snapcraft` below:
+
+```bash
+./tools/build-snap.sh mgmt      # instead of: cd mgmt && snapcraft
+```
+
+The commit hash can't be read from `.git` *inside* the build itself —
+confirmed for real: the LXD/multipass instance `snapcraft` launches only
+ever receives a plain copy of that one component directory, never
+anything above it in the monorepo, no matter how `source:` is written
+(`source: ..`, or even forcing `source-type: git` against the local
+path, both fail the same way — there's nothing above the component
+directory in the build instance's filesystem to find `.git` in at all).
+So `build-snap.sh` computes the hash out here, on the host, and writes
+it to a `.build-commit` file inside the target directory right before
+`snapcraft` starts — an ordinary file, gitignored, that *does* survive
+the copy since it's already sitting inside the directory being pulled.
+Each `snapcraft.yaml` reads it back in `override-build`/`override-pull`.
+Skipping the wrapper and running plain `snapcraft` still works — it just
+falls back to a plain, hash-less version (`0.1`, no `+git...`) since no
+`.build-commit` exists.
+
+`proxy/snapcraft.yaml` is the one exception worth knowing about: its
+`velocity-runtime` part used to derive the PaperMC ("Fill" API) download
+URL from `$CRAFT_PROJECT_VERSION` (this snap's own display version,
+`4.0.0`) — now that this project variable is git-suffixed, that part
+uses its own literal `VELOCITY_VERSION="4.0.0"` instead, so a future
+Velocity version bump needs updating in two places (that literal, and
+`routes-sync-plugin`'s `craftctl set version` base) rather than one.
+
+Verified for real, one full `tools/build-snap.sh` build per component
+against real `snapcraft`+LXD, each producing a `.snap` whose *own*
+`meta/snap.yaml` (not just the output filename) carries the expected
+`<base>+git<hash>[-dirty]` version — not just a syntax check.
+
 ## Bootstrapping a fresh host from scratch
 
 This is the production path — building and installing the actual snaps.
@@ -156,8 +202,8 @@ running server in development.
 ### Phase 1 — build and install `folia-nexa-mgmt`
 
 ```bash
-cd mgmt && snapcraft   # confirmed to build — see the repo map note above
-sudo snap install ./folia-nexa-mgmt_0.1_amd64.snap --dangerous
+./tools/build-snap.sh mgmt   # confirmed to build — see the repo map note above
+sudo snap install ./folia-nexa-mgmt_*_amd64.snap --dangerous
 sudo snap start folia-nexa-mgmt.daemon
 ```
 
@@ -207,9 +253,9 @@ into a base image the scheduler's `launch_container` calls reference by
 alias (`folia-node-base` — `mgmt/src/folia_mgmt/scheduler.py`):
 
 ```bash
-cd node && snapcraft   # confirmed to build, same as mgmt
+./tools/build-snap.sh node   # confirmed to build, same as mgmt
 # then, on an LXD host: launch a container, `snap install
-# ./folia-nexa-node_0.1_amd64.snap --dangerous`, and publish it as an
+# ./folia-nexa-node_*_amd64.snap --dangerous`, and publish it as an
 # image aliased folia-node-base — see `lxc publish` / `lxc image alias`.
 ```
 
@@ -293,8 +339,8 @@ Folia/Paper JVMs, not a database server (see
 **`folia-nexa-db`** (recommended — self-contained, bundles MariaDB itself):
 
 ```bash
-cd db && snapcraft   # confirmed to build — see the repo map note above
-sudo snap install ./folia-db_11.8_amd64.snap --dangerous
+./tools/build-snap.sh db   # confirmed to build — see the repo map note above
+sudo snap install ./folia-nexa-db_*_amd64.snap --dangerous
 sudo snap start folia-nexa-db.daemon
 sudo snap run folia-nexa-db.show-credentials   # prints the FOLIA_MGMT_LUCKPERMS_MYSQL_* vars
 ```
@@ -319,8 +365,8 @@ backend at plugin load time, not live).
 ### Phase 7 — build and install `folia-nexa-proxy`
 
 ```bash
-cd proxy && snapcraft   # confirmed to build, same as the others (see note below on the Bedrock addition)
-sudo snap install ./folia-nexa-proxy_4.0.0_amd64.snap --dangerous
+./tools/build-snap.sh proxy   # confirmed to build, same as the others (see note below on the Bedrock addition)
+sudo snap install ./folia-nexa-proxy_*_amd64.snap --dangerous
 ```
 
 It needs `FOLIA_MGMT_URL` and `FOLIA_MGMT_API_TOKEN` (an mgmt API token —
@@ -401,8 +447,8 @@ ports are identical.
 ### Phase 8 — build and install `folia-nexa-bot` (optional)
 
 ```bash
-cd bot && snapcraft   # confirmed to build, same as the others
-sudo snap install ./folia-nexa-bot_0.1_amd64.snap --dangerous
+./tools/build-snap.sh bot   # confirmed to build, same as the others
+sudo snap install ./folia-nexa-bot_*_amd64.snap --dangerous
 ```
 
 Needs `DISCORD_BOT_TOKEN`, `FOLIA_MGMT_URL`, and `FOLIA_MGMT_API_TOKEN`
@@ -487,8 +533,8 @@ sudo systemctl reload caddy
 # Build and install the portal snap (also on the VPS — build it wherever
 # you build your other snaps, then copy the .snap over if that's not the
 # VPS itself):
-cd portal && snapcraft
-sudo snap install ./folia-nexa-portal_0.1_amd64.snap --dangerous
+./tools/build-snap.sh portal
+sudo snap install ./folia-nexa-portal_*_amd64.snap --dangerous
 sudo snap start folia-nexa-portal.daemon
 ```
 

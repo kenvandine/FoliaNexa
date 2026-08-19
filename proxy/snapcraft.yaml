@@ -1,5 +1,5 @@
 name: folia-nexa-proxy
-version: '4.0.0'
+adopt-info: routes-sync-plugin
 summary: Velocity proxy with live routing synced from folia-nexa-mgmt
 description: |
   Velocity Next-Gen proxy, packaged with the folia-routes-sync plugin
@@ -56,8 +56,22 @@ parts:
       - openjdk-25-jdk-headless
     build-environment:
       - JAVA_HOME: /usr/lib/jvm/java-21-openjdk-amd64
+    # adopt-info above sources this snap's version from .build-commit —
+    # see mgmt/snapcraft.yaml's identical comment for why this reads a
+    # file written by tools/build-snap.sh rather than the repo's real
+    # .git directly (confirmed for real: not reachable from inside the
+    # LXD/multipass build instance, no matter how it's pulled). Base
+    # "4.0.0" here is this snap's own display version, independent of
+    # velocity-runtime's pinned Velocity release below (also "4.0.0" today,
+    # not derived from this — see that part's own comment on why it can't
+    # read $CRAFT_PROJECT_VERSION once this is git-suffixed).
     override-build: |
       craftctl default
+      if [ -f .build-commit ]; then
+        craftctl set version="4.0.0+git$(cat .build-commit)"
+      else
+        craftctl set version="4.0.0"
+      fi
       mkdir -p $CRAFT_PART_INSTALL/plugins
       cp build/libs/folia-routes-sync-*.jar $CRAFT_PART_INSTALL/plugins/
 
@@ -78,7 +92,18 @@ parts:
       # because Velocity 4.0.0 has had exactly one build so far, and would
       # have silently grabbed the OLDEST build the moment a second one is
       # published.
-      DOWNLOAD_URL=$(curl -sf "https://fill.papermc.io/v3/projects/velocity/versions/${CRAFT_PROJECT_VERSION}/builds" \
+      #
+      # A literal version, not $CRAFT_PROJECT_VERSION: that project
+      # variable is this *snap's* own display version (adopt-info, the
+      # routes-sync-plugin part) — now "4.0.0+git<hash>" rather than a
+      # bare "4.0.0" once a real commit hash is stamped into it (see that
+      # part's override-build), which the Fill API would 404 on. This
+      # pinned Velocity release is a separate concern that just happens to
+      # share the same number today; bump it here (and in
+      # build.gradle.kts's own velocity-api dependency) independently of
+      # this snap's own version.
+      VELOCITY_VERSION="4.0.0"
+      DOWNLOAD_URL=$(curl -sf "https://fill.papermc.io/v3/projects/velocity/versions/${VELOCITY_VERSION}/builds" \
         | python3 -c "import json,sys; b=json.load(sys.stdin); print(max(b, key=lambda x: x['id'])['downloads']['server:default']['url'])")
       curl -sf -o $CRAFT_PART_INSTALL/velocity.jar "$DOWNLOAD_URL"
 

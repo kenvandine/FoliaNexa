@@ -1,5 +1,5 @@
 name: folia-nexa-bot
-version: '0.1'
+adopt-info: bot
 summary: Discord bot for a FoliaNexa cluster — status, access, leaderboards
 description: |
   /status, /request-access, and /leaderboard slash commands backed by
@@ -22,3 +22,23 @@ parts:
   bot:
     plugin: python
     source: .
+    # adopt-info above sources this part's version. `.build-commit` is
+    # written by tools/build-snap.sh (the recommended way to build this
+    # snap, per CLAUDE.md) right before `snapcraft` starts, and comes
+    # along for free since it's just a normal file inside this directory
+    # by the time snapcraft copies it in — .git itself, one level up,
+    # would NOT come along the same way: confirmed for real that the
+    # LXD/multipass build instance snapcraft launches only ever receives
+    # a copy of this one component directory, never anything above it, so
+    # a `source: ..`/`git -C` approach reading the repo's real .git
+    # straight from inside the build has no parent directory to find it
+    # in no matter how it's pulled. Falls back to a plain, hash-less
+    # version if a bare `snapcraft` is run here directly instead (skipping
+    # the wrapper) and no .build-commit exists.
+    override-pull: |
+      craftctl default
+      if [ -f .build-commit ]; then
+        craftctl set version="0.1+git$(cat .build-commit)"
+      else
+        craftctl set version="0.1"
+      fi

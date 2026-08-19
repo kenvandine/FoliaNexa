@@ -1,5 +1,5 @@
 name: folia-nexa-mgmt
-version: '0.1'
+adopt-info: mgmt
 summary: Folia cluster orchestrator — scheduler, REST API, and dashboard
 description: |
   Trusts LXD hosts directly over the remote API and schedules Folia/Paper
@@ -46,6 +46,23 @@ parts:
     python-packages: []
     stage-packages:
       - libargon2-1
+    # adopt-info above sources this part's version from .build-commit —
+    # written by tools/build-snap.sh (the recommended way to build this
+    # snap) right before `snapcraft` starts, and copied in along with
+    # everything else `source: .` pulls from this directory. `.git`
+    # itself, one level up in the monorepo, would NOT come along the same
+    # way: confirmed for real that the LXD/multipass build instance
+    # snapcraft launches only ever receives a copy of this one component
+    # directory, never anything above it — a `source: ..`/`git -C`
+    # approach reading the repo's real .git from inside the build has no
+    # parent directory to find it in, no matter how it's pulled. Falls
+    # back to a plain, hash-less version if a bare `snapcraft` is run here
+    # directly instead (skipping the wrapper) and no .build-commit exists.
     override-build: |
       craftctl default
+      if [ -f .build-commit ]; then
+        craftctl set version="0.1+git$(cat .build-commit)"
+      else
+        craftctl set version="0.1"
+      fi
       install -m 0755 scripts/run-mgmt-daemon.sh "$CRAFT_PART_INSTALL/bin/run-mgmt-daemon.sh"

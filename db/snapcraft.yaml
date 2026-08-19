@@ -1,5 +1,5 @@
 name: folia-nexa-db
-version: '11.8'
+adopt-info: db
 summary: Self-contained shared MySQL/MariaDB instance for a FoliaNexa cluster
 description: |
   Bundles MariaDB itself so the cluster's shared database — LuckPerms
@@ -44,8 +44,21 @@ parts:
     stage-packages:
       - mariadb-server
       - mariadb-client
+    # adopt-info above sources this part's version from .build-commit —
+    # see mgmt/snapcraft.yaml's identical comment for why this reads a
+    # file written by tools/build-snap.sh rather than the repo's real
+    # .git directly (confirmed for real: not reachable from inside the
+    # LXD/multipass build instance, no matter how it's pulled). Base
+    # "11.8" is the bundled MariaDB major.minor (stage-packages below),
+    # kept as a prefix so that's still visible alongside which commit of
+    # this repo's own db/ scripts produced the build.
     override-build: |
       craftctl default
+      if [ -f .build-commit ]; then
+        craftctl set version="11.8+git$(cat .build-commit)"
+      else
+        craftctl set version="11.8"
+      fi
       mkdir -p $CRAFT_PART_INSTALL/bin
       cp bin/run-folia-nexa-db.sh $CRAFT_PART_INSTALL/bin/run-folia-nexa-db.sh
       cp bin/show-credentials.sh $CRAFT_PART_INSTALL/bin/show-credentials.sh

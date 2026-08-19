@@ -1,5 +1,5 @@
 name: folia-nexa-portal
-version: '0.1'
+adopt-info: portal
 summary: Static player-hub portal for a FoliaNexa cluster (leaderboards, who's online)
 description: |
   Serves portal/'s static HTML/CSS/JS (leaderboards, player profiles,
@@ -36,8 +36,18 @@ parts:
     plugin: python
     source: .
     python-packages: []
+    # adopt-info above sources this part's version from .build-commit —
+    # see mgmt/snapcraft.yaml's identical comment for why this reads a
+    # file written by tools/build-snap.sh rather than the repo's real
+    # .git directly (confirmed for real: not reachable from inside the
+    # LXD/multipass build instance, no matter how it's pulled).
     override-build: |
       craftctl default
+      if [ -f .build-commit ]; then
+        craftctl set version="0.1+git$(cat .build-commit)"
+      else
+        craftctl set version="0.1"
+      fi
       install -m 0755 scripts/run-portal-daemon.sh "$CRAFT_PART_INSTALL/bin/run-portal-daemon.sh"
       mkdir -p "$CRAFT_PART_INSTALL/portal"
       cp *.html portal.css portal.js "$CRAFT_PART_INSTALL/portal/"
