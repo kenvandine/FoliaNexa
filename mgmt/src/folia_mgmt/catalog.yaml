@@ -74,33 +74,46 @@
 - id: CampusLobby
   category: lobby
   source: in-house
-  version: "0.0.4"
-  download_url: "https://github.com/kenvandine/folianexa-plugins/releases/download/campus-lobby-v0.0.4/campus-lobby-0.0.4.jar"
-  sha256: "282404739b712d8ca25166dda8a0e73ba911a54ece546671772773bef993ddca"
+  version: "0.0.5"
+  download_url: "https://github.com/kenvandine/folianexa-plugins/releases/download/campus-lobby-v0.0.5/campus-lobby-0.0.5.jar"
+  sha256: "d91c518304cbeb155186b29932297030f4c644d3f495035c5957096fd0e87a58"
   homepage: "https://github.com/kenvandine/folianexa-plugins/tree/main/campus-lobby"
   verified: true
   notes: >
-    Procedurally builds an NC State Wolfpack-themed scene (Brickyard
-    plaza, Memorial Belltower, wolf-mascot statue, Free Expression
-    Tunnel-style mural, student-union/library facades) into a lobby
-    world. Source lives in the sibling folianexa-plugins repo (campus-
-    lobby/), not this one — see the "In-house plugin source" note in this
-    repo's CLAUDE.md. Release history: v0.0.1 (2026-08-15) failed to load
-    on Folia at all (missing folia-supported: true in plugin.yml despite
+    Procedurally builds an NC State Wolfpack-themed scene for the
+    Sullivan SMP into a lobby world: a 2x-expanded Brickyard plaza
+    (red/black concrete parquet with an inlaid Block 'S' medallion and
+    wolf paw prints), a Memorial Belltower, a wolf-mascot statue, three
+    "hyper-fancy" nether portals (N/W/E, obsidian arches with Wolfpack
+    pediments and star-slab pathways), a Sullivan Residence Hall/Talley
+    Lounge scene (fireplace, armchairs, study tables, bookshelves) on
+    the south side, a Free Expression Tunnel mural and D.H. Hill Library
+    study-nook facade, and a full solid-concrete enclosure with
+    pixel-art wall banners and a vaulted, chandeliered ceiling. Source lives
+    in the sibling folianexa-plugins repo (campus-lobby/), not this
+    one — see the "In-house plugin source" note in this repo's
+    CLAUDE.md. Release history: v0.0.1 (2026-08-15) failed to load on
+    Folia at all (missing folia-supported: true in plugin.yml despite
     the code already being Folia-safe); v0.0.2 fixed that and was
     confirmed loading on a real Folia 1.21.4 world; v0.0.3 locked the
     built scene to campuslobby.admin editors, cleared leftover terrain/
     entities, disabled mob spawning, blocked player inventory in the
     lobby, and set the world spawn + a tight world border — plugin.yml's
     own version field stayed 0.1.0 through both of those (release-tag
-    counter, not the plugin's real semver). Updated to v0.0.4
-    (2026-08-16) via the dashboard's plugin-catalog editor (operator
-    override), then synced into this bundled entry — this is the first
-    release where plugin.yml's own version field actually moved (to
-    0.0.4, matching the tag), confirmed by inspecting the jar directly;
-    download_url/sha256 downloaded and verified for real, folia-
-    supported: true still present. Not yet re-verified live against a
-    real Folia world at this specific version.
+    counter, not the plugin's real semver). v0.0.4 (2026-08-16) was the
+    first release where plugin.yml's own version field actually moved
+    to match the tag. v0.0.5 (2026-08-19, via PR #2 in the plugins repo,
+    first external contributor) is a series of scene-only iterations —
+    plaza/portal/enclosure rescaling and redecoration — no scheduler or
+    protection-logic changes; a source grep for legacy
+    getScheduler().runTask*/runTaskAsynchronously calls and for any
+    network/HTTP calls both came back clean, same as prior releases.
+    download_url/sha256 downloaded directly from the GitHub release
+    asset and verified for real, plugin.yml's folia-supported: true and
+    version: '0.0.5' confirmed by inspecting the jar directly. Not yet
+    re-verified live against a real Folia world at this specific
+    version — the visual/scale changes described above are unconfirmed
+    beyond reading the diff and decompiled plugin.yml.
 
 - id: HuskClaims
   category: claims
