@@ -293,6 +293,75 @@
     download_url/sha256 above are for the real, currently-published
     asset regardless.
 
+- id: WorldEdit
+  category: world-editing
+  source: external
+  version: "7.4.5"
+  download_url: "https://cdn.modrinth.com/data/1u6JkXh5/versions/F5ea2ov3/worldedit-bukkit-7.4.5.jar"
+  sha256: "e5696a6d064b9969437a8888be91b0941148a28e0c3736de1554a00254a5d142"
+  homepage: "https://modrinth.com/plugin/worldedit"
+  verified: true
+  notes: >
+    Verified 2026-08-18 — downloaded from Modrinth's CDN and sha256'd for
+    real. This build's loaders explicitly include folia alongside
+    bukkit/paper/spigot. WorldGuard (below) hard-depends on this being
+    installed on the same world.
+
+- id: VeinMiner
+  category: utility
+  source: external
+  version: "2.5.0"
+  download_url: "https://cdn.modrinth.com/data/OhduvhIc/versions/qE6uJoXa/veinminer-paper-2.5.0.jar"
+  sha256: "21fd75dc4e1a16587ca4a56b97a19704fa80d1e02282fd4cde65564a25340d2c"
+  homepage: "https://modrinth.com/plugin/veinminer"
+  verified: true
+  notes: >
+    Verified 2026-08-18 — downloaded from Modrinth's CDN and sha256'd for
+    real. Deliberately pinned to 2.5.0 rather than the newer 2.6.x line:
+    2.5.0 is the last release that still lists 1.21.4 as a supported game
+    version (matching this cluster's Paper target — see the
+    folianexa-plugins repo's build.gradle.kts files); 2.6.0+ requires
+    1.21.7 or newer. Bump this pin once the cluster moves past 1.21.4.
+    Loaders include folia explicitly.
+
+- id: WorldGuard
+  category: protection
+  source: external
+  version: "7.0.13"
+  download_url: "https://cdn.modrinth.com/data/DKY9btbd/versions/f9NoeotB/worldguard-bukkit-7.0.13-dist.jar"
+  sha256: "73b43a46aefc76514b90994532ea18bfd6d92e7bc5dcabbef9049a71778b21b5"
+  homepage: "https://modrinth.com/plugin/worldguard"
+  verified: true
+  notes: >
+    Verified 2026-08-18 — downloaded from Modrinth's CDN and sha256'd for
+    real, but flag this one before relying on it: Modrinth's published
+    builds for this version only declare bukkit/paper/spigot loaders, not
+    folia. WorldGuard's region-protection model predates Folia's
+    regionized multithreading and does state mutation (region cache,
+    flag application) that classic Bukkit plugins generally assume
+    happens on one single-threaded world tick — the same class of
+    caveat already noted on SkyWarsReloaded/BedWars1058 in this file.
+    The jar will load, but its Folia-safety isn't verified; test region
+    protection carefully under real concurrent load before trusting it
+    in production. Hard-depends on WorldEdit (entry above) being
+    installed on the same world.
+
+- id: GrimAC
+  category: anticheat
+  source: external
+  version: "2.3.73"
+  download_url: "https://cdn.modrinth.com/data/LJNGWSvH/versions/1FIGlM6Q/grimac-bukkit-2.3.73.jar"
+  sha256: "a095331a8ba47286b27bdb9b51f0d35ae4a227632a2c50b25cedba85439f1810"
+  homepage: "https://modrinth.com/plugin/grimac"
+  verified: true
+  notes: >
+    Verified 2026-08-18 — downloaded from Modrinth's CDN and sha256'd for
+    real. Modrinth also publishes a much larger stream of alpha/dev
+    builds (tagged by git commit, e.g. "2.3.74-<hash>") for this
+    project; deliberately pinned to 2.3.73, the newest entry on the
+    "release" channel, since it's the newest one that still explicitly
+    declares folia loader support (alongside bukkit/paper/purpur/spigot).
+
 # Example in-house entry: demonstrates a catalog entry pointing at a
 # separate repository's releases rather than a third-party plugin host.
 # folianexa-plugins doesn't exist yet — replace with your real in-house
