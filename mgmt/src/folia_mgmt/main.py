@@ -108,6 +108,15 @@ def create_app() -> FastAPI:
             response.headers["Access-Control-Allow-Methods"] = "GET"
         return response
 
+    # Deliberately unauthenticated, same as GET /worlds/{name}/plugins-
+    # manifest (routers/worlds.py) — node has no mgmt credential to send.
+    # The per-upload random-token subdirectory (plugin_upload.py) is what
+    # keeps an uploaded jar from being world-discoverable, not an auth
+    # check on this route. Must be registered before the "/" catch-all
+    # mount below, same reasoning as that mount's own comment.
+    settings = get_settings()
+    app.mount("/plugin-jars", StaticFiles(directory=settings.plugin_uploads_dir), name="plugin-jars")
+
     # Mounted last so /api/v1/* and /healthz above always match first —
     # Starlette tries routes in registration order, and this mount's
     # catch-all would otherwise shadow them.

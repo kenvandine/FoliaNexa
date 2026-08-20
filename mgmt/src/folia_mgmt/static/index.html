@@ -325,6 +325,12 @@
       <div class="card">
         <h2 id="plugin-form-title">Add a catalog entry</h2>
         <p class="hint">Writes to the operator override file, which always wins over the bundled catalog for this id — no mgmt release needed to add a plugin, bump a download URL to a new version, or flip <code>verified</code> once you've actually checked the download. A world that already declares this plugin picks up the change on its next restart (folia-nexa-node re-fetches the manifest every time — see PLAN.md §9).</p>
+        <div class="inline" style="margin-bottom:0.7rem;align-items:center">
+          <input type="file" id="pl-upload-file" accept=".jar">
+          <button type="button" class="btn ghost" onclick="uploadPluginJar()">Upload jar &amp; fill fields</button>
+          <span id="plugin-upload-status" class="hint"></span>
+        </div>
+        <p class="hint" style="margin-top:-0.4rem">For commercial/licensed plugins with no shareable download link — uploads the jar to this mgmt instance and hosts it at a private URL for worlds to fetch, and fills in id/version/download_url/sha256 below from the jar's own plugin.yml where possible. Review the fields, then Save as usual.</p>
         <form onsubmit="return savePluginEntry(event)">
           <div class="inline" style="margin-bottom:0.5rem">
             <input id="pl-id" placeholder="Plugin id (e.g. LuckPerms)" required>
@@ -1102,6 +1108,48 @@ function clearPluginForm() {
   document.getElementById('pl-default-all').checked = false;
   document.getElementById('plugin-form-error').textContent = '';
   document.getElementById('plugin-form-saved').textContent = '';
+}
+
+async function uploadPluginJar() {
+  const statusEl = document.getElementById('plugin-upload-status');
+  const errorEl = document.getElementById('plugin-form-error');
+  const fileInput = document.getElementById('pl-upload-file');
+  errorEl.textContent = '';
+  statusEl.textContent = '';
+  const file = fileInput.files[0];
+  if (!file) {
+    errorEl.textContent = 'Choose a .jar file first.';
+    return;
+  }
+  statusEl.textContent = 'Uploading & inspecting…';
+  try {
+    const form = new FormData();
+    form.append('file', file);
+    const result = await api('/plugins/upload', { method: 'POST', body: form });
+    document.getElementById('pl-download-url').value = result.download_url;
+    document.getElementById('pl-sha256').value = result.sha256;
+    if (result.suggested_id && !document.getElementById('pl-id').disabled) {
+      document.getElementById('pl-id').value = result.suggested_id;
+    }
+    if (result.suggested_version) {
+      document.getElementById('pl-version').value = result.suggested_version;
+    }
+    if (result.website) {
+      document.getElementById('pl-homepage').value = result.website;
+    }
+    if (result.folia_supported === true) {
+      document.getElementById('pl-verified').checked = true;
+      statusEl.textContent = `Uploaded (${(result.size_bytes / 1024 / 1024).toFixed(1)}MB) — plugin.yml declares folia-supported: true.`;
+    } else if (result.folia_supported === false) {
+      statusEl.textContent = `Uploaded — WARNING: plugin.yml declares folia-supported: false.`;
+    } else {
+      statusEl.textContent = `Uploaded (${(result.size_bytes / 1024 / 1024).toFixed(1)}MB) — no plugin.yml/paper-plugin.yml found, fill in the fields by hand.`;
+    }
+    fileInput.value = '';
+  } catch (e) {
+    statusEl.textContent = '';
+    errorEl.textContent = e.message;
+  }
 }
 
 async function savePluginEntry(event) {

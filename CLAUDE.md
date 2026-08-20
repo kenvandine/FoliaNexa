@@ -79,7 +79,7 @@ is the exception, per the above.
 ## Running the test suites
 
 ```bash
-# mgmt (Python) — 351 tests
+# mgmt (Python) — 373 tests
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
@@ -735,6 +735,29 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   environment) — logins, plugin selection, and the save/revert flow were
   traced by hand against the API's real behavior instead of driven
   through an actual browser session.
+- Operator plugin-jar upload (PLAN.md §14A) — `POST /api/v1/plugins/upload`
+  (`mgmt/src/folia_mgmt/plugin_upload.py`), for commercial/licensed plugins
+  with no shareable public download URL: an operator uploads the real
+  `.jar` from the dashboard's Plugins tab, mgmt best-effort-parses
+  `plugin.yml`/`paper-plugin.yml` out of it (name, version, `folia-
+  supported`) to pre-fill the catalog-entry form, and stores the jar
+  under a fresh random-token directory served back out unauthenticated
+  at `/plugin-jars/{token}/{filename}` (mounted in `main.py`, same
+  "no credential, just an unguessable path" model `GET
+  /worlds/{name}/plugins-manifest` already uses) — that URL is what gets
+  saved as the catalog entry's `download_url` via the existing `PUT
+  /plugins/{id}`, so folia-nexa-node fetches it exactly like any other
+  catalog entry with no special-casing on that side. Real pytest suite
+  (`mgmt/tests/test_plugin_upload.py`, 373 tests total, up from 351)
+  covers metadata extraction (including a jar with no recognizable
+  plugin manifest, and one declaring `folia-supported: false`),
+  operator-only auth, path-traversal-safe filename handling, and a round
+  trip confirming the served bytes match what was uploaded and that the
+  returned `download_url` saves cleanly as a real catalog entry. Not
+  verified: a real `folia-nexa-node` actually downloading one of these
+  URLs during world staging — no live cluster was available in this
+  environment, same caveat as every other manifest-driven download in
+  this list.
 
 Written against documented API contracts but **not** exercised against
 live infrastructure:

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from pydantic import BaseModel
 
 from folia_mgmt.auth import require_operator, require_viewer
@@ -25,6 +25,14 @@ from folia_mgmt.plugin_catalog import (
     load_catalog,
     overridden_ids,
     save_plugin_override,
+)
+from folia_mgmt.plugin_upload import (
+    MAX_UPLOAD_BYTES,
+    InvalidJarError,
+    inspect_jar,
+    save_uploaded_jar,
+    sha256_hex,
+    uploaded_jar_download_url,
 )
 
 router = APIRouter(prefix="/plugins", tags=["plugins"])
@@ -56,6 +64,56 @@ def get_plugin_entry(plugin_id: str, settings: Settings = Depends(settings_depen
     if entry is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"no such plugin '{plugin_id}' in the catalog")
     return PluginCatalogEntryResponse(**entry.model_dump(), is_override=plugin_id in overridden_ids(settings))
+
+
+class UploadJarResponse(BaseModel):
+    download_url: str
+    sha256: str
+    size_bytes: int
+    suggested_id: str | None
+    suggested_version: str | None
+    folia_supported: bool | None
+    website: str | None
+
+
+@router.post("/upload", response_model=UploadJarResponse, dependencies=[Depends(require_operator)])
+async def upload_plugin_jar(
+    file: UploadFile = File(...), settings: Settings = Depends(settings_dependency)
+) -> UploadJarResponse:
+    """Stores an operator-uploaded jar (commercial plugins with no public
+    download URL — the whole reason this exists) and returns everything
+    the dashboard needs to pre-fill the "add/edit catalog entry" form,
+    including the private download_url a PUT /plugins/{id} call should
+    save as that entry's download_url. This endpoint alone doesn't touch
+    the catalog — saving the entry is still the existing PUT, same as
+    for an externally-hosted download_url typed in by hand."""
+    if not settings.public_url:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "public_url must be configured before a plugin jar can be uploaded (see FOLIA_MGMT_PUBLIC_URL)",
+        )
+
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"jar exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)}MB upload limit")
+    if not content:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "uploaded file is empty")
+
+    try:
+        metadata = inspect_jar(content)
+    except InvalidJarError as exc:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+
+    token, filename = save_uploaded_jar(settings, file.filename or "plugin.jar", content)
+    return UploadJarResponse(
+        download_url=uploaded_jar_download_url(settings, token, filename),
+        sha256=sha256_hex(content),
+        size_bytes=len(content),
+        suggested_id=metadata.name,
+        suggested_version=metadata.version,
+        folia_supported=metadata.folia_supported,
+        website=metadata.website,
+    )
 
 
 class UpsertPluginRequest(BaseModel):

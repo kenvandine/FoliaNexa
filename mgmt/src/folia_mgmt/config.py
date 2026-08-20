@@ -128,9 +128,22 @@ class Settings(BaseSettings):
     def certs_dir(self) -> Path:
         return self.state_dir / "certs"
 
+    # Operator-uploaded plugin jars (e.g. commercial plugins with no
+    # public download URL to point the catalog at) — see plugin_upload.py.
+    # Each upload gets its own random-token subdirectory, mounted
+    # unauthenticated at /plugin-jars/ (main.py) so folia-nexa-node can
+    # fetch it the same deliberately-credential-less way it already
+    # fetches every other catalog download_url (routers/worlds.py's
+    # get_plugins_manifest) — the per-upload token is what keeps this
+    # "private" rather than world-discoverable, not an auth check.
+    @property
+    def plugin_uploads_dir(self) -> Path:
+        return self.state_dir / "plugin-jars"
+
 
 def get_settings() -> Settings:
     settings = Settings()
     settings.state_dir.mkdir(parents=True, exist_ok=True)
     settings.certs_dir.mkdir(parents=True, exist_ok=True)
+    settings.plugin_uploads_dir.mkdir(parents=True, exist_ok=True)
     return settings
