@@ -29,6 +29,7 @@ from folia_mgmt.plugin_catalog import (
 from folia_mgmt.plugin_upload import (
     MAX_UPLOAD_BYTES,
     InvalidJarError,
+    delete_uploaded_jar,
     inspect_jar,
     save_uploaded_jar,
     sha256_hex,
@@ -130,7 +131,10 @@ class UpsertPluginRequest(BaseModel):
 
 @router.put("/{plugin_id}", response_model=PluginCatalogEntryResponse, dependencies=[Depends(require_operator)])
 def upsert_plugin(
-    plugin_id: str, body: UpsertPluginRequest, settings: Settings = Depends(settings_dependency)
+    plugin_id: str,
+    body: UpsertPluginRequest,
+    expect_new: bool = False,
+    settings: Settings = Depends(settings_dependency),
 ) -> PluginCatalogEntryResponse:
     """Adds a new catalog entry, or edits an existing one (bundled or
     already-overridden) — either way the result is written to the
@@ -138,12 +142,39 @@ def upsert_plugin(
     for this id (plugin_catalog.load_catalog). A world that already
     declares this plugin picks up a download_url/version change on its
     plugins-manifest's next fetch — see folia_node.staging's per-restart
-    reconciliation, no mgmt restart needed for this to take effect."""
+    reconciliation, no mgmt restart needed for this to take effect (the
+    world's container itself still needs a restart for that reconcile to
+    actually run — sync_world_config is only called once, at agent
+    start).
+
+    `expect_new=true` — set by the dashboard's "Add a catalog entry" form,
+    never its "Edit" form — guards against a silent overwrite: if the
+    id already resolves to something (bundled or override), this 409s
+    instead of clobbering it. This matters most right after an operator
+    uploads a jar (POST /plugins/upload): its suggested_id comes straight
+    from the jar's own plugin.yml `name`, which can innocently collide
+    with an id that's already cataloged. "Edit" intentionally omits the
+    flag — overwriting the existing entry there is the whole point, and
+    is how re-uploading a newer jar for an already-cataloged plugin is
+    meant to work (same id, replaced download_url/version — there's no
+    versioned history, just the current entry for that id)."""
+    if expect_new and get_plugin(settings, plugin_id) is not None:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"plugin '{plugin_id}' already exists in the catalog — edit it instead of adding a new entry",
+        )
     try:
         entry = PluginEntry(id=plugin_id, **body.model_dump())
     except ValueError as exc:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, str(exc)) from exc
+    previous = get_plugin(settings, plugin_id)
     save_plugin_override(settings, entry)
+    if previous is not None and previous.download_url != entry.download_url:
+        # Best-effort — only actually removes anything if the *old*
+        # download_url was itself one of our own uploads (see
+        # uploaded_jar_dir_from_url); a plain external URL, or one that's
+        # unchanged, is left alone.
+        delete_uploaded_jar(settings, previous.download_url)
     return PluginCatalogEntryResponse(**entry.model_dump(), is_override=True)
 
 
@@ -156,8 +187,17 @@ def delete_plugin(plugin_id: str, settings: Settings = Depends(settings_dependen
     still declares it will just skip it in its plugins-manifest, same as
     any other id no longer resolvable in the catalog (get_plugins_manifest
     already logs and skips those, not a hard failure)."""
+    previous = get_plugin(settings, plugin_id)  # read before removal, for the upload cleanup below
     removed = delete_plugin_override(settings, plugin_id)
     if not removed:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"no override entry for '{plugin_id}' to remove")
     remaining = get_plugin(settings, plugin_id)
+    if previous is not None and (remaining is None or remaining.download_url != previous.download_url):
+        # Same best-effort cleanup as upsert_plugin's — only removes
+        # anything if the override we just deleted was itself pointing at
+        # an uploaded jar, and the id doesn't still resolve to that exact
+        # same URL (e.g. reverting to a bundled entry that happens to
+        # share it, which shouldn't normally happen but isn't worth
+        # deleting out from under).
+        delete_uploaded_jar(settings, previous.download_url)
     return {"removed_override": True, "reverted_to_bundled": remaining is not None}

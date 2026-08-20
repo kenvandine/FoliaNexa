@@ -22,8 +22,10 @@ from __future__ import annotations
 
 import hashlib
 import io
+import logging
 import re
 import secrets
+import shutil
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -32,12 +34,20 @@ import yaml
 
 from folia_mgmt.config import Settings
 
+logger = logging.getLogger(__name__)
+
 # Generous but bounded — real plugin jars run from a few KB up to maybe
 # 50-100MB for something bundling its own assets; this just stops an
 # accidental (or malicious) multi-GB upload from filling the disk.
 MAX_UPLOAD_BYTES = 250 * 1024 * 1024
 
 _SAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
+
+# What save_uploaded_jar's secrets.token_urlsafe(24) output actually looks
+# like — used by uploaded_jar_dir_from_url to reject anything else (an
+# operator can hand-type download_url into the catalog form, so a crafted
+# '../../etc' token must never resolve outside plugin_uploads_dir).
+_UPLOAD_TOKEN = re.compile(r"^[A-Za-z0-9_-]+$")
 
 
 class InvalidJarError(Exception):
@@ -119,3 +129,48 @@ def uploaded_jar_download_url(settings: Settings, token: str, filename: str) -> 
 
 def sha256_hex(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
+
+
+def uploaded_jar_dir_from_url(settings: Settings, download_url: str) -> Path | None:
+    """Resolves `download_url` back to the on-disk directory backing it,
+    if it's one of this instance's own uploaded jars (see
+    uploaded_jar_download_url above) — None for an external URL, or
+    anything whose token doesn't look like something save_uploaded_jar
+    actually generated. The regex plus the resolve()/is_relative_to
+    check below are both defense against the same threat: download_url
+    is an operator-editable free-text field on the catalog form, so a
+    hand-typed '{public_url}/plugin-jars/../../etc/passwd' must never
+    resolve outside plugin_uploads_dir."""
+    if not settings.public_url:
+        return None
+    prefix = f"{settings.public_url.rstrip('/')}/plugin-jars/"
+    if not download_url.startswith(prefix):
+        return None
+    token = download_url[len(prefix):].split("/", 1)[0]
+    if not _UPLOAD_TOKEN.match(token):
+        return None
+    uploads_root = settings.plugin_uploads_dir.resolve()
+    directory = (settings.plugin_uploads_dir / token).resolve()
+    if not directory.is_relative_to(uploads_root):
+        return None
+    return directory
+
+
+def delete_uploaded_jar(settings: Settings, download_url: str | None) -> None:
+    """Best-effort removal of the upload directory backing `download_url`
+    — a no-op for anything uploaded_jar_dir_from_url doesn't recognize as
+    one of ours (an external URL, or a catalog entry that was never an
+    upload to begin with). Called whenever a catalog entry's download_url
+    is replaced or the entry itself is removed (routers/plugins.py), so
+    re-uploading — or deleting — a plugin doesn't leak the previous jar on
+    disk forever. Never raises: a failed cleanup shouldn't block the
+    catalog change that triggered it."""
+    if not download_url:
+        return
+    directory = uploaded_jar_dir_from_url(settings, download_url)
+    if directory is None or not directory.is_dir():
+        return
+    try:
+        shutil.rmtree(directory)
+    except OSError:
+        logger.warning("failed to remove stale uploaded jar directory %s", directory, exc_info=True)

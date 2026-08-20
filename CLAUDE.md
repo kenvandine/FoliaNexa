@@ -749,7 +749,7 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   saved as the catalog entry's `download_url` via the existing `PUT
   /plugins/{id}`, so folia-nexa-node fetches it exactly like any other
   catalog entry with no special-casing on that side. Real pytest suite
-  (`mgmt/tests/test_plugin_upload.py`, 373 tests total, up from 351)
+  (`mgmt/tests/test_plugin_upload.py`, 387 tests total, up from 351)
   covers metadata extraction (including a jar with no recognizable
   plugin manifest, and one declaring `folia-supported: false`),
   operator-only auth, path-traversal-safe filename handling, and a round
@@ -759,6 +759,35 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   URLs during world staging — no live cluster was available in this
   environment, same caveat as every other manifest-driven download in
   this list.
+
+  Re-uploading a newer jar for a plugin that's already cataloged
+  "upgrades" it in place by construction — `save_plugin_override`
+  (`plugin_catalog.py`) is a single dict keyed by plugin id, so a `PUT
+  /plugins/{id}` for an id that already exists just replaces that entry's
+  `download_url`/`version`, there's no separate versioned-history concept
+  to get out of sync. Two rough edges found while confirming that,
+  both closed: `upsert_plugin`/`delete_plugin` (`routers/plugins.py`) now
+  best-effort-delete the *previous* upload directory whenever a catalog
+  entry's `download_url` is replaced or the entry itself is removed
+  (`plugin_upload.uploaded_jar_dir_from_url`/`delete_uploaded_jar` —
+  a no-op for anything that isn't actually one of this instance's own
+  uploads, e.g. an external `download_url`), so re-uploading the same
+  plugin N times no longer leaks N-1 stale jars on disk forever; and
+  `PUT /plugins/{id}?expect_new=true` (set by the dashboard's "Add a
+  catalog entry" form, never its "Edit" form) now 409s instead of
+  silently overwriting an id that turns out to already exist — the
+  concrete risk being `/plugins/upload`'s `suggested_id`, read straight
+  from the jar's own `plugin.yml` `name`, innocently colliding with an
+  id already in the catalog. Same rigor as the path-traversal check this
+  feature's own review already applied to jar *filenames* — this extends
+  it to `download_url` itself, which is an operator-editable free-text
+  field on the catalog form, not something only ever set by the upload
+  endpoint. Covered by `mgmt/tests/test_plugin_upload.py`'s
+  `uploaded_jar_dir_from_url`/`delete_uploaded_jar` unit tests (including
+  a `../../etc/passwd`-style crafted `download_url`, same payload shape
+  §14D's file-browser fix was checked against) and
+  `mgmt/tests/test_plugins_api.py`'s end-to-end upload-then-replace/
+  upload-then-delete round trips against a real running app.
 
 Written against documented API contracts but **not** exercised against
 live infrastructure:

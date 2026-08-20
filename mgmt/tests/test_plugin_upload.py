@@ -7,7 +7,14 @@ import pytest
 from helpers import auth_header
 
 from folia_mgmt.config import Settings
-from folia_mgmt.plugin_upload import InvalidJarError, inspect_jar, save_uploaded_jar, uploaded_jar_download_url
+from folia_mgmt.plugin_upload import (
+    InvalidJarError,
+    delete_uploaded_jar,
+    inspect_jar,
+    save_uploaded_jar,
+    uploaded_jar_dir_from_url,
+    uploaded_jar_download_url,
+)
 
 
 def _jar_bytes(plugin_yml: str | None, filename: str = "plugin.yml") -> bytes:
@@ -154,6 +161,56 @@ def test_upload_two_files_get_different_private_urls(client, operator_token):
         return resp.json()["download_url"]
 
     assert upload() != upload()
+
+
+def test_uploaded_jar_dir_from_url_resolves_a_real_upload(tmp_path):
+    settings = Settings(state_dir=tmp_path / "state", public_url="https://mgmt.example:8443")
+    token, filename = save_uploaded_jar(settings, "plugin.jar", b"content")
+    url = uploaded_jar_download_url(settings, token, filename)
+
+    directory = uploaded_jar_dir_from_url(settings, url)
+
+    assert directory == settings.plugin_uploads_dir / token
+    assert directory.is_dir()
+
+
+def test_uploaded_jar_dir_from_url_rejects_external_url(tmp_path):
+    settings = Settings(state_dir=tmp_path / "state", public_url="https://mgmt.example:8443")
+    assert uploaded_jar_dir_from_url(settings, "https://cdn.modrinth.com/some/plugin.jar") is None
+
+
+def test_uploaded_jar_dir_from_url_rejects_traversal_token(tmp_path):
+    settings = Settings(state_dir=tmp_path / "state", public_url="https://mgmt.example:8443")
+    malicious = "https://mgmt.example:8443/plugin-jars/../../etc/passwd.jar"
+    assert uploaded_jar_dir_from_url(settings, malicious) is None
+
+
+def test_uploaded_jar_dir_from_url_none_without_public_url(tmp_path):
+    settings = Settings(state_dir=tmp_path / "state", public_url=None)
+    url = "https://mgmt.example:8443/plugin-jars/sometoken/plugin.jar"
+    assert uploaded_jar_dir_from_url(settings, url) is None
+
+
+def test_delete_uploaded_jar_removes_the_directory(tmp_path):
+    settings = Settings(state_dir=tmp_path / "state", public_url="https://mgmt.example:8443")
+    token, filename = save_uploaded_jar(settings, "plugin.jar", b"content")
+    url = uploaded_jar_download_url(settings, token, filename)
+    directory = settings.plugin_uploads_dir / token
+    assert directory.is_dir()
+
+    delete_uploaded_jar(settings, url)
+
+    assert not directory.exists()
+
+
+def test_delete_uploaded_jar_is_a_noop_for_external_url(tmp_path):
+    settings = Settings(state_dir=tmp_path / "state", public_url="https://mgmt.example:8443")
+    delete_uploaded_jar(settings, "https://cdn.modrinth.com/some/plugin.jar")  # should not raise
+
+
+def test_delete_uploaded_jar_is_a_noop_for_none(tmp_path):
+    settings = Settings(state_dir=tmp_path / "state", public_url="https://mgmt.example:8443")
+    delete_uploaded_jar(settings, None)  # should not raise
 
 
 def test_upload_result_can_be_saved_as_catalog_entry(client, operator_token):

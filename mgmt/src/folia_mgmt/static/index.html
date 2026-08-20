@@ -1158,9 +1158,17 @@ async function savePluginEntry(event) {
   const savedEl = document.getElementById('plugin-form-saved');
   errorEl.textContent = '';
   savedEl.textContent = '';
-  const id = document.getElementById('pl-id').value.trim();
+  const idInput = document.getElementById('pl-id');
+  const id = idInput.value.trim();
+  // idInput is disabled only in "Edit" mode (openPluginEditForm), where
+  // overwriting the existing entry is the whole point. In "Add" mode
+  // (clearPluginForm re-enables it), expect_new=true guards against
+  // silently clobbering an id that turns out to already exist — most
+  // likely a jar's suggested_id from /plugins/upload innocently
+  // colliding with one already in the catalog.
+  const expectNew = !idInput.disabled;
   try {
-    await api('/plugins/' + encodeURIComponent(id), {
+    await api('/plugins/' + encodeURIComponent(id) + (expectNew ? '?expect_new=true' : ''), {
       method: 'PUT',
       body: JSON.stringify({
         category: document.getElementById('pl-category').value.trim(),
