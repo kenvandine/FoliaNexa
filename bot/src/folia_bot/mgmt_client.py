@@ -60,6 +60,30 @@ class MgmtClient:
             resp.raise_for_status()
             return resp.json()
 
+    async def get_worlds_online(self) -> dict:
+        """GET /api/v1/public/worlds — per-world online players, feeding
+        both /who and the join-notification poll loop (see presence.py).
+        Same public, unauthenticated endpoint the portal's "who's online"
+        page uses (mgmt's routers/public_stats.py) — sending the bearer
+        token anyway is harmless (that route ignores auth) and keeps
+        every call through this client uniform."""
+        async with httpx.AsyncClient(base_url=self._base_url, timeout=self._timeout) as client:
+            resp = await client.get("/api/v1/public/worlds", headers=self._headers())
+            resp.raise_for_status()
+            return resp.json()
+
+    async def get_leaderboard(self, stat: str, limit: int = 10) -> dict:
+        """GET /api/v1/public/leaderboards?stat=...&limit=... — same
+        public endpoint the portal's leaderboard page uses."""
+        async with httpx.AsyncClient(base_url=self._base_url, timeout=self._timeout) as client:
+            resp = await client.get(
+                "/api/v1/public/leaderboards",
+                params={"stat": stat, "limit": limit},
+                headers=self._headers(),
+            )
+            resp.raise_for_status()
+            return resp.json()
+
     async def get_discord_gate_config(self) -> dict:
         """GET /access-requests/discord-gate-config — whether the dynamic
         Discord-role allowlist is on and which guild/role gates it,

@@ -1,8 +1,8 @@
 """folia-nexa-bot entry point. PLAN.md §16.
 
-Three slash commands, plus a chat-relay message listener, all backed by
-folia-nexa-mgmt's REST API — this bot never touches mgmt's DB or LXD
-directly:
+Five slash commands, a chat-relay message listener, and a background
+presence-join announcer, all backed by folia-nexa-mgmt's REST API — this
+bot never touches mgmt's DB or LXD directly:
 
 - `/status` — declared worlds and their phase/host, from GET /api/v1/worlds.
 - `/request-access <minecraft_username> [minecraft_uuid]` — an in-Discord
@@ -38,9 +38,40 @@ directly:
   id — not an env var — so there's nothing extra to set on this bot
   beyond the intent itself; an operator who's never touched the
   dashboard's Discord role gate card just gets a permanent no-op here.
-- `/leaderboard` — an explicit stub. There's no analytics store backing
-  it yet (PLAN.md §16's Future Expansion), and saying so beats a missing
-  command or fabricated numbers.
+- `/who [world]` — who's currently online and which world they're in,
+  from `GET /api/v1/public/worlds` (the same public endpoint the
+  player-hub portal's "who's online" page reads, mgmt's
+  routers/public_stats.py) — an explicit `world` choice narrows to one
+  world's roster, omitted shows every world with anyone online.
+- `/leaderboard [stat]` — top players by a stat, from `GET
+  /api/v1/public/leaderboards` (again, the same endpoint the portal's
+  leaderboard page reads). `stat` defaults to kills; the other known
+  stat_keys (mgmt's models.py `PlayerStat` docstring) are offered as
+  choices. Data itself may still be genuinely empty until a real
+  stats-reporting plugin is deployed (catalog id `FoliaNexaStats` is a
+  placeholder pending its first release, per CLAUDE.md) — the embed says
+  "no data yet" rather than fabricating numbers, same honesty this
+  command used to apply by being a hardcoded stub before this endpoint
+  existed.
+- Presence-join announcer — a background loop (`poll_presence`, mirrors
+  the cadence/shape of `periodic_role_sync` below) that polls the same
+  `GET /api/v1/public/worlds` `/who` reads, diffs consecutive snapshots
+  (`presence.py`'s `diff_joins` — mgmt has no join/quit event stream of
+  its own, folia-routes-sync only ever reports a full snapshot on its
+  existing 5s poll cycle, never a delta) and posts one line to
+  `FOLIA_BOT_PRESENCE_CHANNEL_ID` per player whose world changed since
+  the last poll (a fresh join to the cluster, or a switch between
+  worlds). Off by default (unset channel id = loop never starts); the
+  first poll after (re)start only primes state; it never announces
+  players already online when the bot came up, since none of them just
+  "joined". There's deliberately no matching leave/quit announcement —
+  only joins are inferred this way. PLAN.md §16 used to punt this to a
+  per-world `DiscordSRV` install instead; that plugin has the same
+  single-Paper-server blind spot the custom chat bridge above was built
+  to avoid (catalog.yaml's own DiscordSRV notes: install it on one hub
+  world, not every world, or duplicate relays result), so it's handled
+  here instead, cluster-wide and world-aware by construction, same
+  rationale as the chat bridge.
 - `on_message` — the Discord->game half of the chat bridge (mgmt's
   routers/chat.py has the full design). Relays every guild message it
   sees to POST /api/v1/chat/relay unconditionally; mgmt decides whether
@@ -59,7 +90,10 @@ Configuration, environment variables:
   guild from the dashboard-editable gate config instead, not this env
   var), FOLIA_BOT_AUTO_APPROVE_ROLE_ID (optional, for the one-shot
   /request-access-time check only — the ongoing role-sync loop instead
-  reads its role id live from mgmt's dashboard-editable gate config too).
+  reads its role id live from mgmt's dashboard-editable gate config too),
+  FOLIA_BOT_PRESENCE_CHANNEL_ID (optional — a Discord channel id to post
+  presence-join announcements to; unset disables the poll loop entirely,
+  same "off by default" treatment as FOLIA_BOT_AUTO_APPROVE_ROLE_ID).
 
 The gateway/heartbeat/reconnect protocol itself is discord.py's job (a
 well-tested third-party library, not hand-rolled here); what's actually
@@ -86,8 +120,9 @@ from discord import app_commands
 from discord.ext import tasks
 
 from folia_bot.access import compute_role_sync_ids, decide_auto_approve, role_membership_changed
-from folia_bot.embeds import build_leaderboard_stub_embed, build_status_embed
+from folia_bot.embeds import build_leaderboard_embed, build_status_embed, build_who_embed
 from folia_bot.mgmt_client import MgmtClient
+from folia_bot.presence import diff_joins, flatten_worlds_online, format_join_message
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
@@ -108,6 +143,8 @@ def build_client() -> discord.Client:
     auto_approve_role_raw = os.environ.get("FOLIA_BOT_AUTO_APPROVE_ROLE_ID")
     auto_approve_role_id = int(auto_approve_role_raw) if auto_approve_role_raw else None
     guild_id_raw = os.environ.get("DISCORD_GUILD_ID")
+    presence_channel_raw = os.environ.get("FOLIA_BOT_PRESENCE_CHANNEL_ID")
+    presence_channel_id = int(presence_channel_raw) if presence_channel_raw else None
 
     intents = discord.Intents.default()
     # Privileged intent — must also be enabled for this application in the
@@ -163,6 +200,33 @@ def build_client() -> discord.Client:
         if guild is not None:
             await _push_role_sync(guild)
 
+    # uuid -> (world, username), as of the last successful poll — mutated
+    # in place rather than reassigned so the closure below doesn't need
+    # its own `nonlocal`. "primed" gates the very first poll after
+    # (re)start: without it, every player already online when the bot
+    # comes up would read as a fresh join.
+    presence_state: dict = {"primed": False, "locations": {}}
+
+    @tasks.loop(seconds=15)
+    async def poll_presence() -> None:
+        try:
+            worlds_online = await mgmt.get_worlds_online()
+        except Exception:
+            logger.exception("failed to poll world presence from mgmt")
+            return
+        current = flatten_worlds_online(worlds_online)
+        if presence_state["primed"]:
+            joins = diff_joins(presence_state["locations"], current)
+            if joins:
+                channel = client.get_channel(presence_channel_id)
+                if channel is None:
+                    logger.warning("presence channel %s not found (bot not in that guild/channel?)", presence_channel_id)
+                else:
+                    for world, username, _uuid in joins:
+                        await channel.send(format_join_message(world, username))
+        presence_state["primed"] = True
+        presence_state["locations"] = current
+
     @client.event
     async def on_member_update(before: discord.Member, after: discord.Member) -> None:
         role_id = gate_config.get("role_id")
@@ -185,9 +249,39 @@ def build_client() -> discord.Client:
             return
         await interaction.followup.send(embed=build_status_embed(worlds))
 
-    @tree.command(name="leaderboard", description="Show cluster leaderboards")
-    async def leaderboard(interaction: discord.Interaction) -> None:
-        await interaction.response.send_message(embed=build_leaderboard_stub_embed())
+    @tree.command(name="who", description="Show who's currently online and which world they're in")
+    async def who(interaction: discord.Interaction) -> None:
+        await interaction.response.defer()
+        try:
+            worlds_online = await mgmt.get_worlds_online()
+        except Exception:
+            logger.exception("failed to fetch world presence from mgmt")
+            await interaction.followup.send("Couldn't reach the cluster manager — try again shortly.")
+            return
+        await interaction.followup.send(embed=build_who_embed(worlds_online))
+
+    _LEADERBOARD_STAT_CHOICES = [
+        app_commands.Choice(name="Kills", value="kills"),
+        app_commands.Choice(name="Deaths", value="deaths"),
+        app_commands.Choice(name="Blocks Mined", value="blocks_mined"),
+        app_commands.Choice(name="Playtime", value="playtime_seconds_total"),
+        app_commands.Choice(name="AuraSkills Power Level", value="auraskills_power_level"),
+        app_commands.Choice(name="AxAuctions Wealth", value="axauctions_wealth"),
+    ]
+
+    @tree.command(name="leaderboard", description="Show a cluster leaderboard")
+    @app_commands.describe(stat="Which stat to rank by (defaults to Kills)")
+    @app_commands.choices(stat=_LEADERBOARD_STAT_CHOICES)
+    async def leaderboard(interaction: discord.Interaction, stat: app_commands.Choice[str] | None = None) -> None:
+        stat_key = stat.value if stat is not None else "kills"
+        await interaction.response.defer()
+        try:
+            result = await mgmt.get_leaderboard(stat_key)
+        except Exception:
+            logger.exception("failed to fetch leaderboard from mgmt")
+            await interaction.followup.send("Couldn't reach the cluster manager — try again shortly.")
+            return
+        await interaction.followup.send(embed=build_leaderboard_embed(stat_key, result.get("entries", [])))
 
     @tree.command(name="request-access", description="Request access to the Minecraft server")
     @app_commands.describe(
@@ -261,6 +355,8 @@ def build_client() -> discord.Client:
             refresh_gate_config.start()
         if not periodic_role_sync.is_running():
             periodic_role_sync.start()
+        if presence_channel_id is not None and not poll_presence.is_running():
+            poll_presence.start()
         logger.info("folia-nexa-bot ready as %s", client.user)
 
     return client

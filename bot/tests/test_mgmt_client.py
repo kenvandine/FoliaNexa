@@ -112,6 +112,54 @@ async def test_relay_chat_sends_expected_body(mock_http):
     assert result == {"queued": True}
 
 
+async def test_get_worlds_online_sends_bearer_token(mock_http):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["auth"] = request.headers["Authorization"]
+        captured["path"] = request.url.path
+        return httpx.Response(200, json={"worlds": [], "total_players": 0})
+
+    mock_http(handler)
+    client = MgmtClient("https://mgmt.example:8443", "tok-abc")
+    result = await client.get_worlds_online()
+
+    assert captured["auth"] == "Bearer tok-abc"
+    assert captured["path"] == "/api/v1/public/worlds"
+    assert result == {"worlds": [], "total_players": 0}
+
+
+async def test_get_leaderboard_sends_stat_and_limit(mock_http):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(200, json={"stat": "kills", "entries": []})
+
+    mock_http(handler)
+    client = MgmtClient("https://mgmt.example:8443", "tok-abc")
+    result = await client.get_leaderboard("kills", limit=5)
+
+    assert captured["path"] == "/api/v1/public/leaderboards"
+    assert captured["params"] == {"stat": "kills", "limit": "5"}
+    assert result == {"stat": "kills", "entries": []}
+
+
+async def test_get_leaderboard_defaults_limit_to_ten(mock_http):
+    captured = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["params"] = dict(request.url.params)
+        return httpx.Response(200, json={"stat": "kills", "entries": []})
+
+    mock_http(handler)
+    client = MgmtClient("https://mgmt.example:8443", "tok-abc")
+    await client.get_leaderboard("kills")
+
+    assert captured["params"]["limit"] == "10"
+
+
 async def test_get_discord_gate_config_sends_bearer_token(mock_http):
     captured = {}
 

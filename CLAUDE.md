@@ -15,7 +15,7 @@ host.
 | `mgmt/` | `folia-nexa-mgmt` — FastAPI control plane, scheduler, dashboard, CLI | Python 3.12+, pytest |
 | `node/` | `folia-nexa-node` — in-container world runner/health agent | Python 3.12+, pytest |
 | `proxy/` | `folia-routes-sync` — Velocity plugin (routing sync + access gate) | Java 21, Gradle |
-| `bot/` | `folia-nexa-bot` — Discord bot (`/status`, `/request-access`, `/leaderboard`) | Python 3.12+, pytest |
+| `bot/` | `folia-nexa-bot` — Discord bot (`/status`, `/who`, `/leaderboard`, `/request-access`, plus a presence-join channel announcer) | Python 3.12+, pytest |
 | `db/` | `folia-nexa-db` — self-contained MariaDB snap for LuckPerms' shared backend | Bash, bundled MariaDB |
 | `tools/build-snap.sh` | Wraps `snapcraft` for any of the six components below so the built snap's version string carries the exact commit (`+git<hash>`, `-dirty` if the tree isn't clean) it was built from — the recommended way to invoke `snapcraft` for all of them, see "Building a snap with a traceable version" below | Bash |
 | `tools/folia-host-join.sh` | Automates trusting an LXD host into the cluster | Bash |
@@ -476,8 +476,9 @@ per-application setting, done once in the portal, not per-deploy.
 sudo snap start folia-nexa-bot.daemon
 ```
 
-The bot commands (`/status`, `/request-access`, `/leaderboard`) and the
-Discord role-sync loop are documented in full in the module docstring at
+The bot commands (`/status`, `/who`, `/leaderboard`, `/request-access`),
+the presence-join channel announcer, and the Discord role-sync loop are
+documented in full in the module docstring at
 the top of `bot/src/folia_bot/bot.py` — read that first for exact
 behavior, including what each optional env var does when unset. Short
 version of the parts most likely to surprise an operator:

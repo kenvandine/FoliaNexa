@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from folia_bot.embeds import build_leaderboard_stub_embed, build_status_embed
+from folia_bot.embeds import build_leaderboard_embed, build_status_embed, build_who_embed
 
 
 def test_status_embed_lists_visible_worlds_sorted():
@@ -49,6 +49,47 @@ def test_status_embed_falls_back_to_raw_phase_for_unknown_value():
     assert "some-future-phase" in embed.fields[0].value
 
 
-def test_leaderboard_stub_is_honest_about_not_being_implemented():
-    embed = build_leaderboard_stub_embed()
-    assert "not available" in embed.description.lower() or "not been built" in embed.description.lower()
+def test_leaderboard_embed_empty_says_no_data_yet():
+    embed = build_leaderboard_embed("kills", [])
+    assert "no data" in embed.description.lower()
+
+
+def test_leaderboard_embed_lists_ranked_entries():
+    entries = [{"uuid": "u1", "username": "Alice", "value": 42.0}, {"uuid": "u2", "username": "Bob", "value": 10.0}]
+    embed = build_leaderboard_embed("kills", entries)
+    assert "Kills" in embed.title
+    assert "1." in embed.description and "Alice" in embed.description and "42" in embed.description
+    assert "2." in embed.description and "Bob" in embed.description
+
+
+def test_leaderboard_embed_formats_playtime_as_hours_and_minutes():
+    entries = [{"uuid": "u1", "username": "Alice", "value": 5400.0}]  # 1h 30m
+    embed = build_leaderboard_embed("playtime_seconds_total", entries)
+    assert "1h 30m" in embed.description
+
+
+def test_leaderboard_embed_falls_back_to_raw_stat_key_for_unknown_stat():
+    embed = build_leaderboard_embed("some_future_stat", [])
+    assert "some_future_stat" in embed.title
+
+
+def test_who_embed_nobody_online():
+    embed = build_who_embed({"worlds": [], "total_players": 0})
+    assert "nobody" in embed.description.lower()
+
+
+def test_who_embed_lists_players_per_world():
+    worlds_online = {
+        "worlds": [
+            {"world": "world-overworld", "type": "overworld", "player_count": 2, "players": [
+                {"uuid": "u1", "username": "Alice"}, {"uuid": "u2", "username": "Bob"},
+            ]},
+            {"world": "world-lobby", "type": "lobby", "player_count": 0, "players": []},
+        ],
+        "total_players": 2,
+    }
+    embed = build_who_embed(worlds_online)
+    names = [field.name for field in embed.fields]
+    assert names == ["world-overworld (2)"]  # empty worlds omitted
+    assert "Alice" in embed.fields[0].value and "Bob" in embed.fields[0].value
+    assert "2 player" in embed.footer.text
