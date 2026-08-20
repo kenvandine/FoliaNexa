@@ -197,6 +197,49 @@ def test_sync_world_config_redownloads_plugin_when_manifest_url_changes(tmp_path
     assert (tmp_path / "plugins" / "HuskClaims.jar").read_bytes() == PLUGIN_BYTES
 
 
+def test_one_failing_plugin_download_does_not_block_other_plugins_or_datapacks(tmp_path):
+    # The actual bug this was built to fix, confirmed against a live
+    # world: one bad plugin download_url raised uncaught inside the
+    # reconcile loop, aborting sync_world_config before it ever reached
+    # the datapacks reconcile step that runs right after plugins — so a
+    # single broken plugin silently froze every other plugin *and* every
+    # data pack change, on every restart, indefinitely.
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if url.endswith("/manifests/manifest.json"):  # plugins manifest specifically, not datapacks-manifest.json
+            return httpx.Response(
+                200,
+                json=[
+                    {"name": "BrokenPlugin", "url": "https://artifacts.internal/plugins/broken.jar"},
+                    {"name": "HuskClaims", "url": "https://artifacts.internal/plugins/huskclaims.jar"},
+                ],
+            )
+        if url.endswith("broken.jar"):
+            return httpx.Response(404)
+        return _handler(request)
+
+    client = httpx.Client(transport=httpx.MockTransport(handler))
+    sync_world_config(
+        tmp_path,
+        _assignment(datapacks_manifest_url="https://artifacts.internal/folia/manifests/datapacks-manifest.json"),
+        client=client,
+    )
+    assert (tmp_path / "plugins" / "HuskClaims.jar").read_bytes() == PLUGIN_BYTES
+    assert not (tmp_path / "plugins" / "BrokenPlugin.jar").exists()
+    assert (tmp_path / "world" / "datapacks" / "Matcha.zip").read_bytes() == DATAPACK_BYTES
+
+
+def test_a_stale_file_that_cannot_be_removed_does_not_block_other_reconciliation(tmp_path):
+    (tmp_path / "plugins").mkdir()
+    # A directory in place of the expected file makes unlink() raise
+    # OSError (IsADirectoryError) — stands in for a permission error
+    # without needing actual restricted file ownership in a test.
+    (tmp_path / "plugins" / "OldPlugin.jar").mkdir()
+    client = httpx.Client(transport=httpx.MockTransport(_handler))
+    sync_world_config(tmp_path, _assignment(), client=client)
+    assert (tmp_path / "plugins" / "HuskClaims.jar").read_bytes() == PLUGIN_BYTES
+
+
 def test_sync_world_config_downloads_datapacks_into_level_datapacks_dir(tmp_path):
     client = httpx.Client(transport=httpx.MockTransport(_handler))
     sync_world_config(

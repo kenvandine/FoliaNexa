@@ -156,6 +156,19 @@ def _reconcile_manifest_dir(client: httpx.Client, manifest_url: str, target_dir:
     JAR_VERSION_MARKER's own tradeoff: one redundant re-download the
     first time this runs on an old world, harmless, self-healing from
     then on.
+
+    One entry's failure (a bad/unreachable download_url, or — for
+    deletion — a file this process somehow can't remove) never aborts
+    the rest of the pass: confirmed the hard way on a live world where a
+    single failing plugin download raised uncaught, aborting
+    sync_world_config before it ever reached the datapacks/server-
+    properties reconcile steps that follow it — so one broken plugin URL
+    silently froze *everything* else (new plugins, removed data packs,
+    server.properties edits) on every single restart, indefinitely, with
+    no operator-visible error beyond a node-agent crash loop. Every
+    delete and every download is now caught and logged individually;
+    good entries land, a bad one is retried next reconcile pass instead
+    of blocking its neighbors.
     """
     resp = client.get(manifest_url)
     resp.raise_for_status()
@@ -172,15 +185,21 @@ def _reconcile_manifest_dir(client: httpx.Client, manifest_url: str, target_dir:
     existing = {p.stem for p in target_dir.glob(f"*{suffix}")}
     for name in existing - desired.keys():
         stale = target_dir / f"{name}{suffix}"
-        logger.info("removing '%s' (no longer in manifest)", stale.name)
-        stale.unlink(missing_ok=True)
+        try:
+            logger.info("removing '%s' (no longer in manifest)", stale.name)
+            stale.unlink(missing_ok=True)
+        except OSError:
+            logger.exception("failed to remove '%s' — leaving it, will retry next reconcile", stale.name)
 
     for name, url in desired.items():
         dest = target_dir / f"{name}{suffix}"
         if dest.exists() and staged_urls.get(name) == url:
             continue
-        logger.info("staging '%s' from %s", dest.name, url)
-        _download(client, url, dest)
+        try:
+            logger.info("staging '%s' from %s", dest.name, url)
+            _download(client, url, dest)
+        except (httpx.HTTPError, OSError):
+            logger.exception("failed to stage '%s' from %s — skipping, will retry next reconcile", dest.name, url)
 
     state_path.write_text(json.dumps(desired))
 
