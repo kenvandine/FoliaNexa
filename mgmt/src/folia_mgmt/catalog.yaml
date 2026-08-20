@@ -209,6 +209,38 @@
     Requires the matching Simple Voice Chat client-side mod for players
     to actually hear anything — this jar is just the server side.
 
+- id: SimpleVoiceGeyser
+  category: bedrock-bridge
+  source: external
+  version: "0.1.4"
+  download_url: "https://cdn.modrinth.com/data/GJLuArlK/versions/BfnuqxSR/Svg-Spigot-0.1.4.jar"
+  sha256: "3ea772c452fa92bdf712486326b65f0e7fa57807392dc4d79a4a58d224d829f5"
+  homepage: "https://theodoremeyer.github.io/projects/simplevoicegeyser/"
+  verified: true
+  notes: >
+    Verified 2026-08-20 — downloaded from Modrinth's CDN; sha1 matched
+    Modrinth's published hash, sha256 computed directly. Lets Bedrock
+    (Geyser/Floodgate) players join Simple Voice Chat through a browser
+    tab instead of the client-side mod Java players need — SimpleVoiceChat
+    above (`depend: [voicechat]`, confirmed in plugin.yml) must also be
+    declared on the same world. No folia-supported key in plugin.yml
+    (checked directly) and no folia loader tag on Modrinth — checked for
+    a Folia-native alternative and found none for this specific Bedrock-
+    voice-chat-bridge niche, so this is the only real option, same
+    "verified download, unverified Folia behavior" caveat as Vault/
+    BlockLocker/AuraSkills elsewhere in this catalog; test before an
+    event rather than trusting it blind. Its own softdepend list
+    (`Geyser-Spigot`, `floodgate`) expects Geyser installed locally on
+    the backend — this cluster's Bedrock bridging happens once at
+    folia-nexa-proxy (Geyser-Velocity, PLAN.md §7B), and worlds only run
+    the lighter Floodgate companion, not full Geyser-Spigot, so Bedrock-
+    player detection may be degraded here versus a single-server Geyser
+    setup; unverified either way. The project's own README also notes
+    voice audio isn't fully encrypted yet and recommends running behind
+    a proxy for WAN traffic — relevant given this cluster's VPS-edge
+    topology (docs/vps-edge-deployment.md), worth a closer look before
+    relying on it for anything sensitive.
+
 - id: DiscordSRV
   category: chat-bridge
   source: external
