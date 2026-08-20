@@ -420,6 +420,32 @@
     (loaders: folia, paper, purpur, spigot). plugin.yml declares
     folia-supported: true, confirmed by inspecting the jar.
 
+- id: NormalTreeCapitator
+  category: gameplay-tweaks
+  source: external
+  version: "1.0.6 Build 33"
+  download_url: "https://cdn.modrinth.com/data/UsSBs0dz/versions/JdbQAhuM/NormalTreeCapitator-1.0.6.jar"
+  sha256: "98994bf8be1db468f8964d50008494eb19728f04fdd09d697efc1fc0f94c8a05"
+  homepage: "https://modrinth.com/plugin/normal-tree-capitator"
+  verified: true
+  notes: >
+    Added 2026-08-20 — replaces the Timber entry that used to be in
+    datapacks.yaml, moved catalogs since this is a JVM plugin, not a
+    data pack. Timber was confirmed 100% non-functional on this cluster:
+    every one of its functions (initialize, loop, i_broke_wood,
+    i_am_broken_wood) uses either the `scoreboard` or `function`
+    command, and PaperMC's own Folia FAQ confirms both are on the list
+    of ~23 commands Folia disables outright, for any caller — a data
+    pack function included, not just players/console. No datapack build
+    of Timber can route around that; it needs a real plugin using
+    Folia's actual scheduler APIs instead. NormalTreeCapitator does
+    exactly that: verified for real, sha1 matched Modrinth's published
+    hash, sha256 computed directly, plugin.yml inspected inside the jar
+    confirming folia-supported: true, no depend/softdepend on anything
+    else. Actively maintained (near-weekly releases as of this
+    writing), tags MC 26.2 directly. Same "chop one log, whole tree
+    falls" mechanic via /tc commands instead of vanilla commands.
+
 - id: PlayerParticles
   category: vanity
   source: external

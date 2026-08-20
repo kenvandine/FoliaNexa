@@ -51,7 +51,17 @@
     catalog (see the `LEVEL_NAME` note in node/src/folia_node/staging.py
     and CLAUDE.md's Phase 5), but doubly important here since retrofitting
     it onto an already-explored world leaves old terrain unchanged and
-    only new chunks get Terralith's biomes.
+    only new chunks get Terralith's biomes. Confirmed 2026-08-20 against
+    a real boot log: its `setup` function (scoreboard init + a
+    schedule-function toast on first join) and `rtp_testing` (a debug
+    /spreadplayers helper) both fail — `Scoreboard`, `Schedule`, and
+    `SpreadPlayers` are all on PaperMC's own documented list of commands
+    Folia disables outright, for any caller including a data pack
+    function, not something any datapack build can route around. Both
+    are minor bonus features, not the pack's actual worldgen content
+    (biomes/terrain are pure data-driven registry entries, never touch
+    the disabled-command system at all) — the pack's real value is
+    intact, this is cosmetic.
 
 - id: Incendium
   category: worldgen
@@ -76,7 +86,22 @@
     for several recent builds carries an "_UNSUPPORTED" suffix on older
     game-version builds (not this one) — a signal from the author that
     those specific builds aren't actively supported, worth checking
-    before pinning an older version than this entry.
+    before pinning an older version than this entry. Confirmed
+    2026-08-20 against a real boot log: this build (the only real,
+    current, correctly-targeted 26.2 datapack release — checked every
+    other available version on Modrinth, all older ones carry the
+    "_UNSUPPORTED" filename suffix mentioned above) still throws ~2,230
+    "Failed to load function incendium:border_of_life/tree/*" errors —
+    every single one an `execute ... run function ...` call, and
+    `Function` is on PaperMC's own documented list of commands Folia
+    disables outright for any caller, data pack functions included, not
+    fixable by any datapack build. This is one entire decorative
+    subsystem (an ambient "note block song" system in one Nether biome)
+    breaking, not the pack's core terrain/biome generation — that's
+    pure worldgen registry data and never touches the disabled-command
+    system. Real, if noisy: expect ~2,230 ERROR lines on every boot from
+    this alone. No fix available short of Stardust Labs rewriting that
+    one subsystem to not depend on the /function command.
 
 - id: Nullscape
   category: worldgen
@@ -94,30 +119,15 @@
     min_format/max_format both [107, 1] (Modrinth lists it as built for
     game version "26.2"). Same generate-only-in-new-chunks caveat as the
     other two Stardust Labs packs above — install before a world first
-    generates its End dimension for full effect.
-
-- id: Timber
-  category: gameplay-tweaks
-  source: external
-  version: "1.1"
-  download_url: "https://cdn.modrinth.com/data/nHGrx1Ur/versions/LRl7yk9t/Timber%20v1.1.zip"
-  sha256: "12bb4b4038907e29807222948ffbb985092c18f69a390011868c25bb73360713"
-  homepage: "https://modrinth.com/datapack/timber"
-  verified: true
-  notes: >
-    Verified 2026-08-18 — downloaded from Modrinth's CDN and sha256'd
-    directly. Chop one log and the whole connected tree falls with it —
-    pure vanilla data pack (advancement/function-based), no JVM plugin
-    needed. Covers the operator's "Timber or TreeAssist" ask; unlike the
-    TreeAssist entry in catalog.yaml (an old, no-folia-flag SpigotMC
-    plugin of uncertain Folia-safety), this is a real Folia-native option
-    since data packs run through vanilla's own advancement/function
-    system rather than a Bukkit plugin's threading model — prefer this
-    entry unless a world specifically needs the plugin's finer-grained
-    config. pack.mcmeta declares supported_formats 48-88 inclusive
-    (older than the other packs above) — double-check against the
-    target world's version before relying on it, it may need a newer
-    build for current Minecraft versions.
+    generates its End dimension for full effect. Confirmed 2026-08-20
+    against a real boot log: `setup` (scoreboard init + schedule-
+    function), `tick`, `wait_for_player`, and `link_rift` (all
+    `run function`/`schedule function`) fail — same root cause as
+    Incendium/Terralith above, `Scoreboard`/`Schedule`/`Function` are
+    all on PaperMC's documented Folia-disabled-commands list, not
+    fixable by picking a different build. This breaks the rift-linking
+    mechanic specifically; End terrain/structure generation is separate
+    data-driven worldgen content and should be unaffected.
 
 # The dozen entries below were requested by name from Vanilla Tweaks
 # (vanillatweaks.net) — Double Shulker Shells, Player Head Drops,
