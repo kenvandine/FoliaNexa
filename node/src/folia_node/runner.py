@@ -100,6 +100,21 @@ class JVMRunner:
         except subprocess.TimeoutExpired:
             self._process.kill()
 
+    def request_stop(self) -> None:
+        """Sends SIGTERM without waiting for exit — pairs with a
+        concurrent, already-in-flight `wait()` call elsewhere (agent.py's
+        main loop, blocked in `runner.wait()` when a shutdown signal
+        arrives) rather than blocking here too, which would mean two
+        threads/contexts both calling the underlying subprocess.Popen's
+        own wait() concurrently. SIGTERM is what actually matters here —
+        it's what triggers Paper/Folia's own JVM shutdown hook (world
+        save, clean close); nothing about that depends on any in-game
+        command, so it works even though Folia disables the `save-all`
+        command itself (confirmed via PaperMC's own docs) and even if
+        RCON is unreachable."""
+        if self._process is not None and self._process.poll() is None:
+            self._process.terminate()
+
     @property
     def pid(self) -> int | None:
         return self._process.pid if self._process else None

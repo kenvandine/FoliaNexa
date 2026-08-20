@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import os
+import signal
 import time
 from pathlib import Path
 
@@ -57,10 +58,40 @@ def main() -> None:
     # world's container last started (PLAN.md §9).
     sync_world_config(world_dir, assignment)
 
+    # A world's container is restarted/stopped via a graceful LXD action
+    # (force=false — see LXDClient.restart_container's own comment) that
+    # sends a termination signal and waits before giving up and killing
+    # everything outright. Without this handler, this process (this
+    # snap's PID 1 inside the container) had no reaction to that signal
+    # beyond Python's default "just die" — the JVM child was orphaned,
+    # never itself signaled, and only actually stopped once LXD's own
+    # timeout expired and force-killed the whole cgroup, giving Paper/
+    # Folia's shutdown hook (the thing that actually saves the world —
+    # not the `save-all` command, which Folia disables outright, per
+    # PaperMC's own docs) no real chance to run. request_stop() just
+    # forwards SIGTERM to the JVM non-blockingly; the main loop's
+    # runner.wait() below (already in progress) picks up the exit once
+    # Paper's own shutdown sequence finishes and the process actually
+    # exits — no separate wait here, which would otherwise be a second,
+    # concurrent wait() on the same subprocess.
+    shutdown_requested = False
+    current_runner: JVMRunner | None = None
+
+    def _handle_shutdown_signal(signum, _frame):
+        nonlocal shutdown_requested
+        logger.info("received signal %s — requesting graceful JVM shutdown", signal.Signals(signum).name)
+        shutdown_requested = True
+        if current_runner is not None:
+            current_runner.request_stop()
+
+    signal.signal(signal.SIGTERM, _handle_shutdown_signal)
+    signal.signal(signal.SIGINT, _handle_shutdown_signal)
+
     while True:
         command = build_java_command(java_bin, jar_path, memory_gb=_detect_memory_gb())
         logger.info("starting JVM: %s", " ".join(command))
         runner = JVMRunner(command, cwd=world_dir, on_line=state.console_log.append)
+        current_runner = runner
         runner.start()
 
         with state.lock:
@@ -69,6 +100,10 @@ def main() -> None:
             state.started_at = time.time()
 
         exit_code = runner.wait()
+
+        if shutdown_requested:
+            logger.info("world '%s' shut down cleanly on signal, exiting agent", assignment.world_name)
+            return
 
         with state.lock:
             state.phase = "crashed"

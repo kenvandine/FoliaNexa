@@ -229,11 +229,20 @@ class LXDClient:
                 self._wait_operation(client, resp.json())
 
     def restart_container(self, host: Host, name: str) -> None:
+        # force=false, not true — LXD's own semantics for this flag are
+        # "skip the graceful signal-and-wait sequence, kill it now", which
+        # for a Minecraft/Folia JVM means no chance for Paper's SIGTERM
+        # shutdown hook (world save, clean close) to run before the
+        # process is gone. false sends the graceful stop signal first and
+        # waits up to `timeout` seconds before forcing — routers/worlds.py
+        # additionally issues an RCON `save-all` right before calling
+        # this, as a save that doesn't depend on the JVM's signal handling
+        # working at all; this flag is the complementary half of that.
         with self._client_for(host) as client:
             resp = client.put(
                 f"/1.0/instances/{name}/state",
                 params={"project": host.project},
-                json={"action": "restart", "timeout": 30, "force": True},
+                json={"action": "restart", "timeout": 30, "force": False},
             )
             if resp.status_code not in (200, 202):
                 raise LXDError(f"restart of '{name}' on '{host.name}' failed: {resp.text}")
@@ -241,11 +250,13 @@ class LXDClient:
                 self._wait_operation(client, resp.json())
 
     def stop_container(self, host: Host, name: str) -> None:
+        # force=false — see restart_container's comment above, same
+        # graceful-shutdown reasoning applies here.
         with self._client_for(host) as client:
             resp = client.put(
                 f"/1.0/instances/{name}/state",
                 params={"project": host.project},
-                json={"action": "stop", "timeout": 30, "force": True},
+                json={"action": "stop", "timeout": 30, "force": False},
             )
             if resp.status_code not in (200, 202):
                 raise LXDError(f"stop of '{name}' on '{host.name}' failed: {resp.text}")

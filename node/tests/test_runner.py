@@ -79,3 +79,26 @@ def test_jvm_runner_stop_terminates_running_process(tmp_path):
     assert runner.is_running()
     runner.stop(timeout=5)
     assert not runner.is_running()
+
+
+def test_jvm_runner_request_stop_sends_sigterm_without_blocking(tmp_path):
+    # Mirrors agent.py's actual usage: request_stop() sends the signal and
+    # returns immediately, and something else (here, the test itself —
+    # in agent.py, the main loop's own already-in-progress runner.wait())
+    # is what observes the process actually exiting.
+    script = tmp_path / "sleeper.sh"
+    script.write_text("#!/bin/sh\nsleep 30\n")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+
+    runner = JVMRunner([str(script)], cwd=tmp_path)
+    runner.start()
+    assert runner.is_running()
+    runner.request_stop()
+    code = runner.wait()
+    assert code != 0
+    assert not runner.is_running()
+
+
+def test_jvm_runner_request_stop_is_a_noop_before_start(tmp_path):
+    runner = JVMRunner(["/bin/true"], cwd=tmp_path)
+    runner.request_stop()  # must not raise even though start() was never called
