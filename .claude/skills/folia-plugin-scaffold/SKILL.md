@@ -26,7 +26,7 @@ Don't start writing files until you know:
    existing catalog entry (grep `mgmt/src/folia_mgmt/catalog.yaml` in
    this repo, or `folia-nexa-mgmt plugins list` against a running
    mgmt). PascalCase, matching existing entries (`LuckPerms`,
-   `ServerSelector`).
+   `DeluxeHub`).
 3. **Where the new repo goes.** Its own git repository, sibling to
    `folia-server`, **not** nested inside it — ask the developer for a
    path (e.g. `~/src/github/<their-username>/<repo-name>`) if they

@@ -111,7 +111,7 @@ def test_sync_luckperms_configs_only_touches_running_worlds_with_plugin():
         World(
             name="world-nether", type=WorldType.nether, cpu_cores=1, memory_gb=1,
             phase=WorldPhase.running, host_name="node-a", container_name="world-nether",
-            plugins=["Spark"],  # no LuckPerms
+            plugins=["Chunky"],  # no LuckPerms
         )
     )
     session.add(

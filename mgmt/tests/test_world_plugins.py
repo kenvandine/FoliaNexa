@@ -41,14 +41,14 @@ def test_create_world_accepts_catalog_plugins(client, operator_token):
             "type": "overworld",
             "cpu_cores": 4,
             "memory_gb": 8,
-            "plugins": ["LuckPerms", "Spark"],
+            "plugins": ["LuckPerms", "Chunky"],
         },
         headers=auth_header(operator_token),
     )
     assert resp.status_code == 200, resp.text
     # FoliaNexaStats/HuskHomes are catalog defaults (default_for_all_worlds)
     # and get appended after the explicit selections regardless of request.
-    assert resp.json()["plugins"] == ["LuckPerms", "Spark", "FoliaNexaStats", "HuskHomes"]
+    assert resp.json()["plugins"] == ["LuckPerms", "Chunky", "FoliaNexaStats", "HuskHomes"]
 
 
 def test_create_world_with_plugins_requires_public_url(client, operator_token, app):
@@ -102,7 +102,7 @@ def test_plugins_manifest_generated_from_catalog(client, admin_token, operator_t
             "type": "overworld",
             "cpu_cores": 4,
             "memory_gb": 8,
-            "plugins": ["LuckPerms", "Spark"],
+            "plugins": ["LuckPerms", "Chunky"],
         },
         headers=auth_header(operator_token),
     )
@@ -112,7 +112,7 @@ def test_plugins_manifest_generated_from_catalog(client, admin_token, operator_t
     assert resp.status_code == 200, resp.text
     manifest = resp.json()
     names = {entry["name"] for entry in manifest}
-    assert names == {"LuckPerms", "Spark", "FoliaNexaStats", "HuskHomes"}
+    assert names == {"LuckPerms", "Chunky", "FoliaNexaStats", "HuskHomes"}
     for entry in manifest:
         assert entry["url"].startswith("http")
 

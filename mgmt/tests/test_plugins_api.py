@@ -13,7 +13,7 @@ def test_list_plugins_returns_catalog(client, viewer_token):
     assert resp.status_code == 200
     ids = {p["id"] for p in resp.json()}
     assert "LuckPerms" in ids
-    assert "Spark" in ids
+    assert "Chunky" in ids
 
 
 def test_list_plugins_filters_by_category(client, viewer_token):
@@ -49,7 +49,7 @@ def test_list_plugins_marks_which_ids_are_overridden(client, viewer_token, opera
     resp = client.get("/api/v1/plugins", headers=auth_header(viewer_token))
     by_id = {p["id"]: p for p in resp.json()}
     assert by_id["LuckPerms"]["is_override"] is True
-    assert by_id["Spark"]["is_override"] is False
+    assert by_id["Chunky"]["is_override"] is False
 
 
 def test_put_plugin_adds_a_new_entry(client, operator_token, viewer_token):

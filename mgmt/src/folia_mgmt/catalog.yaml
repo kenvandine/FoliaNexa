@@ -24,39 +24,35 @@
     resolves to the current build, so re-check the version/sha256
     before assuming this stays pinned over time.
 
-- id: Spark
-  category: diagnostics
-  source: external
-  version: "latest"
-  download_url: "https://sparkapi.lucko.me/download/bukkit"
-  sha256: "5fb98558bf3e8cdf0a4558665b97af632fd35762a75b7f4bda3deeb30cca685c"
-  homepage: "https://spark.lucko.me"
-  verified: true
-  notes: >
-    Verified 2026-08-15. This is a rolling "latest" URL, not a pinned
-    build — the sha256 reflects what was downloaded that day and WILL
-    drift as upstream ships new builds. If you need a truly pinned
-    version, mirror the jar yourself and point download_url at that
-    instead.
-
-- id: ServerSelector
+- id: DeluxeHub
   category: lobby
   source: external
-  version: "2.0"
-  download_url: "https://cdn.modrinth.com/data/em8DRVZA/versions/I2G16GEZ/Crqzys_Server_Selector-2.0.jar"
-  sha256: "1e69e8c2997420ba301c322ad4b82fbc0a3148b2140cd032f981cd1af59766c0"
-  homepage: "https://modrinth.com/plugin/crqzys-server-selector"
+  version: "3.8.2"
+  download_url: "https://cdn.modrinth.com/data/FiktZRzq/versions/kwdtnLpk/DeluxeHub-3.8.2.jar"
+  sha256: "8a217a8f4d9ad01b86d5d77a1fa939d51ab7b6213ece7e96b689c95008b013ba"
+  homepage: "https://modrinth.com/plugin/deluxehub"
   verified: true
   notes: >
-    Verified 2026-08-15 — downloaded from Modrinth and sha256'd for real.
-    Installs on the lobby world itself (not the proxy) and switches
-    players to other worlds over the standard BungeeCord/Velocity plugin
-    messaging channel, so it needs no folia-nexa-proxy changes — routes
-    already register every running world by name (see PLAN.md §14B), and
-    that's exactly what this plugin's per-entry `id:` in its config.yml
-    should reference. Small, single-maintainer plugin (a few dozen
-    Modrinth downloads at time of writing) — the download and jar
-    contents are verified, its production-readiness at scale isn't.
+    Verified 2026-08-20 — downloaded from Modrinth's CDN; sha1 matched
+    Modrinth's published hash, sha256 computed directly, and plugin.yml
+    inspected inside the jar confirming folia-supported: true. Replaces
+    the ServerSelector entry that used to be here — that plugin never
+    shipped a Folia build even in its newest release (checked directly
+    via Modrinth's API), and this catalog's operator confirmed it as a
+    hard blocker rather than something to carry a caveat on, unlike a
+    few other entries in this catalog. Pinned to 3.8.2 specifically, not
+    Modrinth's nominal "latest" (3.8.4) — that build's own listed game
+    versions regressed to targeting old 1.19.x releases in parallel;
+    3.8.2 is the newest build that actually tags MC 26.2. DeluxeHub is a
+    broader hub-management plugin (AFK handling, join/leave, spawn
+    protection, a server-switcher menu among its features), not a
+    narrow like-for-like ServerSelector swap — its own config.yml shape
+    and commands haven't been mapped against docs/game-master-howto.md's
+    §5 ServerSelector walkthrough or docs/plugin-dev/02-plugin-
+    architecture.md's worked example yet; both still describe
+    ServerSelector's actual command surface (`/selector reload` etc)
+    and need rewriting against DeluxeHub's real config/commands before
+    they're accurate again.
 
 - id: CampusLobby
   category: lobby
@@ -490,40 +486,22 @@
     plugin.yml (checked directly) — verify Folia compatibility before
     relying on it.
 
-- id: AngelChest
-  category: gameplay-tweaks
+- id: DeadChest
+  category: protection
   source: external
-  version: "13.9.4"
-  download_url: "https://api.spiget.org/v2/resources/60383/download"
-  sha256: "95f221a84e61f4fb5c04cf5d978c3ae4908da85f779dc4e69eb3f9ecbf733282"
-  homepage: "https://www.spigotmc.org/resources/angelchest-free.60383/"
+  version: "4.30.0"
+  download_url: "https://cdn.modrinth.com/data/pKqnV03Y/versions/mBSgqYZH/dead-chest-4.30.0.jar"
+  sha256: "88c6f1912c70ee4a13ccbad4715a57e38a218ea693e8f608ffd4ad3bf459705e"
+  homepage: "https://modrinth.com/plugin/dead-chest"
   verified: true
   notes: >
-    Verified 2026-08-18 — downloaded via Spiget's resource-download
-    proxy (not on Modrinth or Hangar) and sha256'd directly. This is
-    "AngelChest Free" specifically — a separately-sold "AngelChest Plus"
-    resource also exists on SpigotMC and is not what this entry points
-    at. Death chest/grave plugin with economy-plugin integration (Vault-
-    aware, same as ChestShop/EssentialsX above). No folia-supported key
-    in plugin.yml (checked directly) — verify Folia compatibility before
-    relying on it.
-
-- id: ImageOnMap
-  category: vanity
-  source: external
-  version: "4.2.2"
-  download_url: "https://api.spiget.org/v2/resources/26585/download"
-  sha256: "97de7b46b1c287c848a0894d91fd03eeb2a81a0766a0ec5a3e3122ab62dd3285"
-  homepage: "https://www.spigotmc.org/resources/imageonmap.26585/"
-  verified: true
-  notes: >
-    Verified 2026-08-18 — downloaded via Spiget's resource-download
-    proxy (not on Modrinth or Hangar) and sha256'd directly. Renders an
-    arbitrary image (URL or uploaded file) onto in-game map items/item
-    frames. Last updated 2022 per its SpigotMC listing — effectively
-    unmaintained; no folia-supported key in plugin.yml (checked
-    directly). Verify Folia compatibility before relying on it, more so
-    than most other placeholder-flagged entries here given the staleness.
+    Verified 2026-08-20 — downloaded from Modrinth's CDN; sha1 matched
+    Modrinth's published hash, sha256 computed directly, and plugin.yml
+    inspected inside the jar confirming folia-supported: true. Replaces
+    the AngelChest entry that used to be here — AngelChest's own author
+    said Folia support would come "once docs were available" back in
+    2024 and never shipped it; DeadChest is the same death-chest/
+    graveyard category with a real, current (April 2026) Folia build.
 
 - id: BlockLocker
   category: protection
@@ -540,44 +518,6 @@
     Sign-based chest/door protection, UUID-compatible. Hangar's listing
     tags SUPPORTS_FOLIA and plugin.yml itself declares
     folia-supported: true, confirmed by inspecting the jar.
-
-- id: MinecartSpeedPlus
-  category: gameplay-tweaks
-  source: external
-  version: "18.0.1"
-  download_url: "https://api.spiget.org/v2/resources/69639/download"
-  sha256: "32284d9c2c88a90cb14d2912de21b48d9eef7fbeb79b0fc7bf54c43033ce37ca"
-  homepage: "https://www.spigotmc.org/resources/minecart-speed-plus.69639/"
-  verified: true
-  notes: >
-    Verified 2026-08-18 — downloaded via Spiget's resource-download
-    proxy and sha256'd directly. Note there's an unrelated "Minecart
-    Speed Plus" project on Modrinth (slug minecart-speed-plus) too — that
-    one is a Fabric client/server mod by a different author, not this
-    Bukkit plugin; this entry deliberately points at the SpigotMC
-    original instead. Last updated 2021 per its listing — no
-    folia-supported key in plugin.yml (checked directly). Verify Folia
-    compatibility before relying on it, more so than most other
-    placeholder-flagged entries here given the staleness.
-
-- id: InvisibleItemFrames
-  category: vanity
-  source: external
-  version: "1.3.0"
-  download_url: "https://api.spiget.org/v2/resources/85365/download"
-  sha256: "f85802d23596664a3708ecf438063f80cb7c78100352357cea703a202aba3732"
-  homepage: "https://www.spigotmc.org/resources/invisible-item-frames.85365/"
-  verified: true
-  notes: >
-    Verified 2026-08-18 — downloaded via Spiget's resource-download
-    proxy and sha256'd directly. Several near-identical SpigotMC
-    resources share this name/idea (craftable invisible item frames);
-    this pins the one whose in-jar plugin.yml name field actually reads
-    "InvisibleItemFrames" (id 85365) rather than two smaller,
-    differently-named alternatives (id 89384 "InvisItemFrames", id 96337
-    "InvisibleFrame") found during the same search. Last updated 2021 —
-    no folia-supported key in plugin.yml (checked directly). Verify
-    Folia compatibility before relying on it.
 
 - id: RealisticSeasons
   category: gameplay-tweaks
@@ -604,6 +544,23 @@
     same-name upload, not a real distribution of Casper Swagerman's
     plugin. Do not point download_url at it. A real download needs a
     purchased license from the SpigotMC listing above.
+
+- id: ZInvisItemFrames
+  category: vanity
+  source: external
+  version: "1.7"
+  download_url: "https://cdn.modrinth.com/data/mLi3s47U/versions/6wutuFM7/ZInvisItemFrames-1.7.jar"
+  sha256: "922c48f8489b42d3910240a128b68f6a3751e4714691d352091f3adf10bfeecd"
+  homepage: "https://modrinth.com/plugin/zinvisitemframes"
+  verified: true
+  notes: >
+    Verified 2026-08-20 — downloaded from Modrinth's CDN; sha1 matched
+    Modrinth's published hash, sha256 computed directly, and plugin.yml
+    inspected inside the jar confirming folia-supported: true. Replaces
+    the InvisibleItemFrames entry that used to be here — that plugin's
+    original SpigotMC listing never shipped Folia support; this is a
+    separate, actively-maintained (June 2026) plugin covering the same
+    "make item frames invisible" niche, tagged for MC 26.2.
 
 - id: WorldEdit
   category: world-editing

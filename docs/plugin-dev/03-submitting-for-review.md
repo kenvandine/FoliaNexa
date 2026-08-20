@@ -13,7 +13,7 @@ Your plugin gets its own git repository — **not** a directory inside
 `folia-server`. The catalog (`mgmt/src/folia_mgmt/catalog.yaml`) is
 just an index of `id → download_url`; it doesn't care where that URL
 points, and this repo doesn't build or host plugin jars for anyone
-(PLAN.md §14A). See the catalog's `ServerSelector`/`LuckPerms`/etc
+(PLAN.md §14A). See the catalog's `DeluxeHub`/`LuckPerms`/etc
 entries for what a real, verified entry looks like — an `id`, a real
 `download_url` and `sha256`, and `verified: true` once you've actually
 downloaded and hashed the jar yourself.
@@ -33,7 +33,7 @@ A GitHub Release with the jar attached as a release asset is the
 simplest option if your repo is on GitHub — `gh release create v0.1.0
 build/libs/my-folianexa-plugin-0.1.0.jar` gives you a permanent
 `github.com/<you>/<repo>/releases/download/v0.1.0/<jar>` URL. Modrinth/
-Hangar work too (see the catalog's `ServerSelector` entry for what that
+Hangar work too (see the catalog's `DeluxeHub` entry for what that
 looks like) — anywhere that gives you a stable direct-download link is
 fine.
 

@@ -147,7 +147,7 @@ def test_sync_stats_configs_only_touches_running_worlds_with_plugin(tmp_path):
         World(
             name="world-nether", type=WorldType.nether, cpu_cores=1, memory_gb=1,
             phase=WorldPhase.running, host_name="node-a", container_name="world-nether",
-            plugins=["Spark"],  # no FoliaNexaStats
+            plugins=["Chunky"],  # no FoliaNexaStats
         )
     )
     session.add(

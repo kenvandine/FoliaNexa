@@ -23,15 +23,15 @@ def _world(name="world-overworld", plugins=None, host_name="node-a", container_n
         host_name=host_name,
         container_name=container_name,
         address="10.0.1.20:25565",
-        # Spark, not LuckPerms — LuckPerms is one of the two mgmt-managed
+        # Chunky, not LuckPerms — LuckPerms is one of the two mgmt-managed
         # plugin ids (plugin_files.MANAGED_PLUGIN_IDS) this browser now
         # refuses to serve; see the dedicated managed-plugin tests below
         # for that behavior.
-        plugins=plugins or ["Spark"],
+        plugins=plugins or ["Chunky"],
     )
 
 
-def _files_url(world="world-overworld", plugin="Spark", path=None):
+def _files_url(world="world-overworld", plugin="Chunky", path=None):
     base = f"/api/v1/worlds/{world}/plugins/{plugin}/files"
     return f"{base}/{path}" if path else base
 
@@ -41,8 +41,8 @@ def test_list_files_merges_live_and_override(client, operator_token, viewer_toke
     db_session.add(_world())
     db_session.commit()
 
-    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Spark/config.yml")] = b"live: true"
-    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Spark/lang/en.yml")] = b"hello: world"
+    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Chunky/config.yml")] = b"live: true"
+    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Chunky/lang/en.yml")] = b"hello: world"
 
     put_resp = client.put(
         _files_url(path="lang/en.yml"), json={"content": "hello: overridden"}, headers=auth_header(operator_token)
@@ -67,8 +67,8 @@ def test_list_files_recurses_through_empty_directory_without_misclassifying_it(
     db_session.add(_world())
     db_session.commit()
 
-    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Spark/config.yml")] = b"live: true"
-    fake_lxd.container_dirs.add(("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Spark/lang"))
+    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Chunky/config.yml")] = b"live: true"
+    fake_lxd.container_dirs.add(("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Chunky/lang"))
 
     resp = client.get(_files_url(), headers=auth_header(viewer_token))
     assert resp.status_code == 200, resp.text
@@ -80,7 +80,7 @@ def test_get_file_prefers_override_over_live(client, operator_token, viewer_toke
     db_session.add(_host())
     db_session.add(_world())
     db_session.commit()
-    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Spark/config.yml")] = b"live: true"
+    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Chunky/config.yml")] = b"live: true"
 
     client.put(_files_url(path="config.yml"), json={"content": "override: true"}, headers=auth_header(operator_token))
 
@@ -96,7 +96,7 @@ def test_get_file_falls_back_to_live(client, viewer_token, db_session, fake_lxd)
     db_session.add(_host())
     db_session.add(_world())
     db_session.commit()
-    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Spark/config.yml")] = b"live: true"
+    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Chunky/config.yml")] = b"live: true"
 
     resp = client.get(_files_url(path="config.yml"), headers=auth_header(viewer_token))
     assert resp.status_code == 200
@@ -109,7 +109,7 @@ def test_get_file_detects_binary(client, viewer_token, db_session, fake_lxd):
     db_session.add(_host())
     db_session.add(_world())
     db_session.commit()
-    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Spark/data.bin")] = b"\xff\xfe\x00\x01"
+    fake_lxd.container_files[("node-a", "world-overworld", "/var/snap/folia-nexa-node/common/world/plugins/Chunky/data.bin")] = b"\xff\xfe\x00\x01"
 
     resp = client.get(_files_url(path="data.bin"), headers=auth_header(viewer_token))
     assert resp.status_code == 200
@@ -129,7 +129,7 @@ def test_get_file_404_when_neither_exists(client, viewer_token, db_session):
 
 def test_put_file_rejects_undeclared_plugin(client, operator_token, db_session):
     db_session.add(_host())
-    db_session.add(_world(plugins=["Spark"]))
+    db_session.add(_world(plugins=["Chunky"]))
     db_session.commit()
 
     resp = client.put(
@@ -155,7 +155,7 @@ def test_delete_reverts_override(client, operator_token, viewer_token, db_sessio
     db_session.add(_host())
     db_session.add(_world())
     db_session.commit()
-    live_path = "/var/snap/folia-nexa-node/common/world/plugins/Spark/config.yml"
+    live_path = "/var/snap/folia-nexa-node/common/world/plugins/Chunky/config.yml"
     fake_lxd.container_files[("node-a", "world-overworld", live_path)] = b"live: true"
     # Simulate the live push failing so the container's own copy stays
     # untouched — proving DELETE reverts to the live file, not to whatever
@@ -236,7 +236,7 @@ def test_get_file_rejects_path_traversal_over_http(client, viewer_token, db_sess
     db_session.commit()
 
     resp = client.get(
-        "/api/v1/worlds/world-overworld/plugins/Spark/files/..%2F..%2F..%2Fetc%2Fshadow",
+        "/api/v1/worlds/world-overworld/plugins/Chunky/files/..%2F..%2F..%2Fetc%2Fshadow",
         headers=auth_header(viewer_token),
     )
     assert resp.status_code == 400
@@ -248,7 +248,7 @@ def test_put_file_rejects_path_traversal_over_http(client, operator_token, db_se
     db_session.commit()
 
     resp = client.put(
-        "/api/v1/worlds/world-overworld/plugins/Spark/files/..%2F..%2Fescape.yml",
+        "/api/v1/worlds/world-overworld/plugins/Chunky/files/..%2F..%2Fescape.yml",
         json={"content": "pwned"},
         headers=auth_header(operator_token),
     )

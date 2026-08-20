@@ -24,7 +24,7 @@ def _enroll_host(client, admin_token):
 def test_patch_updates_plugins_and_merges_catalog_defaults(client, operator_token):
     client.post(
         "/api/v1/worlds",
-        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8, "plugins": ["Spark"]},
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8, "plugins": ["Chunky"]},
         headers=auth_header(operator_token),
     )
     resp = client.patch(

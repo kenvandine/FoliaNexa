@@ -594,10 +594,11 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   picker) — hit end-to-end with curl against a real running mgmt server
   (login, list catalog, create a world with `plugins`, confirm the exact
   JSON body the dashboard's picker sends is accepted). The catalog's own
-  data is a mix: `LuckPerms`, `Spark`, `BlueMap`, and `ServerSelector`
-  have real, curl-verified (or downloaded-and-sha256'd, for
-  `ServerSelector`) download URLs and checksums; the rest are
-  placeholders (`download_url: null`) pending real vetting —
+  data is a mix: most entries have real, curl-verified or downloaded-
+  and-sha256'd download URLs and checksums (`verified: true`); a
+  handful (`HuskClaims`, `HuskPortals`, `RealisticSeasons`) are still
+  placeholders (`download_url: null`, `verified: false`) pending a real
+  license/download resolution —
 - The data pack catalog (`datapacks.yaml` + override merge,
   `/api/v1/datapacks`, world-creation validation, `/datapacks-manifest`
   generation, the CLI's `datapacks list`/`show`, and the dashboard's Data

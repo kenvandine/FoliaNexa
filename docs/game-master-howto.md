@@ -95,8 +95,7 @@ folia-nexa-mgmt worlds create world-minigame-parkour \
   --cpu 2 \
   --memory 3GB \
   --labels cpu_type=e-core \
-  --plugin LuckPerms \
-  --plugin Spark
+  --plugin LuckPerms
 ```
 
 (Or the dashboard's **Declare a world** form — same fields, plus the
@@ -192,7 +191,7 @@ To change the loadout, delete and recreate the world:
 
 ```bash
 folia-nexa-mgmt worlds create world-minigame-parkour --type minigame --cpu 2 --memory 3GB \
-  --plugin LuckPerms --plugin Spark
+  --plugin LuckPerms
 ```
 
 after deleting the old one — see below. If the world has player-created

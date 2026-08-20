@@ -15,7 +15,7 @@ def test_load_catalog_returns_bundled_entries():
     entries = load_catalog(Settings())
     ids = {e.id for e in entries}
     assert "LuckPerms" in ids
-    assert "Spark" in ids
+    assert "Chunky" in ids
 
 
 def test_load_catalog_sorted_by_id_case_insensitive():
@@ -35,8 +35,8 @@ def test_get_plugin_unknown_id_returns_none():
     assert get_plugin(Settings(), "NotARealPlugin") is None
 
 
-def test_server_selector_is_a_verified_lobby_entry():
-    entry = get_plugin(Settings(), "ServerSelector")
+def test_deluxehub_is_a_verified_lobby_entry():
+    entry = get_plugin(Settings(), "DeluxeHub")
     assert entry is not None
     assert entry.category == "lobby"
     assert entry.verified is True
