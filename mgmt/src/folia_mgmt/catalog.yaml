@@ -444,13 +444,40 @@
   notes: >
     Verified 2026-08-18 — downloaded from Modrinth's CDN and sha256'd
     directly. Sign-based player shops; hard-depends on a Vault-API
-    provider being present on the same world (either the Vault or
-    Vault-Unlocked entry in this catalog, plus an economy plugin such as
-    EssentialsX below) to actually move currency. Tags the "folia"
-    loader on Modrinth; plugin.yml declares folia-supported: true,
-    confirmed by inspecting the jar. Modrinth marks this build
-    "pre-release," not a tagged stable — the last plain "release"-type
-    build is older; check before relying on it in production.
+    provider being present on the same world (Vault-Unlocked in this
+    catalog, plus an economy plugin such as EssentialsC below) to
+    actually move currency. Tags the "folia" loader on Modrinth;
+    plugin.yml declares folia-supported: true, confirmed by inspecting
+    the jar. Modrinth marks this build "pre-release," not a tagged
+    stable — the last plain "release"-type build is older; check before
+    relying on it in production.
+
+- id: PlayerVaults
+  category: storage
+  source: external
+  version: "1.0.1"
+  download_url: "https://cdn.modrinth.com/data/t1rxso3U/versions/XiEBzF3y/PlayerVaultsX-1.0.1.jar"
+  sha256: "cb0e2b9b70cbbea3a74b855bc19b23855af9052b9f3d71b4aeed6300887a8492"
+  homepage: "https://modrinth.com/plugin/playervaultsx"
+  verified: true
+  notes: >
+    Verified 2026-08-20 — downloaded from Modrinth's CDN ("PlayerVaultsX",
+    not the original Kickash32/GeekPlugins PlayerVaults — that one has no
+    Modrinth listing); sha1 matched Modrinth's published hash, sha256
+    computed directly. Gives every player extra personal storage vaults
+    via /pv <number>, plus an admin view/edit permission for other
+    players' vaults. Modrinth tags "folia" as a supported loader for
+    this project, but that does NOT hold up under direct inspection —
+    checked plugin.yml inside both published versions (1.0.0 and this
+    one, 1.0.1) directly and neither declares folia-supported: true
+    anywhere; the Modrinth tag looks to be uploader-asserted rather than
+    validated against the jar. Given this codebase's own repeated
+    experience this cycle (Folia hard-rejects any plugin lacking that
+    flag at boot, not a soft warning), expect this to fail to load on a
+    real Folia world until proven otherwise by an actual boot test. Also
+    a very young project (two releases total, first three months old as
+    of this writing, generic "PlayerVaultsX" org as author rather than a
+    named maintainer) — track record is thin either way.
 
 - id: EssentialsC
   category: economy
