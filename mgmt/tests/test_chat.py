@@ -8,6 +8,20 @@ import pytest
 from helpers import auth_header
 
 
+def _enroll_host(client, admin_token):
+    join = client.post("/api/v1/hosts/join-token", headers=auth_header(admin_token)).json()["token"]
+    body = {
+        "name": "node-a",
+        "address": "10.0.1.11:8443",
+        "project": "folia",
+        "lxd_trust_token": "good-token",
+        "capacity": {"cpu_cores": 6, "memory_gb": 12},
+        "labels": {},
+    }
+    resp = client.post("/api/v1/hosts/enroll", json=body, headers=auth_header(join))
+    assert resp.status_code == 200, resp.text
+
+
 class _FakeDiscordWebhookServer:
     """A real local HTTP server standing in for Discord's webhook
     endpoint, so report_chat's outbound delivery is tested against a
@@ -140,7 +154,7 @@ def test_relay_chat_queues_for_mapped_world_channel(client, operator_token, view
     assert resp.json() == {"queued": True}
 
     pending = client.get("/api/v1/chat/pending", headers=auth_header(viewer_token))
-    assert pending.json() == [{"world": "world-lobby", "author": "someone", "message": "hey"}]
+    assert pending.json() == [{"world": "world-lobby", "author": "someone", "message": "hey", "kind": "discord"}]
 
 
 def test_relay_chat_wildcard_channel_queues_with_null_world(client, operator_token, viewer_token):
@@ -155,7 +169,7 @@ def test_relay_chat_wildcard_channel_queues_with_null_world(client, operator_tok
         headers=auth_header(operator_token),
     )
     pending = client.get("/api/v1/chat/pending", headers=auth_header(viewer_token))
-    assert pending.json() == [{"world": None, "author": "someone", "message": "hey all"}]
+    assert pending.json() == [{"world": None, "author": "someone", "message": "hey all", "kind": "discord"}]
 
 
 def test_relay_chat_unconfigured_channel_is_not_queued(client, operator_token, viewer_token):
@@ -184,6 +198,68 @@ def test_pending_chat_drains_the_queue(client, operator_token, viewer_token):
     assert len(first.json()) == 1
     second = client.get("/api/v1/chat/pending", headers=auth_header(viewer_token))
     assert second.json() == []
+
+
+def test_broadcast_queues_a_cluster_wide_message_with_null_world(client, operator_token, viewer_token):
+    resp = client.post(
+        "/api/v1/chat/broadcast",
+        json={"message": "proxy restarting in 5 minutes"},
+        headers=auth_header(operator_token),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"queued": True}
+
+    pending = client.get("/api/v1/chat/pending", headers=auth_header(viewer_token))
+    assert pending.json() == [
+        {"world": None, "author": "op", "message": "proxy restarting in 5 minutes", "kind": "broadcast"}
+    ]
+
+
+def test_broadcast_queues_for_a_specific_declared_world(client, admin_token, operator_token, viewer_token):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    resp = client.post(
+        "/api/v1/chat/broadcast",
+        json={"world": "world-overworld", "message": "restarting shortly"},
+        headers=auth_header(operator_token),
+    )
+    assert resp.status_code == 200, resp.text
+
+    pending = client.get("/api/v1/chat/pending", headers=auth_header(viewer_token))
+    assert pending.json() == [
+        {"world": "world-overworld", "author": "op", "message": "restarting shortly", "kind": "broadcast"}
+    ]
+
+
+def test_broadcast_404s_for_unknown_world(client, operator_token):
+    resp = client.post(
+        "/api/v1/chat/broadcast",
+        json={"world": "no-such-world", "message": "hi"},
+        headers=auth_header(operator_token),
+    )
+    assert resp.status_code == 404
+
+
+def test_broadcast_rejects_empty_message(client, operator_token):
+    resp = client.post(
+        "/api/v1/chat/broadcast",
+        json={"message": "   "},
+        headers=auth_header(operator_token),
+    )
+    assert resp.status_code == 400
+
+
+def test_broadcast_requires_operator_role(client, viewer_token):
+    resp = client.post(
+        "/api/v1/chat/broadcast",
+        json={"message": "hi"},
+        headers=auth_header(viewer_token),
+    )
+    assert resp.status_code == 403
 
 
 def test_relay_chat_requires_operator(client, viewer_token):

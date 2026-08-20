@@ -206,6 +206,45 @@ def test_restart_world_calls_lxd_restart(client, admin_token, operator_token, fa
     assert ("node-a", "world-overworld") in fake_lxd.restarted
 
 
+def test_restart_pushes_config_to_the_container(client, admin_token, operator_token, fake_lxd):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    fake_lxd.updated_config.clear()  # placement itself already pushed config once
+    resp = client.post("/api/v1/worlds/world-overworld/restart", headers=auth_header(operator_token))
+    assert resp.status_code == 200, resp.text
+    assert ("node-a", "world-overworld") in fake_lxd.updated_config
+    pushed = fake_lxd.updated_config[("node-a", "world-overworld")]
+    assert pushed["user.folia.rcon-password"]
+
+
+def test_restart_backfills_rcon_password_for_world_declared_before_it_existed(
+    client, admin_token, operator_token, fake_lxd, db_session
+):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    world = db_session.exec(select(World).where(World.name == "world-overworld")).one()
+    world.rcon_password = None
+    db_session.add(world)
+    db_session.commit()
+
+    resp = client.post("/api/v1/worlds/world-overworld/restart", headers=auth_header(operator_token))
+    assert resp.status_code == 200, resp.text
+
+    db_session.expire_all()
+    world = db_session.exec(select(World).where(World.name == "world-overworld")).one()
+    assert world.rcon_password
+    pushed = fake_lxd.updated_config[("node-a", "world-overworld")]
+    assert pushed["user.folia.rcon-password"] == world.rcon_password
+
+
 def test_restart_requires_placed_world(client, operator_token):
     client.post(
         "/api/v1/worlds",

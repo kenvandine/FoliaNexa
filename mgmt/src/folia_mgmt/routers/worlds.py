@@ -336,11 +336,38 @@ def restart_world(
     name: str,
     session: Session = Depends(get_session),
     lxd_client: LXDClient = Depends(get_lxd_client),
+    settings: Settings = Depends(settings_dependency),
 ) -> dict[str, str]:
     """Restarts a world's container so it picks up config pushed by
     PATCH /{name} (new/changed plugins, datapacks, or server.properties)
-    — folia-nexa-node only re-syncs that config at its own startup."""
+    — folia-nexa-node only re-syncs that config at its own startup.
+
+    Also re-pushes this world's own LXD instance config (rcon-password
+    and everything else in scheduler._node_config) right before
+    restarting, backfilling rcon_password first if it's still unset —
+    confirmed the hard way: a world whose PATCH-time config push failed
+    (or predates a field like rcon_password entirely) used to stay
+    silently out of sync forever, since restart previously just cycled
+    the container trusting LXD's config was already correct. Restart is
+    now a second, independent chance for that config to actually land,
+    not just a process cycle.
+    """
     world, host = _host_and_world(session, name)
+    _ensure_rcon_password(world)
+    world.updated_at = utcnow()
+    session.add(world)
+    session.commit()
+    session.refresh(world)
+
+    try:
+        lxd_client.update_config(host, world.container_name, _node_config(session, world, settings))
+    except LXDError:
+        logger.exception(
+            "world '%s' config failed to push before restart — restarting anyway with "
+            "whatever config the container already has",
+            name,
+        )
+
     try:
         lxd_client.restart_container(host, world.container_name)
     except LXDError as exc:

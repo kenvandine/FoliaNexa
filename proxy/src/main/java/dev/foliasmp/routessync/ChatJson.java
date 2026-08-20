@@ -11,10 +11,14 @@ import java.util.List;
 /**
  * JSON for the chat bridge (PLAN.md §16): parses {@code GET
  * /api/v1/chat/pending}'s {@code [{"world": "..." | null, "author": "...",
- * "message": "..."}]} and builds the body {@code POST /api/v1/chat/report}
- * expects. Real Gson, same reasoning as {@link DisplayJson} — chat
- * messages are free-form player-typed text, not the alphanumeric-only
- * shape {@link RoutesJson}'s regex approach assumes.
+ * "message": "...", "kind": "discord" | "broadcast"}]} and builds the body
+ * {@code POST /api/v1/chat/report} expects. {@code kind} defaults to
+ * {@code "discord"} when absent, matching mgmt's own Pydantic default —
+ * lets an old mgmt build (predating operator broadcasts) keep working
+ * against a newer proxy build without every message needing the field.
+ * Real Gson, same reasoning as {@link DisplayJson} — chat messages are
+ * free-form player-typed text, not the alphanumeric-only shape
+ * {@link RoutesJson}'s regex approach assumes.
  */
 public final class ChatJson {
     private ChatJson() {
@@ -26,7 +30,8 @@ public final class ChatJson {
         for (JsonElement element : array) {
             JsonObject obj = element.getAsJsonObject();
             String world = (obj.has("world") && !obj.get("world").isJsonNull()) ? obj.get("world").getAsString() : null;
-            messages.add(new PendingChatMessage(world, obj.get("author").getAsString(), obj.get("message").getAsString()));
+            String kind = (obj.has("kind") && !obj.get("kind").isJsonNull()) ? obj.get("kind").getAsString() : "discord";
+            messages.add(new PendingChatMessage(world, obj.get("author").getAsString(), obj.get("message").getAsString(), kind));
         }
         return messages;
     }

@@ -14,15 +14,22 @@ class ChatJsonTest {
     @Test
     void parsesMultiplePendingMessages() {
         String body = "["
-                + "{\"world\": \"world-lobby\", \"author\": \"someone\", \"message\": \"hey\"},"
-                + "{\"world\": null, \"author\": \"other\", \"message\": \"hi all\"}"
+                + "{\"world\": \"world-lobby\", \"author\": \"someone\", \"message\": \"hey\", \"kind\": \"discord\"},"
+                + "{\"world\": null, \"author\": \"other\", \"message\": \"hi all\", \"kind\": \"broadcast\"}"
                 + "]";
         List<PendingChatMessage> messages = ChatJson.parsePending(body);
 
         assertEquals(2, messages.size());
-        assertEquals(new PendingChatMessage("world-lobby", "someone", "hey"), messages.get(0));
+        assertEquals(new PendingChatMessage("world-lobby", "someone", "hey", "discord"), messages.get(0));
         assertNull(messages.get(1).world());
         assertEquals("hi all", messages.get(1).message());
+        assertEquals("broadcast", messages.get(1).kind());
+    }
+
+    @Test
+    void missingKindDefaultsToDiscordForBackwardCompatibility() {
+        String body = "[{\"world\": null, \"author\": \"someone\", \"message\": \"hey\"}]";
+        assertEquals("discord", ChatJson.parsePending(body).get(0).kind());
     }
 
     @Test

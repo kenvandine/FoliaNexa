@@ -30,6 +30,15 @@ The pending queue is in-process only (app.state.chat_pending, same
 TTLCache-adjacent "fine at this scale" pattern as public_stats.py) — a
 message lost on a mgmt restart is an acceptable loss for chat, not
 something worth a DB table and its own migration.
+
+A third, operator-facing flow reuses the same pending queue: POST
+/chat/broadcast (dashboard's Broadcast card) lets an operator announce
+something (e.g. "proxy restarting in 5 minutes") to one world or, with
+world=None, every connected player cluster-wide in one shot — same
+delivery path as inbound Discord messages, so it doesn't depend on any
+world's RCON being reachable. The queued item's kind distinguishes the
+two so folia-routes-sync can render them differently (see
+PendingChatMessage's own docstring).
 """
 
 from __future__ import annotations
@@ -37,13 +46,13 @@ from __future__ import annotations
 import logging
 
 import httpx
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
-from sqlmodel import Session
+from sqlmodel import Session, select
 
 from folia_mgmt.auth import require_operator, require_viewer
 from folia_mgmt.db import get_session
-from folia_mgmt.models import ChatBridgeConfig, utcnow
+from folia_mgmt.models import ChatBridgeConfig, User, World, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -163,15 +172,59 @@ def relay_chat_from_discord(
         return RelayChatResponse(queued=False)
 
     pending: list[dict] = request.app.state.chat_pending
-    pending.append({"world": None if world == "*" else world, "author": body.discord_username, "message": body.message})
+    pending.append(
+        {"world": None if world == "*" else world, "author": body.discord_username, "message": body.message, "kind": "discord"}
+    )
     del pending[:-_MAX_PENDING]  # keep only the newest _MAX_PENDING if it overflowed
     return RelayChatResponse(queued=True)
+
+
+class BroadcastChatRequest(BaseModel):
+    world: str | None = None  # None = every connected player, cluster-wide
+    message: str
+
+
+class BroadcastChatResponse(BaseModel):
+    queued: bool
+
+
+@router.post("/broadcast", response_model=BroadcastChatResponse, dependencies=[Depends(require_operator)])
+def broadcast_chat(
+    body: BroadcastChatRequest,
+    request: Request,
+    user: User = Depends(require_operator),
+    session: Session = Depends(get_session),
+) -> BroadcastChatResponse:
+    """Operator-authored announcement (e.g. "restarting in 5 minutes"),
+    e.g. from the dashboard's Broadcast card. Rides the exact same
+    pending-queue/Velocity-delivery path as a Discord-relayed message
+    (folia-routes-sync's deliverPendingChat) — reaches every connected
+    player via the proxy directly, without going through any backend
+    world's RCON at all, so it still lands even if a specific world's
+    RCON happens to be unreachable. world=None fans out cluster-wide in
+    one shot (Velocity already holds every connected player, regardless
+    of which world they're on); a specific world name only reaches that
+    world's currently-connected players. kind="broadcast" is what tells
+    the proxy to render this as a server announcement rather than a
+    Discord-relayed chat line (different tag/color — see
+    FoliaRoutesSyncPlugin.deliverPendingChat)."""
+    message = body.message.strip()
+    if not message:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "message must not be empty")
+    if body.world is not None and not session.exec(select(World).where(World.name == body.world)).first():
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"world '{body.world}' not found")
+
+    pending: list[dict] = request.app.state.chat_pending
+    pending.append({"world": body.world, "author": user.username, "message": message, "kind": "broadcast"})
+    del pending[:-_MAX_PENDING]
+    return BroadcastChatResponse(queued=True)
 
 
 class PendingChatMessage(BaseModel):
     world: str | None
     author: str
     message: str
+    kind: str = "discord"
 
 
 @router.get("/pending", response_model=list[PendingChatMessage], dependencies=[Depends(require_viewer)])

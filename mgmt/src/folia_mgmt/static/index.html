@@ -221,6 +221,20 @@
       </div>
 
       <div class="card">
+        <h2>Broadcast message</h2>
+        <p class="hint">Delivered via the proxy directly to connected players (same path as the Discord chat bridge) — reaches everyone even if a world's RCON happens to be unreachable. Takes effect within a few seconds, no restart involved.</p>
+        <form class="inline" onsubmit="return sendBroadcast(event)">
+          <select id="broadcast-target" style="width:14rem">
+            <option value="">All worlds</option>
+          </select>
+          <input id="broadcast-message" placeholder="e.g. Restarting in 5 minutes, reconnect after" style="flex:1;min-width:16rem" required>
+          <button class="btn" type="submit">Send</button>
+        </form>
+        <div id="broadcast-error" class="error"></div>
+        <div id="broadcast-sent" class="hint"></div>
+      </div>
+
+      <div class="card">
         <h2>Worlds</h2>
         <table>
           <thead><tr><th>Name</th><th>Type</th><th>Phase</th><th>Version</th><th>Host</th><th>Address</th><th>Access</th><th></th></tr></thead>
@@ -254,7 +268,7 @@
 
       <div class="card" id="world-details-card" style="display:none">
         <h2>World details: <span id="details-world-name"></span></h2>
-        <p class="hint">Read-only — RCON commands here apply instantly and don't touch this world's saved configuration.</p>
+        <p class="hint">The RCON and log sections below are read-only/live — they don't touch this world's saved configuration. The operators section does: it's pushed straight to <code>ops.json</code> via LXD (no RCON needed), independent of whether RCON is currently reachable.</p>
 
         <div>
           <div class="hint" style="margin-bottom:0.3rem">Run a live command via RCON (instant — no restart; only works while the world is running, and only for things Minecraft lets you change live, e.g. <code>gamerule</code>, <code>difficulty</code>, <code>whitelist</code>, <code>op</code>):</div>
@@ -263,6 +277,16 @@
             <button class="btn" type="submit">Run</button>
           </form>
           <pre id="edit-rcon-output" class="hint" style="white-space:pre-wrap;margin-top:0.4rem"></pre>
+        </div>
+
+        <div style="margin-top:1rem;padding-top:0.8rem;border-top:1px solid var(--border)">
+          <div class="hint" style="margin-bottom:0.3rem">Server operators — takes effect immediately for this world's <code>ops.json</code>, but a player already connected only picks up an op/deop after they rejoin:</div>
+          <div id="details-ops-list" class="inline" style="margin-bottom:0.4rem"></div>
+          <form class="inline" onsubmit="return addWorldOp(event)">
+            <input id="details-op-add" placeholder="player name or UUID" style="flex:1;min-width:12rem">
+            <button class="btn" type="submit">Add op</button>
+          </form>
+          <div id="world-ops-error" class="error"></div>
         </div>
 
         <div style="margin-top:1rem;padding-top:0.8rem;border-top:1px solid var(--border)">
@@ -699,9 +723,38 @@ async function loadWorlds() {
       </tr>
     `;
     }).join('') || '<tr><td colspan="8" class="hint">No worlds declared yet.</td></tr>';
+    renderBroadcastTargets(worlds);
   } catch (e) {
     errorEl.textContent = e.message;
   }
+}
+
+function renderBroadcastTargets(worlds) {
+  const select = document.getElementById('broadcast-target');
+  const previous = select.value;
+  select.innerHTML = '<option value="">All worlds</option>' +
+    worlds.map(w => `<option value="${escapeHtml(w.name)}">${escapeHtml(w.name)}</option>`).join('');
+  if (worlds.some(w => w.name === previous)) select.value = previous;
+}
+
+async function sendBroadcast(event) {
+  event.preventDefault();
+  const errorEl = document.getElementById('broadcast-error');
+  const sentEl = document.getElementById('broadcast-sent');
+  errorEl.textContent = '';
+  sentEl.textContent = '';
+  const world = document.getElementById('broadcast-target').value || null;
+  const messageEl = document.getElementById('broadcast-message');
+  const message = messageEl.value.trim();
+  if (!message) return false;
+  try {
+    await api('/chat/broadcast', { method: 'POST', body: JSON.stringify({ world, message }) });
+    sentEl.textContent = 'Sent to ' + (world || 'all worlds') + '.';
+    messageEl.value = '';
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+  return false;
 }
 
 async function createWorld(event) {
@@ -791,7 +844,57 @@ function openWorldDetails(name) {
   document.getElementById('edit-rcon-output').textContent = '';
   document.getElementById('world-details-card').style.display = 'block';
   document.getElementById('world-details-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  renderWorldOps(world.ops);
   switchLogTab('console');
+}
+
+function renderWorldOps(ops) {
+  const listEl = document.getElementById('details-ops-list');
+  listEl.innerHTML = ops.map(op => `
+    <span class="pill">${escapeHtml(op)}
+      <a href="#" onclick="removeWorldOp('${escapeHtml(op)}'); return false" title="remove" style="margin-left:0.3rem">&times;</a>
+    </span>
+  `).join('') || '<span class="hint">No ops declared.</span>';
+}
+
+async function _putWorldOps(name, ops) {
+  const errorEl = document.getElementById('world-ops-error');
+  errorEl.textContent = '';
+  try {
+    const result = await api('/worlds/' + encodeURIComponent(name) + '/access', {
+      method: 'PUT',
+      body: JSON.stringify({ ops }),
+    });
+    renderWorldOps(result.ops);
+    const world = state.worlds.find(w => w.name === name);
+    if (world) world.ops = result.ops;
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+}
+
+async function addWorldOp(event) {
+  event.preventDefault();
+  const name = state.detailsWorld;
+  if (!name) return false;
+  const input = document.getElementById('details-op-add');
+  const op = input.value.trim();
+  if (!op) return false;
+  const world = state.worlds.find(w => w.name === name);
+  const current = world ? world.ops : [];
+  if (!current.includes(op)) {
+    await _putWorldOps(name, [...current, op]);
+  }
+  input.value = '';
+  return false;
+}
+
+async function removeWorldOp(op) {
+  const name = state.detailsWorld;
+  if (!name) return;
+  const world = state.worlds.find(w => w.name === name);
+  const current = world ? world.ops : [];
+  await _putWorldOps(name, current.filter(o => o !== op));
 }
 
 function closeWorldDetails() {

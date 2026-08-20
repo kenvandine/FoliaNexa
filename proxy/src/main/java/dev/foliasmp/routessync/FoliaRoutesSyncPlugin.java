@@ -203,9 +203,16 @@ public final class FoliaRoutesSyncPlugin {
             return;
         }
         for (PendingChatMessage msg : pending) {
+            // "broadcast" (operator-authored, POST /chat/broadcast) renders
+            // distinctly from "discord" (relayed player chat) so it can't be
+            // mistaken for a regular player typing in the Discord bridge —
+            // gold/[Announcement] instead of gray/[Discord].
+            boolean isBroadcast = "broadcast".equals(msg.kind());
+            String color = isBroadcast ? "gold" : "gray";
+            String label = isBroadcast ? "[Announcement]" : "[Discord]";
             Component component = MiniMessage.miniMessage().deserialize(
-                    "<gray>[Discord] <bold>" + escapeMiniMessage(msg.author()) + "</bold>: "
-                            + escapeMiniMessage(msg.message()) + "</gray>"
+                    "<" + color + ">" + label + " <bold>" + escapeMiniMessage(msg.author()) + "</bold>: "
+                            + escapeMiniMessage(msg.message()) + "</" + color + ">"
             );
             if (msg.world() == null) {
                 server.getAllPlayers().forEach(p -> p.sendMessage(component));
