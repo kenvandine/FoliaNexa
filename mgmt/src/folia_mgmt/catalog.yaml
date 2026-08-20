@@ -39,19 +39,6 @@
     version, mirror the jar yourself and point download_url at that
     instead.
 
-- id: BlueMap
-  category: web-map
-  source: external
-  version: "5.23"
-  download_url: "https://github.com/BlueMap-Minecraft/BlueMap/releases/download/v5.23/bluemap-5.23-paper.jar"
-  sha256: "339554d75cedab354e376677cfc7308c499952915849e8e2994718e4a153d64e"
-  homepage: "https://bluemap.bluecolored.de"
-  verified: true
-  notes: >
-    URL verified live 2026-08-15 via GitHub releases (a real, pinned
-    tag — v5.23). sha256 computed 2026-08-16 by downloading the jar
-    directly.
-
 - id: ServerSelector
   category: lobby
   source: external
@@ -152,26 +139,6 @@
     Modrinth's own listed source_url; updated above. Tags folia, paper,
     spigot, purpur, and bukkit loaders on Modrinth.
 
-- id: AxAuctions
-  category: economy
-  source: external
-  version: "unknown"
-  download_url: null
-  sha256: null
-  homepage: "https://github.com/Artillex-Studios"
-  verified: false
-  notes: >
-    Confirmed 2026-08-16: another real license gate, not a research gap.
-    AxAuctions is published by Artillex Studios, whose public GitHub org
-    only hosts an "AxAuctionsAPI" repo (a Java API for integrating with
-    it), never the plugin itself — consistent with their catalog, where
-    most "Ax*" plugins (AxAuctions, AxEnvoys, AxMinions, etc) are sold
-    commercially and only a handful (AxCalendar, AxGraves, AxSellwands)
-    are actually open-source/free. No Modrinth or Hangar listing either.
-    Will never resolve to a plain public download_url the way this
-    catalog expects; an operator with a purchased license needs to host
-    the jar themselves via plugin-catalog-override.yaml.
-
 - id: AuraSkills
   category: rpg
   source: external
@@ -186,31 +153,6 @@
     "folia" loader tag as of this build) — check for Folia-specific
     region-thread issues before relying on it in a Folia world, the same
     caveat this catalog gives the minigame plugins below.
-
-- id: ItemsAdder
-  category: custom-content
-  source: external
-  version: "unknown"
-  download_url: null
-  sha256: null
-  homepage: "https://www.spigotmc.org/resources/itemsadder.73355/"
-  verified: false
-  notes: "Premium/paid plugin on SpigotMC — license-gated download, won't ever be a plain public URL. Placeholder only."
-
-- id: MythicMobs
-  category: custom-content
-  source: external
-  version: "5.13.0"
-  download_url: "https://cdn.modrinth.com/data/NLuc7Jjh/versions/YVgkWAjK/MythicMobs-5.13.0.jar"
-  sha256: "0906a5d1e7927b1f628e3b36bda4c0ea155ec6da2d3997b88e3e41455c2ee05a"
-  homepage: "https://git.mythiccraft.io/mythiccraft/MythicMobs/-/wikis/home"
-  verified: true
-  notes: >
-    Verified 2026-08-16 — downloaded from Modrinth's CDN and sha256'd
-    directly. This is the free/core plugin, which explicitly tags the
-    "folia" loader on Modrinth (alongside paper/spigot) — do not confuse
-    with "MythicMobs Premium," a separately-sold marketplace addon that
-    is not what this entry points at.
 
 - id: HuskHomes
   category: navigation
@@ -271,36 +213,6 @@
     Requires the matching Simple Voice Chat client-side mod for players
     to actually hear anything — this jar is just the server side.
 
-- id: FancyNpcs
-  category: vanity
-  source: external
-  version: "2.11.0+370"
-  download_url: "https://cdn.modrinth.com/data/EeyAn23L/versions/sEt3BDRu/FancyNpcs-2.11.0%2B370.jar"
-  sha256: "8f29507e5cb1b765ffc8db2d40aea287e57d026ad6b095c1dbc6a51444498eee"
-  homepage: "https://fancyinnovations.com/docs/minecraft-plugins/fancynpcs"
-  verified: true
-  notes: >
-    Verified 2026-08-16 — downloaded from Modrinth's CDN and sha256'd
-    directly. The old homepage (Oheers/FancyNpcs) was stale — the project
-    now lives under the FancyInnovations org/monorepo
-    (FancyInnovations/FancyPlugins), confirmed via Modrinth's own listed
-    source_url; updated above. Tags the "folia" loader explicitly on
-    Modrinth.
-
-- id: FancyHolograms
-  category: vanity
-  source: external
-  version: "2.11.0+193"
-  download_url: "https://cdn.modrinth.com/data/5QNgOj66/versions/sVWtLhTt/FancyHolograms-2.11.0%2B193.jar"
-  sha256: "6ca347199ef28939a14c27b1eb0d95241e42a09318ef39d33d33d9ce71b3a0b6"
-  homepage: "https://fancyinnovations.com/docs/minecraft-plugins/fancyholograms"
-  verified: true
-  notes: >
-    Verified 2026-08-16 — downloaded from Modrinth's CDN and sha256'd
-    directly. Same FancyInnovations/FancyPlugins monorepo as FancyNpcs
-    above (the old FancyMcPlugins/FancyHolograms homepage was stale);
-    updated above. Tags the "folia" loader explicitly on Modrinth.
-
 - id: DiscordSRV
   category: chat-bridge
   source: external
@@ -349,68 +261,6 @@
     Floodgate forwards through the proxy. This is a rolling per-minor-
     version build URL (2.2.5 build 140 at verification time) — re-check
     before assuming it stays current indefinitely.
-
-- id: SkyWarsReloaded
-  category: minigame
-  source: external
-  version: "5.6.34"
-  download_url: "https://api.spiget.org/v2/resources/69436/download"
-  sha256: "57b9dbaebe7cc85e585ca211a5c001205ef47bb56b2fccacdb08978f1ef9ddde"
-  homepage: "https://www.spigotmc.org/resources/skywarsreloaded-updated-recoded-1-21-support-new-decentholograms-supports-all-mc-versions.69436/"
-  verified: true
-  notes: >
-    Verified 2026-08-18, operator-directed pick among the several
-    community forks noted below — lukasvdgaag/SkyWarsReloaded (GCNT/
-    Devmart's actively maintained continuation, "the official
-    replacement" per its README). The GitHub repo itself still publishes
-    no Releases (has_downloads: false, /releases returns []) — its real
-    distribution channel is this SpigotMC listing (resource 69436),
-    marked "external" in Spiget's own metadata (hosted on GCNT's own
-    my.gcnt.net, not SpigotMC's CDN) but Spiget's /download endpoint
-    proxies it successfully regardless — downloaded and sha256'd for
-    real. Confirmed genuine, not a same-name decoy (see the
-    RealisticSeasons entry above for what that looks like): plugin.yml's
-    main class is com.walrusone.skywarsreloaded.SkyWarsReloaded, built
-    from the com.walrusone:skywarsreloaded-assembly Maven artifact — the
-    original author's own package, under GCNT's continued maintenance.
-    Folia caveat, sharper than usual here: plugin.yml declares
-    api-version: 1.13 with no folia-supported key at all — the oldest,
-    least Folia-aware signal of any entry in this catalog. Confirm this
-    actually works on a Folia world (or wait for an upstream fix) before
-    relying on it for real; classic Bukkit-era minigame plugins commonly
-    assume single-threaded world ticking that Folia's regionized
-    scheduler doesn't guarantee (see
-    configs/worlds/create-minigame-skywars.sh). Other forks considered
-    and passed over (smessie/SkyWarsReloaded,
-    SpoopyDev/SkyWarsReloaded-Walruscode, dev-mart/SkyWarsReloaded) —
-    none published to Modrinth/Hangar either; this one was picked for
-    having the clearest "official continuation" claim and an actual
-    resolvable download, not because it's necessarily the best-maintained
-    technically.
-
-- id: BedWars1058
-  category: minigame
-  source: external
-  version: "25.5-SNAPSHOT"
-  download_url: "https://cdn.modrinth.com/data/VBj24lEa/versions/uZ3VS43M/bedwars-plugin-25.5-SNAPSHOT.jar"
-  sha256: "d2eee5d095399f0698d0f609c8166eb897ec042b77eabff3f9291c41b9cb81f1"
-  homepage: "https://wiki.andrei1058.dev/docs/BedWars1058/"
-  verified: true
-  notes: >
-    Verified 2026-08-16 — downloaded from Modrinth's CDN and sha256'd
-    directly. Unlike SkyWarsReloaded above, this one does have a single
-    actively-maintained upstream (andrei1058/BedWars1058) with a real
-    Modrinth listing. Two caveats worth flagging: (1) this is the newest
-    build available for current game versions but Modrinth marks it
-    "beta"/SNAPSHOT, not a tagged stable release — the last plain
-    "release"-type build (25.2) only targets MC 1.20.3/1.20.4; (2) as of
-    this build BedWars1058 tags only paper/spigot loaders on Modrinth,
-    no explicit "folia" tag — same Folia-compatibility caveat this
-    catalog already gave it applies (see
-    configs/worlds/create-minigame-skywars.sh's sibling minigame configs)
-    — classic Bukkit-era minigame plugins commonly assume single-
-    threaded world ticking that Folia's regionized scheduler doesn't
-    guarantee.
 
 - id: FoliaNexaStats
   category: analytics
@@ -542,30 +392,6 @@
     (loaders: folia, paper, purpur, spigot). plugin.yml declares
     folia-supported: true, confirmed by inspecting the jar.
 
-- id: TreeAssist
-  category: gameplay-tweaks
-  source: external
-  version: "7.3.69"
-  download_url: "https://api.spiget.org/v2/resources/67436/download"
-  sha256: "bd28f52256e4e94ebab78cc9e34f63d4197e7b2cef9557cf09398c0d6a19b165"
-  homepage: "https://www.spigotmc.org/resources/treeassist.67436/"
-  verified: true
-  notes: >
-    Verified 2026-08-18 — downloaded via Spiget's resource-download
-    proxy (not Modrinth/Hangar; this plugin isn't listed on either) and
-    sha256'd directly. There are multiple unrelated "TreeAssist"
-    SpigotMC resources under different authors; this pins the actively
-    maintained one (resource id 67436, last updated 2025, "Auto Destroy,
-    Auto Replant and more") rather than the original 2015-era plugin of
-    the same name (id 4657, effectively abandoned). No folia-supported
-    key in plugin.yml (checked directly) and no explicit Folia claim
-    anywhere in its listing — same "verify before relying on it in a
-    Folia world" caveat this catalog already gives the minigame plugins
-    and AuraSkills. Requested as "Timber or TreeAssist"; a real Folia-
-    tagged datapack alternative (Timber, no JVM plugin needed at all) is
-    bundled in datapacks.yaml instead — see that entry's notes for why
-    it may be the better fit.
-
 - id: PlayerParticles
   category: vanity
   source: external
@@ -597,30 +423,6 @@
     confirmed by inspecting the jar. Modrinth marks this build
     "pre-release," not a tagged stable — the last plain "release"-type
     build is older; check before relying on it in production.
-
-- id: Vault
-  category: economy
-  source: external
-  version: "1.7.3-b131"
-  download_url: "https://api.spiget.org/v2/resources/34315/download"
-  sha256: "a6b5ed97f43a5cf5bbaf00a7c8cd23c5afc9bd003f849875af8b36e6cf77d01d"
-  homepage: "https://www.spigotmc.org/resources/vault.34315/"
-  verified: true
-  notes: >
-    Verified 2026-08-18 — downloaded via Spiget's resource-download
-    proxy (Vault isn't listed on Modrinth or Hangar) and sha256'd
-    directly. This is the original MilkBowl/Vault economy/permissions/
-    chat abstraction API most economy and shop plugins (ChestShop above,
-    EssentialsX below, Shopkeepers below) hook into — but its last real
-    update was 2020 (build 131) and the project is effectively
-    unmaintained. Vault-Unlocked (already in this catalog) is the
-    actively-maintained fork and implements the same API; prefer it over
-    this entry unless a specific plugin explicitly requires the original.
-    No folia-supported declaration (plugin.yml has no such key,
-    predating that mechanism entirely) — Vault itself does very little
-    region-aware work (mostly a service registry), so this is lower risk
-    than a gameplay plugin lacking the flag, but still unverified on
-    Folia specifically.
 
 - id: EssentialsX
   category: economy

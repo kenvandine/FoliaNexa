@@ -76,8 +76,8 @@ of your own).
   kind of thing) commonly assume single-threaded world ticking, which
   Folia's regionized scheduler doesn't guarantee. Check the plugin's own
   Folia-compatibility claims before relying on it in production — the
-  `SkyWarsReloaded`/`BedWars1058` catalog entries carry this same
-  caveat in their `notes`.
+  catalog's own `notes` field is the place to record what you found once
+  you've checked.
 
 **Bedrock players on this world:** the cluster's proxy already lets
 Bedrock (console/mobile/Win10) clients join by default (PLAN.md §7B) —
@@ -192,7 +192,7 @@ To change the loadout, delete and recreate the world:
 
 ```bash
 folia-nexa-mgmt worlds create world-minigame-parkour --type minigame --cpu 2 --memory 3GB \
-  --plugin LuckPerms --plugin Spark --plugin FancyHolograms
+  --plugin LuckPerms --plugin Spark
 ```
 
 after deleting the old one — see below. If the world has player-created
@@ -263,11 +263,11 @@ Two things make it behave like a hub rather than just another world:
   `ServerSelector` on the lobby world specifically (not on every world,
   not on the proxy) and keep its `config.yml` in sync with whatever
   games are currently live — that config file is the actual "menu" a
-  game master maintains day to day. `FancyNpcs`/`FancyHolograms` (both
-  catalog placeholders — see their `notes`, need a real `download_url`
-  before use) are common companions for lobby decoration (floating
-  leaderboards, NPC greeters) if you want to go further than a compass
-  menu.
+  game master maintains day to day. An NPC/hologram plugin is a common
+  companion for lobby decoration (floating leaderboards, NPC greeters)
+  if you want to go further than a compass menu — none is currently in
+  the catalog, so add one (`mgmt/src/folia_mgmt/catalog.yaml` or an
+  override) with a real, checked `download_url` if you want this.
 
 Keep the lobby itself small and boring — it's not where gameplay
 happens, it's the front door. Over-plugin-ing it just adds another

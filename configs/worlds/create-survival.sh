@@ -2,13 +2,12 @@
 # Declares the main survival world. Sized to PLAN.md §17's reference host
 # allocation (6 P-cores / 12GB) — adjust --cpu/--memory/--labels for yours.
 #
-# Plugin set matches PLAN.md §14's curated matrix: claims, economy,
-# auctions, RPG skills, custom items/bosses, homes/portals, voice chat,
-# diagnostics, web map, and a Discord chat bridge. Every --plugin below is
-# a mgmt/src/folia_mgmt/catalog.yaml id ('folia-nexa-mgmt plugins list' to
-# browse); several are placeholders with no download_url yet, so populate
-# those in catalog.yaml (or a plugin-catalog-override.yaml) before this
-# world can finish provisioning.
+# Plugin set matches PLAN.md §14's curated matrix: claims, economy, RPG
+# skills, homes/portals, voice chat, diagnostics, and a Discord chat
+# bridge. Every --plugin below is a mgmt/src/folia_mgmt/catalog.yaml id
+# ('folia-nexa-mgmt plugins list' to browse); several are placeholders
+# with no download_url yet, so populate those in catalog.yaml (or a
+# plugin-catalog-override.yaml) before this world can finish provisioning.
 set -euo pipefail
 
 folia-nexa-mgmt worlds create world-survival \
@@ -19,15 +18,11 @@ folia-nexa-mgmt worlds create world-survival \
   --plugin LuckPerms \
   --plugin HuskClaims \
   --plugin Vault-Unlocked \
-  --plugin AxAuctions \
   --plugin AuraSkills \
-  --plugin ItemsAdder \
-  --plugin MythicMobs \
   --plugin HuskHomes \
   --plugin HuskPortals \
   --plugin SimpleVoiceChat \
   --plugin Spark \
-  --plugin BlueMap \
   --plugin DiscordSRV \
   --plugin FoliaNexaStats \
   "$@"

@@ -295,7 +295,7 @@ these**, note two separate things need to be reachable:
   host>:8443` (mirrors `listen-port` below — `run-mgmt-daemon.sh` re-reads
   it via snapctl on every daemon start, and `snap/hooks/configure`
   restarts the daemon when it changes). Several
-  catalog entries (e.g. `HuskClaims`, `ItemsAdder`) still have a
+  catalog entries (e.g. `HuskClaims`, `RealisticSeasons`) still have a
   placeholder `download_url: null` — populate those (in
   `catalog.yaml` or a `plugin-catalog-override.yaml` in mgmt's state
   dir) with real download links before relying on them; a plugin with no
@@ -318,11 +318,15 @@ server-root `plugins/` folder, and they take effect at the server's next
 first-boot/world-generation rather than needing a JVM plugin loader at
 all.
 
-The minigame plugins listed (SkyWarsReloaded, BedWars1058) are common,
-well-known choices, not something verified Folia-compatible in this
-repo — check before relying on them; classic Bukkit-era minigame plugins
-often assume single-threaded world ticking that Folia's regionized
-scheduler doesn't guarantee.
+`configs/worlds/create-all.sh` only declares the survival starter world
+now — the two example minigame worlds it used to also declare
+(SkyWars/BedWars) were retired along with their catalog entries
+(`SkyWarsReloaded`, `BedWars1058`, `FancyHolograms`, `FancyNpcs`): common,
+well-known choices, but never verified Folia-compatible in this repo, and
+classic Bukkit-era minigame plugins commonly assume single-threaded world
+ticking that Folia's regionized scheduler doesn't guarantee. See
+`docs/game-master-howto.md` for declaring a minigame world of your own
+with plugins you've actually checked.
 
 ```bash
 ./configs/worlds/create-all.sh
