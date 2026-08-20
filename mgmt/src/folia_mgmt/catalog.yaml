@@ -601,7 +601,11 @@
     the InvisibleItemFrames entry that used to be here — that plugin's
     original SpigotMC listing never shipped Folia support; this is a
     separate, actively-maintained (June 2026) plugin covering the same
-    "make item frames invisible" niche, tagged for MC 26.2.
+    "make item frames invisible" niche, tagged for MC 26.2. Hard-depends
+    on MCKotlin-Paper (below) — confirmed the hard way on a real boot
+    ("Unknown/missing dependency plugins: [MCKotlin-Paper]") after
+    missing this on first verification; a world declaring this plugin
+    needs MCKotlin-Paper declared too or it won't load at all.
 
 - id: WorldEdit
   category: world-editing
@@ -620,41 +624,71 @@
 - id: VeinMiner
   category: utility
   source: external
-  version: "2.5.0"
-  download_url: "https://cdn.modrinth.com/data/OhduvhIc/versions/qE6uJoXa/veinminer-paper-2.5.0.jar"
-  sha256: "21fd75dc4e1a16587ca4a56b97a19704fa80d1e02282fd4cde65564a25340d2c"
+  version: "2.12.0"
+  download_url: "https://cdn.modrinth.com/data/OhduvhIc/versions/5BCpNfSr/veinminer-paper-2.12.0.jar"
+  sha256: "8a74bdde9e4d799970d0fe91b7811ce53b7b33dd6dc9cff187cb1fb6c73a1e1b"
   homepage: "https://modrinth.com/plugin/veinminer"
   verified: true
   notes: >
-    Verified 2026-08-18 — downloaded from Modrinth's CDN and sha256'd for
-    real. Deliberately pinned to 2.5.0 rather than the newer 2.6.x line:
-    2.5.0 is the last release that still lists 1.21.4 as a supported game
-    version (matching this cluster's Paper target — see the
-    folianexa-plugins repo's build.gradle.kts files); 2.6.0+ requires
-    1.21.7 or newer. Bump this pin once the cluster moves past 1.21.4.
-    Loaders include folia explicitly.
+    Bumped 2026-08-20 from the previous 2.5.0 pin — that version was
+    deliberately pinned for 1.21.4 support back when this cluster ran
+    that target; now that it runs Folia 26.2, 2.5.0 actively fails to
+    load: "Could not load plugin 'VeinMiner.jar' ... CommandAPI's NMS
+    hook failed to load ... UnsupportedVersionException: This version
+    of Minecraft is unsupported: 26.2.build.1", confirmed on a real
+    boot log. 2.12.0 downloaded from Modrinth's CDN; sha1 matched
+    Modrinth's published hash, sha256 computed directly, and plugin.yml
+    inspected inside the jar confirming folia-supported: true and, this
+    time, also checked for a depend/softdepend list (none) — the exact
+    thing missed on the ZInvisItemFrames entry below, which needed
+    MCKotlin-Paper. Tags 26.2 on Modrinth as of this build.
 
 - id: WorldGuard
   category: protection
   source: external
-  version: "7.0.13"
-  download_url: "https://cdn.modrinth.com/data/DKY9btbd/versions/f9NoeotB/worldguard-bukkit-7.0.13-dist.jar"
-  sha256: "73b43a46aefc76514b90994532ea18bfd6d92e7bc5dcabbef9049a71778b21b5"
+  version: "7.0.18+2392-fa605e6"
+  download_url: "https://cdn.modrinth.com/data/DKY9btbd/versions/btHBavWa/worldguard-bukkit-7.0.18.jar"
+  sha256: "08f3ef58bc521c635d8c78aedaca96f151d2d397e7cd8018584955dd7468eb05"
   homepage: "https://modrinth.com/plugin/worldguard"
   verified: true
   notes: >
-    Verified 2026-08-18 — downloaded from Modrinth's CDN and sha256'd for
-    real, but flag this one before relying on it: Modrinth's published
-    builds for this version only declare bukkit/paper/spigot loaders, not
-    folia. WorldGuard's region-protection model predates Folia's
-    regionized multithreading and does state mutation (region cache,
-    flag application) that classic Bukkit plugins generally assume
-    happens on one single-threaded world tick — the same class of
-    caveat already noted on SkyWarsReloaded/BedWars1058 in this file.
-    The jar will load, but its Folia-safety isn't verified; test region
-    protection carefully under real concurrent load before trusting it
-    in production. Hard-depends on WorldEdit (entry above) being
-    installed on the same world.
+    Bumped 2026-08-20 from 7.0.13 — that build lacked a folia-supported
+    declaration and was confirmed hard-rejected on a real boot log
+    ("not marked as supporting Folia!"). 7.0.18 downloaded from
+    Modrinth's CDN; sha1 matched Modrinth's published hash, sha256
+    computed directly, and plugin.yml inspected inside the jar
+    confirming folia-supported: true this time. Hard-depends on
+    WorldEdit (entry above) being installed on the same world — still
+    the case, confirmed via the same plugin.yml inspection (depend:
+    [WorldEdit]). WorldGuard's region-protection model still predates
+    Folia's regionized multithreading conceptually (region cache, flag
+    application assuming single-threaded ticks) even with the flag now
+    present — test region protection carefully under real concurrent
+    load before trusting it in production; the flag means it'll load,
+    not that every code path has been audited for regionized safety.
+
+- id: MCKotlin-Paper
+  category: library
+  source: external
+  version: "1.5.1-k2.4.0"
+  download_url: "https://cdn.modrinth.com/data/1iWA0pjH/versions/HcYYRNO7/MCKotlinPaper-1.5.1-k2.4.0.jar"
+  sha256: "62cbba800f5db6d620eb2e33f61b700bb5665cadb1e20a3ee27f3c3e65db4402"
+  homepage: "https://modrinth.com/plugin/mckotlin"
+  verified: true
+  notes: >
+    Added 2026-08-20 — Kotlin runtime bridge that ZInvisItemFrames
+    (below) hard-depends on, confirmed the hard way: ZInvisItemFrames
+    failed to load on a real boot with "Unknown/missing dependency
+    plugins: [MCKotlin-Paper]" (org.bukkit.plugin.
+    UnknownDependencyException, a hard depend, not soft) — a gap in
+    this catalog's own ZInvisItemFrames entry, which verified the
+    folia-supported flag but not its full dependency list. Downloaded
+    from Modrinth's CDN; sha1 matched Modrinth's published hash, sha256
+    computed directly, and the jar's paper-plugin.yml (not the legacy
+    plugin.yml — this one uses Paper's newer plugin format) inspected
+    directly confirming both name: MCKotlin-Paper (matching exactly
+    what ZInvisItemFrames' depend: list names) and folia-supported:
+    true. Any world declaring ZInvisItemFrames needs this declared too.
 
 - id: GrimAC
   category: anticheat
