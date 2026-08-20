@@ -642,6 +642,32 @@
     Folia compatibility before relying on it, same caveat this catalog
     already gives BedWars1058/AuraSkills/TreeAssist.
 
+- id: EssentialsC
+  category: economy
+  source: external
+  version: "4.2.8"
+  download_url: "https://cdn.modrinth.com/data/K7HZMVgx/versions/x9O75ptq/EssentialsC-4.2.8-all.jar"
+  sha256: "6caab6a66ea3b950b5c6ee7aceeacd0858eef147a0fa4114ab14963a0d7a2bd4"
+  homepage: "https://wiki.godlycow.org/essc"
+  verified: true
+  notes: >
+    Verified 2026-08-20 — downloaded from Modrinth's CDN; sha256'd
+    directly (Modrinth only publishes sha1/sha512 for this file, both of
+    which matched) and the jar's own plugin.yml inspected. A Folia-native
+    alternative to EssentialsX above, not a newer EssentialsX build — a
+    separate, actively-maintained plugin (GodlyCow's "EssentialsC")
+    covering the same Essentials-style command surface (/balance, /pay,
+    /eco, /baltop among others), for a world where EssentialsX's lack of
+    Folia support is a blocker. plugin.yml declares
+    folia-supported: true directly (confirmed by inspecting the jar, not
+    just Modrinth's loader tag) and lists Vault as a softdepend — it
+    registers as a Vault/Vault-Unlocked economy provider the same way
+    EssentialsX does, so it satisfies a ChestShop/Vault-Unlocked world's
+    need for an actual economy backend. plugin.yml also declares a
+    `/migration` command ("Migrate EssX data to EssC") — not run or
+    verified here, but worth using over a manual re-balance if swapping
+    onto a world with existing EssentialsX player data.
+
 - id: Shopkeepers
   category: economy
   source: external
