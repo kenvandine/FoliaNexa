@@ -293,9 +293,9 @@
 - id: FoliaNexaStats
   category: analytics
   source: in-house
-  version: "0.0.4"
-  download_url: "https://github.com/kenvandine/folianexa-plugins/releases/download/folianexa-stats-v0.0.4/folianexa-stats-0.0.4.jar"
-  sha256: "29e7bacb3a80125489f7dab8a8aa93f0a59432c984f569065d5e067abd3e90ad"
+  version: "0.0.5"
+  download_url: "https://github.com/kenvandine/folianexa-plugins/releases/download/folianexa-stats-v0.0.5/folianexa-stats-0.0.5.jar"
+  sha256: "5f29c8a226e661c18977c954eefdbcac9caefdcf5d807a8bc91b5ea8aa417aa0"
   homepage: "https://github.com/kenvandine/folianexa-plugins/tree/main/folianexa-stats"
   verified: true
   default_for_all_worlds: true
@@ -322,10 +322,17 @@
     intermittent "422 Field required, input: null" alternating with a
     bare "400 Invalid HTTP request received," never a clean failure.
     Fixed by pinning HTTP_1_1 explicitly, re-released as v0.0.4
-    (2026-08-16, same day). download_url/sha256 above downloaded
-    directly and verified for real; a real report from a live Folia
-    26.2 world reaching mgmt with a 200 (not 422/400) is what's
-    actually being confirmed right now, this being the fix for it.
+    (2026-08-16, same day). v0.0.5 (2026-08-21) fixes a different bug in
+    the same client: a blank or malformed mgmt-base-url made
+    HttpRequest.Builder#uri() throw IllegalArgumentException before
+    fetchPlayer/reportStats's own try/catch even started, escaping as an
+    uncaught exception on every join and every report cycle instead of
+    the "disabled until configured" behavior the plugin's startup
+    warning promises — now guarded and swallowed like every other
+    expected failure. download_url/sha256 above downloaded directly and
+    sha256'd for real (matches GitHub's reported asset digest), and
+    plugin.yml's folia-supported: true and version: '0.0.5' confirmed by
+    inspecting the jar.
 
 - id: CoreProtect
   category: moderation
@@ -611,6 +618,33 @@
     same-name upload, not a real distribution of Casper Swagerman's
     plugin. Do not point download_url at it. A real download needs a
     purchased license from the SpigotMC listing above.
+
+- id: Solstice
+  category: gameplay-tweaks
+  source: in-house
+  version: "0.1.5"
+  download_url: "https://github.com/kenvandine/folianexa-plugins/releases/download/Solstice-v0.1.5/Solstice-0.1.5.jar"
+  sha256: "260139ae129cf2657dd29e43a44fb2250789be6045a9ebff139b3cb6bb9a1a9b"
+  homepage: "https://github.com/kenvandine/folianexa-plugins/tree/main/Solstice"
+  verified: true
+  notes: >
+    A from-scratch, Folia-native seasons/calendar/temperature plugin —
+    the free in-house alternative to RealisticSeasons above, which is a
+    premium SpigotMC-only resource this catalog couldn't verify a real
+    download for (paid license gate; the same-named "free" Modrinth
+    listing is an unrelated stub, see that entry's notes). Adds a
+    calendar-driven season cycle with per-season biome recoloring and
+    ambient particles, and a per-player toggleable temperature display
+    (Celsius/Fahrenheit) — /season, /toggleseasoncolors,
+    /toggletemperature, /toggleseasonparticles, /togglefahrenheit,
+    /currentbiome, all default: true so players opt themselves in/out;
+    softdepends on PacketEvents/PlaceholderAPI/WorldGuard. Source:
+    kenvandine/folianexa-plugins, Solstice/ — same sibling-repo reasoning
+    as FoliaNexaStats/CampusLobby above. download_url/sha256 downloaded
+    directly and sha256'd for real (matches GitHub's reported asset
+    digest), and plugin.yml's folia-supported: true and version: '0.1.5'
+    confirmed by inspecting the jar. Not yet verified live against a
+    running Folia world at this version.
 
 - id: ZInvisItemFrames
   category: vanity
