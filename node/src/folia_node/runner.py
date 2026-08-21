@@ -49,7 +49,13 @@ class JVMRunner:
     """Wraps a running (or not-yet-started) JVM process, keeping a rolling
     tail of its output for crash diagnostics (PLAN.md §9 step 5)."""
 
-    def __init__(self, command: list[str], cwd: Path, on_line: Callable[[str], None] | None = None):
+    def __init__(
+        self,
+        command: list[str],
+        cwd: Path,
+        on_line: Callable[[str], None] | None = None,
+        env: dict[str, str] | None = None,
+    ):
         self._command = command
         self._cwd = cwd
         self._process: subprocess.Popen | None = None
@@ -59,6 +65,13 @@ class JVMRunner:
         # LogBroadcaster.append) — optional and decoupled by type so this
         # module doesn't need to import health.py just for a callback.
         self._on_line = on_line
+        # None (the default) means "inherit this process's own
+        # environment", same as subprocess.Popen's own default — agent.py
+        # passes a real dict (this process's environ plus FOLIA_WORLD_NAME)
+        # so plugins running inside the JVM (e.g. FoliaNexaStats) can tell
+        # which world they're actually running in, for per-world stat
+        # attribution (mgmt/src/folia_mgmt/routers/stats.py).
+        self._env = env
 
     def start(self) -> None:
         self._cwd.mkdir(parents=True, exist_ok=True)
@@ -69,6 +82,7 @@ class JVMRunner:
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            env=self._env,
         )
         self._reader_thread = threading.Thread(target=self._drain_output, daemon=True)
         self._reader_thread.start()

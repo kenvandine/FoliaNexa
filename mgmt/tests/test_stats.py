@@ -80,6 +80,75 @@ def test_report_stats_gauges_overwrite_rather_than_sum(client, operator_token):
     assert profile["stats"]["auraskills_power_level"] == 7
 
 
+def test_report_stats_different_worlds_sum_independently(client, operator_token, app):
+    # The actual fix: two different worlds reporting deltas for the same
+    # player/stat must both contribute to the total — this is what the
+    # single-report-source test above can't prove on its own (it never
+    # sends a differing `world`, so it only exercises "the same bucket
+    # accumulates," not "two worlds don't clobber each other").
+    lobby = {"world": "lobby", "players": [{"uuid": "abc123", "username": "Steve", "stat_deltas": {"blocks_mined": 5}}]}
+    overworld = {
+        "world": "overworld",
+        "players": [{"uuid": "abc123", "username": "Steve", "stat_deltas": {"blocks_mined": 1200}}],
+    }
+    client.post("/api/v1/stats/report", json=lobby, headers=auth_header(operator_token))
+    client.post("/api/v1/stats/report", json=overworld, headers=auth_header(operator_token))
+
+    profile = client.get("/api/v1/public/players/abc123").json()
+    assert profile["stats"]["blocks_mined"] == 1205
+
+    # A further report from just one of the two worlds only adds to its
+    # own contribution — the other world's isn't touched or re-summed.
+    # (Cache cleared between reads — public_api_cache_seconds defaults to
+    # 30s, longer than this test takes to run, so a second GET without
+    # this would just re-serve the first response.)
+    client.post(
+        "/api/v1/stats/report",
+        json={"world": "lobby", "players": [{"uuid": "abc123", "username": "Steve", "stat_deltas": {"blocks_mined": 3}}]},
+        headers=auth_header(operator_token),
+    )
+    app.state.public_stats_cache._store.clear()
+    profile = client.get("/api/v1/public/players/abc123").json()
+    assert profile["stats"]["blocks_mined"] == 1208
+
+
+def test_report_stats_legacy_format_still_accepted(client, operator_token):
+    # A not-yet-upgraded plugin build sends the old `stats` (absolute
+    # total) shape and no `world` at all — must keep working exactly as
+    # it always did, so an operator never has to upgrade every world in
+    # lockstep.
+    body = {"players": [{"uuid": "abc123", "username": "Steve", "stats": {"kills": 42}}]}
+    resp = client.post("/api/v1/stats/report", json=body, headers=auth_header(operator_token))
+    assert resp.status_code == 200
+
+    profile = client.get("/api/v1/public/players/abc123").json()
+    assert profile["stats"]["kills"] == 42
+
+
+def test_report_stats_legacy_and_upgraded_worlds_dont_cross_contaminate(client, operator_token, app):
+    # A legacy world (still overwriting) and an upgraded world (summing
+    # its own deltas) reporting for the same player must combine
+    # correctly, and neither format's writes should corrupt the other's.
+    legacy = {"players": [{"uuid": "abc123", "username": "Steve", "stats": {"kills": 100}}]}
+    upgraded = {"world": "overworld", "players": [{"uuid": "abc123", "username": "Steve", "stat_deltas": {"kills": 3}}]}
+    client.post("/api/v1/stats/report", json=legacy, headers=auth_header(operator_token))
+    client.post("/api/v1/stats/report", json=upgraded, headers=auth_header(operator_token))
+
+    profile = client.get("/api/v1/public/players/abc123").json()
+    assert profile["stats"]["kills"] == 103  # 100 (legacy) + 3 (overworld's delta)
+
+    # A second legacy report only overwrites the legacy bucket's own
+    # value — the upgraded world's 3 kills are still there, not clobbered.
+    client.post(
+        "/api/v1/stats/report",
+        json={"players": [{"uuid": "abc123", "username": "Steve", "stats": {"kills": 150}}]},
+        headers=auth_header(operator_token),
+    )
+    app.state.public_stats_cache._store.clear()  # see the sibling test above for why
+    profile = client.get("/api/v1/public/players/abc123").json()
+    assert profile["stats"]["kills"] == 153  # 150 (legacy, overwritten) + 3 (overworld, untouched)
+
+
 def test_report_stats_playtime_daily_accumulates(client, operator_token):
     body_one = {"players": [{"uuid": "abc123", "username": "Steve", "playtime_daily": {"2026-08-15": 100}}]}
     body_two = {"players": [{"uuid": "abc123", "username": "Steve", "playtime_daily": {"2026-08-15": 50}}]}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import stat
 import sys
 import textwrap
@@ -102,3 +103,36 @@ def test_jvm_runner_request_stop_sends_sigterm_without_blocking(tmp_path):
 def test_jvm_runner_request_stop_is_a_noop_before_start(tmp_path):
     runner = JVMRunner(["/bin/true"], cwd=tmp_path)
     runner.request_stop()  # must not raise even though start() was never called
+
+
+def test_jvm_runner_passes_env_through_to_the_process(tmp_path):
+    # agent.py sets FOLIA_WORLD_NAME here so a plugin running inside the
+    # JVM (e.g. FoliaNexaStats) can self-report which world it's in — see
+    # runner.py's own comment on the env param for why.
+    script = tmp_path / "print_env.sh"
+    script.write_text("#!/bin/sh\necho \"world=$FOLIA_WORLD_NAME\"\n")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+
+    seen: list[str] = []
+    runner = JVMRunner(
+        [str(script)], cwd=tmp_path, on_line=seen.append, env={**os.environ, "FOLIA_WORLD_NAME": "overworld"}
+    )
+    runner.start()
+    runner.wait()
+    assert seen == ["world=overworld"]
+
+
+def test_jvm_runner_env_none_inherits_the_current_process_environment(tmp_path, monkeypatch):
+    # The default (no env passed at all) must behave exactly like
+    # subprocess.Popen's own default — inherit this process's environment
+    # — not silently start the JVM with an empty one.
+    monkeypatch.setenv("FOLIA_TEST_MARKER", "still-here")
+    script = tmp_path / "print_env.sh"
+    script.write_text("#!/bin/sh\necho \"marker=$FOLIA_TEST_MARKER\"\n")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+
+    seen: list[str] = []
+    runner = JVMRunner([str(script)], cwd=tmp_path, on_line=seen.append)
+    runner.start()
+    runner.wait()
+    assert seen == ["marker=still-here"]

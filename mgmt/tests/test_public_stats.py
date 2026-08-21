@@ -139,6 +139,26 @@ def test_leaderboard_orders_by_value_descending(client, operator_token):
     assert [e["username"] for e in body["entries"]] == ["Bob", "Carol", "Alice"]
 
 
+def test_leaderboard_sums_a_players_contributions_across_worlds(client, operator_token):
+    # PlayerStat is per-world now (see that model's docstring) — the
+    # leaderboard must SUM a player's rows across worlds, not just read
+    # one of them.
+    client.post(
+        "/api/v1/stats/report",
+        json={"world": "lobby", "players": [{"uuid": "uuid-a", "username": "Alice", "stat_deltas": {"kills": 4}}]},
+        headers=auth_header(operator_token),
+    )
+    client.post(
+        "/api/v1/stats/report",
+        json={"world": "overworld", "players": [{"uuid": "uuid-a", "username": "Alice", "stat_deltas": {"kills": 3}}]},
+        headers=auth_header(operator_token),
+    )
+
+    resp = client.get("/api/v1/public/leaderboards", params={"stat": "kills"})
+    entries = {e["username"]: e["value"] for e in resp.json()["entries"]}
+    assert entries["Alice"] == 7
+
+
 def test_leaderboard_respects_limit(client, operator_token):
     _seed(client, operator_token)
 

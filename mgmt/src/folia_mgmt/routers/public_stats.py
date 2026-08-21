@@ -127,18 +127,23 @@ def leaderboards(
     cache: TTLCache = Depends(_get_cache),
 ) -> LeaderboardResponse:
     def compute() -> LeaderboardResponse:
+        # SUM across a player's world_name rows, not a single row's value
+        # — PlayerStat is now per-world (see that model's own docstring
+        # for why), so a player's real total for `stat` is the sum of
+        # every world they've contributed to (plus their gauge/legacy
+        # buckets, which SUM() over a single row still reads back
+        # correctly as just that row's value).
+        total = func.sum(PlayerStat.value)
         rows = session.exec(
-            select(PlayerStat, PlayerProfile)
+            select(PlayerProfile.uuid, PlayerProfile.username, total.label("total"))
             .where(PlayerStat.stat_key == stat, PlayerStat.player_uuid == PlayerProfile.uuid)
-            .order_by(PlayerStat.value.desc())
+            .group_by(PlayerProfile.uuid, PlayerProfile.username)
+            .order_by(total.desc())
             .limit(limit)
         ).all()
         return LeaderboardResponse(
             stat=stat,
-            entries=[
-                LeaderboardEntry(uuid=profile.uuid, username=profile.username, value=player_stat.value)
-                for player_stat, profile in rows
-            ],
+            entries=[LeaderboardEntry(uuid=uuid, username=username, value=value) for uuid, username, value in rows],
         )
 
     return cache.get_or_set(("leaderboards", stat, limit), settings.public_api_cache_seconds, compute)
@@ -253,7 +258,13 @@ def get_player(
         profile = session.exec(select(PlayerProfile).where(PlayerProfile.uuid == uuid)).first()
         if profile is None:
             raise HTTPException(status.HTTP_404_NOT_FOUND, f"no such player '{uuid}'")
-        stats = session.exec(select(PlayerStat).where(PlayerStat.player_uuid == uuid)).all()
+        # SUM across world_name rows per stat_key — see the leaderboard
+        # query above and PlayerStat's own docstring for why.
+        stat_rows = session.exec(
+            select(PlayerStat.stat_key, func.sum(PlayerStat.value))
+            .where(PlayerStat.player_uuid == uuid)
+            .group_by(PlayerStat.stat_key)
+        ).all()
         daily = session.exec(
             select(PlayerPlaytimeDaily)
             .where(PlayerPlaytimeDaily.player_uuid == uuid)
@@ -264,7 +275,7 @@ def get_player(
             username=profile.username,
             first_seen=profile.first_seen,
             last_seen=profile.last_seen,
-            stats={s.stat_key: s.value for s in stats},
+            stats={stat_key: total for stat_key, total in stat_rows},
             playtime_daily=[PlaytimeDayEntry(date=d.date, seconds=d.seconds) for d in daily],
         )
 

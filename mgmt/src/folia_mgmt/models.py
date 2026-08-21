@@ -194,21 +194,48 @@ class PlayerProfile(SQLModel, table=True):
 
 
 class PlayerStat(SQLModel, table=True):
-    """One counter for one player — e.g. stat_key="kills", value=42.
+    """One counter for one (player, world, stat) — e.g.
+    stat_key="kills", world_name="overworld", value=42.
 
-    Upserted (matched on player_uuid+stat_key, no DB-level unique
-    constraint — enforced in routers/stats.py the same way every other
-    upsert-by-lookup in this codebase works). `value` holds the current
-    running total as reported by the plugin, not a delta — the plugin is
-    the source of truth for its own counters, mgmt just mirrors the latest
-    value. Known stat_keys: kills, deaths, blocks_mined,
-    playtime_seconds_total, auraskills_power_level, axauctions_wealth —
-    but this is intentionally open-ended so a future plugin build can
-    report new stat_keys without a schema change.
+    Upserted (matched on player_uuid+world_name+stat_key, no DB-level
+    unique constraint — enforced in routers/stats.py the same way every
+    other upsert-by-lookup in this codebase works). `world_name` exists
+    because `FoliaNexaStats` is `default_for_all_worlds`, so every world
+    a player has ever visited reports independently — an earlier schema
+    had no world dimension at all (a single row per player+stat_key that
+    every world's report overwrote), which meant whichever world reported
+    last simply clobbered every other world's contribution, confirmed
+    live as visibly flickering public stats. The public total for a
+    stat_key is SUM(value) across all of a player's world_name rows (see
+    public_stats.py) — `routers/stats.py`'s docstring covers why `value`
+    holds a delta-since-last-report for cumulative stat_keys (summed in
+    here on each report, `+=`) rather than an absolute total.
+
+    `world_name=""` is reserved for gauge-type stat_keys (e.g.
+    auraskills_power_level) — a point-in-time reading, not cumulative,
+    so those aren't world-scoped at all: always exactly one row,
+    overwritten (`=`) on each report regardless of which world sent it,
+    same as before this file grew a world dimension. SUM() over that
+    single row still reads back as just its own value, which is why
+    public_stats.py's read queries don't need to know which kind of stat
+    a given key is — the write-time choice of bucket already encodes it.
+
+    `world_name="__legacy__"` is the transitional bucket for reports from
+    a not-yet-upgraded plugin build that doesn't send a `world` at all —
+    see routers/stats.py's report_stats for the full compatibility story.
+    Those still clobber each other the old way, but only amongst
+    themselves; upgraded worlds get their own clean row and are never
+    touched by a legacy report, so the combined total is exactly correct
+    for every world that's upgraded and merely no-worse-than-before for
+    the ones that haven't yet. Known stat_keys: kills, deaths,
+    blocks_mined, playtime_seconds_total, auraskills_power_level,
+    axauctions_wealth — but this is intentionally open-ended so a future
+    plugin build can report new stat_keys without a schema change.
     """
 
     id: Optional[int] = Field(default=None, primary_key=True)
     player_uuid: str = Field(index=True, foreign_key="playerprofile.uuid")
+    world_name: str = Field(default="__legacy__", index=True)
     stat_key: str = Field(index=True)
     value: float = 0
     updated_at: datetime = Field(default_factory=utcnow)

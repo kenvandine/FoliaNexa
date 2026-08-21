@@ -4,7 +4,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlmodel import Session, select
 
 from folia_mgmt.db import _add_missing_columns, _purge_soft_deleted_worlds
-from folia_mgmt.models import AccessRequest, World, WorldType
+from folia_mgmt.models import AccessRequest, PlayerStat, World, WorldType
 
 
 def test_add_missing_columns_backfills_existing_rows_with_default(tmp_path):
@@ -80,6 +80,44 @@ def test_add_missing_columns_backfills_scalar_bool_default(tmp_path):
     with Session(engine) as session:
         request = session.exec(select(AccessRequest)).one()
         assert request.auto_managed is True
+
+
+def test_add_missing_columns_backfills_playerstat_world_name_as_legacy(tmp_path):
+    """The actual live-data migration for the multi-world stats fix
+    (routers/stats.py) — PlayerStat grew a world_name column so a
+    player's contributions from different worlds no longer clobber each
+    other. Existing rows, written back when there was no such concept,
+    must backfill into the "__legacy__" bucket (routers/stats.py's
+    LEGACY_WORLD_NAME) — the same bucket a not-yet-upgraded plugin's
+    reports land in — rather than NULL, which would break the SUM()
+    GROUP BY queries public_stats.py now does over this column."""
+    engine = create_engine(f"sqlite:///{tmp_path / 'old_playerstat.db'}")
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                "CREATE TABLE playerstat ("
+                "id INTEGER PRIMARY KEY, player_uuid VARCHAR, stat_key VARCHAR, "
+                "value FLOAT, updated_at DATETIME"
+                ")"
+            )
+        )
+        conn.execute(
+            text(
+                "INSERT INTO playerstat (player_uuid, stat_key, value, updated_at) VALUES "
+                "('uuid-a', 'kills', 42, '2026-01-01 00:00:00')"
+            )
+        )
+
+    _add_missing_columns(engine)
+
+    columns = {col["name"] for col in inspect(engine).get_columns("playerstat")}
+    assert "world_name" in columns
+
+    with Session(engine) as session:
+        stat = session.exec(select(PlayerStat).where(PlayerStat.player_uuid == "uuid-a")).one()
+        assert stat.world_name == "__legacy__"
+        assert stat.value == 42
 
 
 def test_add_missing_columns_is_a_noop_on_a_current_schema(tmp_path):

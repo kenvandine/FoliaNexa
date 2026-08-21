@@ -90,7 +90,12 @@ def main() -> None:
     while True:
         command = build_java_command(java_bin, jar_path, memory_gb=_detect_memory_gb())
         logger.info("starting JVM: %s", " ".join(command))
-        runner = JVMRunner(command, cwd=world_dir, on_line=state.console_log.append)
+        runner = JVMRunner(
+            command,
+            cwd=world_dir,
+            on_line=state.console_log.append,
+            env={**os.environ, "FOLIA_WORLD_NAME": assignment.world_name},
+        )
         current_runner = runner
         runner.start()
 
