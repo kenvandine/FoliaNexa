@@ -619,6 +619,50 @@
     plugin. Do not point download_url at it. A real download needs a
     purchased license from the SpigotMC listing above.
 
+- id: PlaceholderAPI
+  category: library
+  source: external
+  version: "2.12.3"
+  download_url: "https://cdn.modrinth.com/data/lKEzGugV/versions/pIvQcXW8/PlaceholderAPI-2.12.3.jar"
+  sha256: "fde03259f5af6938f3c33eeb4d814000a1adabf1d2304ce14970be81f609a437"
+  homepage: "https://www.spigotmc.org/resources/placeholderapi.6245/"
+  verified: true
+  notes: >
+    Added for Solstice (below), which softdepends on it for
+    /togglefahrenheit-style placeholder exposure. Downloaded from
+    Modrinth's CDN; sha1 matched Modrinth's published hash, sha256
+    computed directly, and plugin.yml inspected directly confirming
+    name: PlaceholderAPI (matching exactly what Solstice's softdepend:
+    list names) and folia-supported: true. Tags the "folia" loader
+    explicitly on Modrinth alongside bukkit/paper/spigot.
+
+- id: PacketEvents
+  category: library
+  source: external
+  version: "2.13.0"
+  download_url: "https://cdn.modrinth.com/data/HYKaKraK/versions/h0ncTpUP/packetevents-spigot-2.13.0.jar"
+  sha256: "6d9ece0d87ee727a79a20b7ffbd432021609c6f52bafcb654fc2d3e9b6f064c5"
+  homepage: "https://modrinth.com/plugin/packetevents"
+  verified: true
+  notes: >
+    Added for Solstice (below), which uses PacketEvents' own API
+    directly (not a Bukkit plugin-name lookup) for client-side-only
+    seasonal biome recoloring — see BiomeColorManager's class docs in
+    that plugin's source. Downloaded from Modrinth's CDN (the "spigot"
+    build — this project also publishes a separate "fabric" jar per
+    version, not relevant here); sha1 matched Modrinth's published
+    hash, sha256 computed directly. plugin.yml inspected directly
+    confirms folia-supported: true, but its own name: field is
+    lowercase "packetevents" — differs from the PascalCase spelling in
+    Solstice's plugin.yml softdepend: list. Harmless here since
+    Solstice detects it via PacketEvents' own static API singleton, not
+    a Bukkit.getPluginManager().getPlugin(name) string match (unlike
+    the MCKotlin-Paper/ZInvisItemFrames case above, where a hard
+    depend's name mismatch was a real load failure) — worth knowing
+    about if a future integration ever does a name-string lookup
+    against this one instead. Tags the "folia" loader explicitly on
+    Modrinth alongside bukkit/paper/purpur/spigot.
+
 - id: Solstice
   category: gameplay-tweaks
   source: in-house
@@ -638,7 +682,9 @@
     (Celsius/Fahrenheit) — /season, /toggleseasoncolors,
     /toggletemperature, /toggleseasonparticles, /togglefahrenheit,
     /currentbiome, all default: true so players opt themselves in/out;
-    softdepends on PacketEvents/PlaceholderAPI/WorldGuard. Source:
+    softdepends on PacketEvents/PlaceholderAPI (both added above) and
+    WorldGuard (below) — none are required for Solstice to load, only
+    for the features gated on them. Source:
     kenvandine/folianexa-plugins, Solstice/ — same sibling-repo reasoning
     as FoliaNexaStats/CampusLobby above. download_url/sha256 downloaded
     directly and sha256'd for real (matches GitHub's reported asset
