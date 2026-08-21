@@ -293,9 +293,9 @@
 - id: FoliaNexaStats
   category: analytics
   source: in-house
-  version: "0.0.5"
-  download_url: "https://github.com/kenvandine/folianexa-plugins/releases/download/folianexa-stats-v0.0.5/folianexa-stats-0.0.5.jar"
-  sha256: "5f29c8a226e661c18977c954eefdbcac9caefdcf5d807a8bc91b5ea8aa417aa0"
+  version: "0.0.6"
+  download_url: "https://github.com/kenvandine/folianexa-plugins/releases/download/folianexa-stats-v0.0.6/folianexa-stats-0.0.6.jar"
+  sha256: "305e876a72e21e6aabd4c94f6ad32f3418a94a82a24a9a46ec6939bd682f6ac6"
   homepage: "https://github.com/kenvandine/folianexa-plugins/tree/main/folianexa-stats"
   verified: true
   default_for_all_worlds: true
@@ -329,10 +329,36 @@
     uncaught exception on every join and every report cycle instead of
     the "disabled until configured" behavior the plugin's startup
     warning promises — now guarded and swallowed like every other
-    expected failure. download_url/sha256 above downloaded directly and
-    sha256'd for real (matches GitHub's reported asset digest), and
-    plugin.yml's folia-supported: true and version: '0.0.5' confirmed by
-    inspecting the jar.
+    expected failure.
+
+    v0.0.6 (2026-08-21) fixes the actual root cause of a separate live
+    bug: visibly flickering public player stats (blocks_mined/kills/
+    deaths swinging between two different values on repeated requests,
+    confirmed live on play.sullivan.linuxgroove.com). This plugin is
+    default_for_all_worlds, so every world ran its own independent copy,
+    each fetching a player's total from mgmt once as a "baseline" and
+    reporting base+local as the whole truth — the instant a player was
+    tracked by more than one world at once (the common case, not an edge
+    case), two independent "this is the real total" reports just
+    clobbered each other every ~60s cycle. Reworked to report deltas
+    instead (StatsTracker's baseline-fetch machinery is gone entirely —
+    HttpMgmtClient#fetchPlayer/PlayerBaseline no longer exist), and to
+    self-report which world each delta came from via a new
+    FOLIA_WORLD_NAME env var folia-nexa-node now sets on the JVM,
+    matching the paired mgmt schema change (PlayerStat grew a
+    world_name column, summed per-world rather than overwritten — see
+    mgmt/src/folia_mgmt/routers/stats.py). A failed/unsent report no
+    longer loses that cycle's progress either — deltas are only cleared
+    once mgmt actually confirms receiving them
+    (StatsTracker#confirmReported). mgmt's ingestion endpoint accepts
+    both this and the older v0.0.5-and-earlier absolute-total shape on
+    the same endpoint, so worlds don't all need to upgrade in lockstep —
+    see that router's own docstring for the transition story.
+    download_url/sha256 above downloaded directly and sha256'd for real
+    (matches GitHub's reported asset digest), and plugin.yml's
+    folia-supported: true and version: '0.0.6' confirmed by inspecting
+    the jar. Not yet re-verified live against a running Folia world at
+    this specific version.
 
 - id: CoreProtect
   category: moderation
