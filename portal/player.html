@@ -80,6 +80,14 @@ async function load() {
 }
 
 load();
+// The footer above has always promised a "~30s refresh" — matches
+// online.html/index.html's same pattern, and mgmt's own
+// public_api_cache_seconds (routers/public_stats.py), so polling faster
+// than this would just re-fetch the same cached response.
+setInterval(() => {
+  if (document.hidden) return; // backgrounded tab — resumes on its own next tick once visible again
+  load();
+}, 30000);
 </script>
 </body>
 </html>
