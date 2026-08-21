@@ -464,6 +464,37 @@ def sync_plugin_config_files(session: Session, lxd_client: LXDClient) -> None:
                 )
 
 
+def _isolated(session: Session, step_name: str, fn: Callable[[], None]) -> None:
+    """Runs one reconcile step (or one world's turn within a step's loop),
+    logging and swallowing any exception instead of letting it propagate
+    out of reconcile() — a single stuck host or world must not block every
+    other step's turn this tick. Each step gets retried on its own the
+    very next reconcile() call (15s later, see main.py's
+    RECONCILE_INTERVAL_SECONDS), so skipping one tick here costs nothing
+    that retry doesn't already cover.
+
+    This bit a live deployment: one unreachable LXD host made
+    recover_crashed_worlds raise uncaught (see lxd_client.py's
+    _client_for docstring for the transport-vs-application-error half of
+    that fix), which aborted the entire reconcile() call before it ever
+    reached sync_stats_configs — stalling whitelist sync, LuckPerms config
+    sync, and FoliaNexaStats token provisioning cluster-wide, for every
+    world, until that one host came back.
+
+    The rollback matters even for exceptions unrelated to lxd_client: a
+    step that got partway through session.add()/commit() before failing
+    leaves the session needing an explicit rollback before it's usable
+    again, or the next step's own session.exec() raises
+    PendingRollbackError instead of the error it's actually trying to
+    report.
+    """
+    try:
+        fn()
+    except Exception:
+        logger.exception("reconcile step '%s' failed, will retry next tick", step_name)
+        session.rollback()
+
+
 def reconcile(
     session: Session,
     lxd_client: LXDClient,
@@ -473,21 +504,25 @@ def reconcile(
     settings = settings or get_settings()
     health_check = health_check or default_health_check
 
-    check_host_health(session, lxd_client)
+    _isolated(session, "check_host_health", lambda: check_host_health(session, lxd_client))
 
     for world in session.exec(select(World).where(World.phase == WorldPhase.pending)).all():
-        place_world(session, lxd_client, world, settings)
+        _isolated(session, f"place_world({world.name})",
+                   lambda world=world: place_world(session, lxd_client, world, settings))
 
     for world in session.exec(select(World).where(World.phase == WorldPhase.provisioning)).all():
-        finalize_provisioning(session, lxd_client, world)
+        _isolated(session, f"finalize_provisioning({world.name})",
+                   lambda world=world: finalize_provisioning(session, lxd_client, world))
 
-    migrate_worlds_off_draining_hosts(session, lxd_client)
-    check_running_worlds(session, settings, health_check)
-    recover_crashed_worlds(session, lxd_client)
-    sync_whitelisted_worlds(session, lxd_client)
-    sync_luckperms_configs(session, lxd_client, settings)
-    sync_stats_configs(session, lxd_client, settings)
-    sync_plugin_config_files(session, lxd_client)
+    _isolated(session, "migrate_worlds_off_draining_hosts",
+               lambda: migrate_worlds_off_draining_hosts(session, lxd_client))
+    _isolated(session, "check_running_worlds", lambda: check_running_worlds(session, settings, health_check))
+    _isolated(session, "recover_crashed_worlds", lambda: recover_crashed_worlds(session, lxd_client))
+    _isolated(session, "sync_whitelisted_worlds", lambda: sync_whitelisted_worlds(session, lxd_client))
+    _isolated(session, "sync_luckperms_configs", lambda: sync_luckperms_configs(session, lxd_client, settings))
+    _isolated(session, "sync_stats_configs", lambda: sync_stats_configs(session, lxd_client, settings))
+    _isolated(session, "sync_plugin_config_files", lambda: sync_plugin_config_files(session, lxd_client))
 
     for world in session.exec(select(World).where(World.phase == WorldPhase.draining)).all():
-        teardown_world(session, lxd_client, world)
+        _isolated(session, f"teardown_world({world.name})",
+                   lambda world=world: teardown_world(session, lxd_client, world))

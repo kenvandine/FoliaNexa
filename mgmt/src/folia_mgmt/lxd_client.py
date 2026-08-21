@@ -18,8 +18,9 @@ from __future__ import annotations
 import hashlib
 import socket
 import ssl
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import httpx
 
@@ -109,11 +110,30 @@ class LXDClient:
 
     # -- per-host client -------------------------------------------------------
 
-    def _client_for(self, host: Host) -> httpx.Client:
+    @contextmanager
+    def _client_for(self, host: Host) -> Iterator[httpx.Client]:
+        # Every method below raises LXDError itself for *application*-level
+        # failures (LXD's API answering with a non-2xx status) — but a host
+        # that's down, unreachable, or mid-TLS-handshake-timeout fails at
+        # the *transport* level instead (httpx.HTTPError/httpcore, or a
+        # bare socket/SSL error), which none of those call sites catch.
+        # Translating that here, once, at the single choke point every
+        # method already goes through, means one dead host degrades to an
+        # LXDError like any other expected failure — callers throughout
+        # scheduler.py are already written to catch exactly that — instead
+        # of an uncaught exception escaping this class entirely. (This bit
+        # a live deployment: recover_crashed_worlds hit an unrelated
+        # unreachable host's ConnectTimeout uncaught, which aborted that
+        # whole reconcile() tick before it ever reached sync_stats_configs,
+        # stalling FoliaNexaStats token provisioning cluster-wide.)
         if not host.server_cert_pem:
             raise LXDError(f"host '{host.name}' has no pinned certificate — re-enroll it")
         ctx = _pinned_context(host.server_cert_pem, self._client_cert, self._client_key)
-        return httpx.Client(base_url=f"https://{host.address}", verify=ctx, timeout=self._timeout)
+        with httpx.Client(base_url=f"https://{host.address}", verify=ctx, timeout=self._timeout) as client:
+            try:
+                yield client
+            except (httpx.HTTPError, ssl.SSLError, OSError) as exc:
+                raise LXDError(f"could not reach host '{host.name}': {exc}") from exc
 
     def _wait_operation(self, client: httpx.Client, op_body: dict) -> dict:
         op_url = op_body.get("operation")

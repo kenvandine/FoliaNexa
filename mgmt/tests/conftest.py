@@ -32,6 +32,12 @@ class FakeLXDClient:
         self.updated_config: dict[tuple[str, str], dict] = {}  # (host_name, container) -> last config pushed
         self.unreachable: set[str] = set()  # host names that ping_host should report as down
         self.ping_calls: list[str] = []
+        # container name -> exception instance to raise from
+        # restart_container instead of succeeding — used to simulate a
+        # transport-level failure (e.g. an unreachable host), as opposed to
+        # fail_migrate_for/fail_push_for's LXDError, which real callers are
+        # already written to expect.
+        self.fail_restart_with: dict[str, Exception] = {}
         # In-memory "container filesystem" backing list_files/read_file, and
         # what push_file writes into — (host_name, container, path) -> content.
         # Tests can seed a "live" file directly (simulating a plugin's own
@@ -78,6 +84,8 @@ class FakeLXDClient:
         self.deleted.append((host.name, name))
 
     def restart_container(self, host, name):
+        if name in self.fail_restart_with:
+            raise self.fail_restart_with[name]
         self.restarted.append((host.name, name))
 
     def stop_container(self, host, name):
