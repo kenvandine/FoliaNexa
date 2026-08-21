@@ -21,7 +21,7 @@ from typing import Callable, TypeVar
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session, func, select
 
 from folia_mgmt.avatar import get_player_avatar
 from folia_mgmt.config import Settings
@@ -204,6 +204,7 @@ class PlayerSummary(BaseModel):
 
 class PlayersResponse(BaseModel):
     players: list[PlayerSummary]
+    total: int
 
 
 @router.get("/players", response_model=PlayersResponse)
@@ -215,7 +216,12 @@ def list_players(
 ) -> PlayersResponse:
     def compute() -> PlayersResponse:
         rows = session.exec(select(PlayerProfile).order_by(PlayerProfile.last_seen.desc()).limit(limit)).all()
+        # A real count, independent of `limit` — the portal's "All known
+        # players (N)" needs the true total, not len(players), which is
+        # silently capped at 200 (and the UI itself asks for even less).
+        total = session.exec(select(func.count()).select_from(PlayerProfile)).one()
         return PlayersResponse(
+            total=total,
             players=[PlayerSummary(uuid=p.uuid, username=p.username, last_seen=p.last_seen) for p in rows]
         )
 

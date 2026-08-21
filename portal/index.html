@@ -20,7 +20,7 @@
 </header>
 <main>
   <div class="card">
-    <h2>Recently active players</h2>
+    <h2>Recently active players <span id="pulse-count" class="muted"></span></h2>
     <p class="muted" id="pulse-note">
       Based on the last stats report each player's client sent — not a live
       presence feed, so treat this as approximate.
@@ -29,7 +29,7 @@
   </div>
 
   <div class="card">
-    <h2>All known players</h2>
+    <h2>All known players <span id="all-players-count" class="muted"></span></h2>
     <div id="all-players" class="player-grid"><p class="loading">Loading…</p></div>
   </div>
 </main>
@@ -54,14 +54,24 @@ function renderPlayerGrid(container, players) {
   }
 }
 
+function formatCount(n) {
+  return `(${n} player${n === 1 ? "" : "s"})`;
+}
+
 async function load() {
   const pulseEl = document.getElementById("pulse");
   const allEl = document.getElementById("all-players");
+  const pulseCountEl = document.getElementById("pulse-count");
+  const allCountEl = document.getElementById("all-players-count");
   try {
-    const { players } = await apiGet("/players?limit=100");
+    const { players, total } = await apiGet("/players?limit=100");
     renderPlayerGrid(allEl, players);
+    // `total` is the true count of every known player — not
+    // players.length, which is capped by the ?limit=100 above.
+    allCountEl.textContent = formatCount(total);
 
     const active = players.filter((p) => isRecentlyActive(p.last_seen));
+    pulseCountEl.textContent = formatCount(active.length);
     if (active.length === 0) {
       pulseEl.innerHTML = '<p class="muted">Nobody’s reported in within the last few minutes.</p>';
     } else {

@@ -160,6 +160,18 @@ def test_list_players(client, operator_token):
     assert usernames == {"Alice", "Bob", "Carol"}
 
 
+def test_list_players_total_is_a_real_count_not_capped_by_limit(client, operator_token):
+    # total must reflect every known player, not len(players) — the
+    # portal's "All known players (N)" needs the true count even when
+    # `limit` (default 50, max 200) is smaller than how many exist.
+    _seed(client, operator_token)
+
+    resp = client.get("/api/v1/public/players", params={"limit": 2})
+    body = resp.json()
+    assert len(body["players"]) == 2
+    assert body["total"] == 3
+
+
 def test_get_unknown_player_404s(client):
     resp = client.get("/api/v1/public/players/does-not-exist")
     assert resp.status_code == 404
