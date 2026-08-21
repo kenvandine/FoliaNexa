@@ -539,7 +539,38 @@ const state = {
   minecraftVersion: null,
   logTab: 'console',
   logController: null,
+  pollTimer: null,
 };
+
+// Worlds/hosts status is live-polled while their tab is active — see
+// showTab/startPolling below. 15s (half the public portal's 30s) since
+// this is an operator's live console, not a cached public page, and both
+// loaders fully replace their table's innerHTML from scratch every call
+// (see loadWorlds/loadHosts), so a tick landing mid-edit-modal is safe:
+// the edit/details/config cards are separate DOM elements populated once
+// at open-time from a state.worlds snapshot, not re-rendered by this.
+const POLL_INTERVAL_MS = 15000;
+const POLLERS = { worlds: loadWorlds, hosts: loadHosts };
+
+function stopPolling() {
+  if (state.pollTimer) {
+    clearInterval(state.pollTimer);
+    state.pollTimer = null;
+  }
+}
+
+function startPolling(name) {
+  stopPolling();
+  const loader = POLLERS[name];
+  if (!loader) return;
+  state.pollTimer = setInterval(() => {
+    // Skip a backgrounded tab's tick rather than unsubscribing — resumes
+    // on its own next tick once the tab is visible again, no separate
+    // visibilitychange listener needed.
+    if (document.hidden) return;
+    loader().catch(() => {}); // loadHosts has no error UI of its own; don't spam the console every tick on a transient failure
+  }, POLL_INTERVAL_MS);
+}
 
 async function api(path, options) {
   options = options || {};
@@ -593,6 +624,7 @@ async function doLogin() {
 }
 
 function logout() {
+  stopPolling();
   state.token = null;
   localStorage.removeItem('folia_token');
   localStorage.removeItem('folia_username');
@@ -622,6 +654,7 @@ function showTab(name) {
   document.querySelector('nav button[data-tab="' + name + '"]').classList.add('active');
   const loaders = { worlds: loadWorlds, hosts: loadHosts, plugins: loadCatalog, datapacks: loadDatapackCatalog, display: loadDisplay, chat: loadChatConfig, access: loadAccessTab, users: loadUsers };
   loaders[name]();
+  startPolling(name);
 }
 
 function escapeHtml(s) {
