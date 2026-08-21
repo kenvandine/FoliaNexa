@@ -108,9 +108,9 @@ def test_worlds_online_treats_stale_presence_as_empty(client, admin_token, opera
 def _seed(client, operator_token):
     body = {
         "players": [
-            {"uuid": "uuid-a", "username": "Alice", "stats": {"kills": 10}},
-            {"uuid": "uuid-b", "username": "Bob", "stats": {"kills": 30}},
-            {"uuid": "uuid-c", "username": "Carol", "stats": {"kills": 20}},
+            {"uuid": "uuid-a", "username": "Alice", "stat_deltas": {"kills": 10}},
+            {"uuid": "uuid-b", "username": "Bob", "stat_deltas": {"kills": 30}},
+            {"uuid": "uuid-c", "username": "Carol", "stat_deltas": {"kills": 20}},
         ]
     }
     resp = client.post("/api/v1/stats/report", json=body, headers=auth_header(operator_token))
@@ -186,7 +186,7 @@ def test_leaderboard_response_is_cached(client, operator_token, app, monkeypatch
     # in effect, then confirm the cached response is still served.
     client.post(
         "/api/v1/stats/report",
-        json={"players": [{"uuid": "uuid-a", "username": "Alice", "stats": {"kills": 999}}]},
+        json={"players": [{"uuid": "uuid-a", "username": "Alice", "stat_deltas": {"kills": 999}}]},
         headers=auth_header(operator_token),
     )
     second = client.get("/api/v1/public/leaderboards", params={"stat": "kills"}).json()
