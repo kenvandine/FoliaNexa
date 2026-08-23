@@ -10,6 +10,7 @@ three callers.
 from __future__ import annotations
 
 import logging
+from datetime import timedelta
 from typing import Callable
 
 import httpx
@@ -20,8 +21,22 @@ from folia_mgmt.config import Settings, get_settings
 from folia_mgmt.folianexa_stats import apply_stats_config
 from folia_mgmt.luckperms import apply_luckperms_config
 from folia_mgmt.lxd_client import LXDClient, LXDError, extract_ipv4
-from folia_mgmt.models import Host, HostStatus, MinecraftVersionConfig, World, WorldPhase, WorldPluginConfigFile, utcnow
+from folia_mgmt.models import (
+    Host,
+    HostStatus,
+    MinecraftVersionConfig,
+    World,
+    WorldBackup,
+    WorldPhase,
+    WorldPluginConfigFile,
+    utcnow,
+)
 from folia_mgmt.plugin_files import MANAGED_PLUGIN_IDS, plugin_root
+
+# World backups (PLAN.md — dashboard "time machine" restores): an hourly
+# LXD snapshot of every backups_enabled running world, kept for a week.
+BACKUP_INTERVAL = timedelta(hours=1)
+BACKUP_RETENTION = timedelta(days=7)
 
 logger = logging.getLogger(__name__)
 
@@ -464,6 +479,67 @@ def sync_plugin_config_files(session: Session, lxd_client: LXDClient) -> None:
                 )
 
 
+def run_scheduled_backups(session: Session, lxd_client: LXDClient) -> None:
+    """Takes an hourly LXD snapshot of every backups_enabled running world,
+    tracked in WorldBackup so the dashboard can list backups and restore
+    from one ("time machine" style) — unlike the older ad-hoc POST
+    /worlds/{name}/snapshot, which creates a raw LXD snapshot mgmt never
+    records anywhere. reconcile() itself runs every 15s (see
+    RECONCILE_INTERVAL_SECONDS in main.py), so this self-gates to hourly by
+    comparing "now" against each world's own most recent scheduled-backup
+    row rather than firing every tick."""
+    worlds = session.exec(
+        select(World).where(World.phase == WorldPhase.running, World.backups_enabled.is_(True))
+    ).all()
+    now = utcnow()
+    for world in worlds:
+        latest = session.exec(
+            select(WorldBackup)
+            .where(WorldBackup.world_name == world.name, WorldBackup.kind == "scheduled")
+            .order_by(WorldBackup.created_at.desc())
+        ).first()
+        if latest is not None and now - latest.created_at < BACKUP_INTERVAL:
+            continue
+        host = session.exec(select(Host).where(Host.name == world.host_name)).first()
+        if host is None or not world.container_name:
+            continue
+        label = f"auto-{int(now.timestamp())}"
+        try:
+            lxd_client.snapshot_container(host, world.container_name, label)
+        except LXDError:
+            logger.exception("scheduled backup of world '%s' failed, will retry next reconcile", world.name)
+            continue
+        session.add(WorldBackup(world_name=world.name, snapshot_name=label, kind="scheduled", created_at=now))
+        session.commit()
+
+
+def prune_expired_backups(session: Session, lxd_client: LXDClient) -> None:
+    """Keeps a week's worth of tracked backups (BACKUP_RETENTION) —
+    deletes both the underlying LXD snapshot and its WorldBackup row once
+    a backup is older than that. A snapshot-delete failure (e.g. the
+    world's host is unreachable right now) leaves the row in place so it's
+    retried on a later reconcile tick, rather than mgmt losing track of a
+    snapshot that's still actually sitting on the host's storage pool."""
+    cutoff = utcnow() - BACKUP_RETENTION
+    expired = session.exec(select(WorldBackup).where(WorldBackup.created_at < cutoff)).all()
+    for backup in expired:
+        world = session.exec(select(World).where(World.name == backup.world_name)).first()
+        if world is not None and world.host_name and world.container_name:
+            host = session.exec(select(Host).where(Host.name == world.host_name)).first()
+            if host is not None:
+                try:
+                    lxd_client.delete_snapshot(host, world.container_name, backup.snapshot_name)
+                except LXDError:
+                    logger.exception(
+                        "failed to delete expired snapshot '%s' for world '%s', will retry next reconcile",
+                        backup.snapshot_name,
+                        backup.world_name,
+                    )
+                    continue
+        session.delete(backup)
+        session.commit()
+
+
 def _isolated(session: Session, step_name: str, fn: Callable[[], None]) -> None:
     """Runs one reconcile step (or one world's turn within a step's loop),
     logging and swallowing any exception instead of letting it propagate
@@ -522,6 +598,8 @@ def reconcile(
     _isolated(session, "sync_luckperms_configs", lambda: sync_luckperms_configs(session, lxd_client, settings))
     _isolated(session, "sync_stats_configs", lambda: sync_stats_configs(session, lxd_client, settings))
     _isolated(session, "sync_plugin_config_files", lambda: sync_plugin_config_files(session, lxd_client))
+    _isolated(session, "run_scheduled_backups", lambda: run_scheduled_backups(session, lxd_client))
+    _isolated(session, "prune_expired_backups", lambda: prune_expired_backups(session, lxd_client))
 
     for world in session.exec(select(World).where(World.phase == WorldPhase.draining)).all():
         _isolated(session, f"teardown_world({world.name})",

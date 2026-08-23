@@ -118,8 +118,36 @@ class World(SQLModel, table=True):
     whitelist_enabled: bool = False
     ops: list[str] = Field(default_factory=list, sa_column=Column(JSON))
 
+    # Automatic hourly world backups (see scheduler.run_scheduled_backups /
+    # WorldBackup below) — on by default, toggled via PUT
+    # /worlds/{name}/backups-config. Independent of snapshot_schedule/
+    # snapshot_expiry above, which are LXD-native and only ever applied at
+    # container launch time.
+    backups_enabled: bool = True
+
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class WorldBackup(SQLModel, table=True):
+    """One tracked backup — an LXD instance snapshot (LXDClient.
+    snapshot_container) plus the metadata (when, what kind) mgmt needs to
+    list and restore from in the dashboard's "time machine" backups UI.
+
+    Distinct from the older ad-hoc POST /worlds/{name}/snapshot: that
+    endpoint creates a raw LXD snapshot mgmt never records anywhere, so
+    there was previously no way to list what snapshots exist for a world
+    at all. scheduler.run_scheduled_backups writes kind="scheduled" rows
+    hourly for every backups_enabled running world;
+    scheduler.prune_expired_backups deletes both the row and the
+    underlying LXD snapshot once older than BACKUP_RETENTION (a week).
+    """
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    world_name: str = Field(index=True)
+    snapshot_name: str
+    kind: str = "scheduled"  # "scheduled" (hourly, auto-pruned after a week)
+    created_at: datetime = Field(default_factory=utcnow, index=True)
 
 
 class WorldPluginConfigFile(SQLModel, table=True):

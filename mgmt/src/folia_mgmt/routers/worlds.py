@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+from datetime import datetime
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -12,13 +13,13 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from folia_mgmt.access_apply import UuidResolver, apply_ops, apply_whitelist
-from folia_mgmt.auth import require_operator, require_viewer
+from folia_mgmt.auth import require_admin, require_operator, require_viewer
 from folia_mgmt.config import Settings
 from folia_mgmt.datapack_catalog import load_catalog as load_datapack_catalog
 from folia_mgmt.db import get_session
 from folia_mgmt.deps import get_lxd_client, get_uuid_resolver, settings_dependency
 from folia_mgmt.lxd_client import LXDClient, LXDError
-from folia_mgmt.models import Host, HostStatus, MinecraftVersionConfig, World, WorldPhase, WorldType, utcnow
+from folia_mgmt.models import Host, HostStatus, MinecraftVersionConfig, World, WorldBackup, WorldPhase, WorldType, utcnow
 from folia_mgmt.routers.cluster import migrate_world_to_current_version
 from folia_mgmt.plugin_catalog import load_catalog
 from folia_mgmt.rcon import RconError, execute_rcon_command
@@ -65,6 +66,7 @@ class WorldResponse(BaseModel):
     address: str | None
     whitelist_enabled: bool
     ops: list[str]
+    backups_enabled: bool
 
 
 def _to_response(world: World) -> WorldResponse:
@@ -85,6 +87,7 @@ def _to_response(world: World) -> WorldResponse:
         address=world.address,
         whitelist_enabled=world.whitelist_enabled,
         ops=world.ops,
+        backups_enabled=world.backups_enabled,
     )
 
 
@@ -652,6 +655,73 @@ def restore_world(
     except LXDError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     return {"restored": snapshot_name}
+
+
+class BackupResponse(BaseModel):
+    id: int
+    snapshot_name: str
+    kind: str
+    created_at: datetime
+
+
+@router.get("/{name}/backups", response_model=list[BackupResponse], dependencies=[Depends(require_viewer)])
+def list_backups(name: str, session: Session = Depends(get_session)) -> list[BackupResponse]:
+    """Every tracked backup for this world, newest first — the automatic
+    hourly snapshots from scheduler.run_scheduled_backups, pruned to the
+    last week by scheduler.prune_expired_backups. Backs the dashboard's
+    "time machine" restore list."""
+    _get_world_or_404(session, name)
+    rows = session.exec(
+        select(WorldBackup).where(WorldBackup.world_name == name).order_by(WorldBackup.created_at.desc())
+    ).all()
+    return [
+        BackupResponse(id=row.id, snapshot_name=row.snapshot_name, kind=row.kind, created_at=row.created_at)
+        for row in rows
+    ]
+
+
+class BackupConfigRequest(BaseModel):
+    enabled: bool
+
+
+@router.put("/{name}/backups-config", dependencies=[Depends(require_operator)])
+def put_backup_config(
+    name: str, body: BackupConfigRequest, session: Session = Depends(get_session)
+) -> dict[str, bool]:
+    """Enables/disables the automatic hourly backup for this world (on by
+    default — World.backups_enabled). Disabling only stops *future*
+    scheduled backups; it doesn't delete backups already taken, and those
+    still expire on their normal week-long schedule via
+    prune_expired_backups."""
+    world = _get_world_or_404(session, name)
+    world.backups_enabled = body.enabled
+    world.updated_at = utcnow()
+    session.add(world)
+    session.commit()
+    return {"backups_enabled": world.backups_enabled}
+
+
+@router.post("/{name}/backups/{backup_id}/restore", dependencies=[Depends(require_admin)])
+def restore_backup(
+    name: str,
+    backup_id: int,
+    session: Session = Depends(get_session),
+    lxd_client: LXDClient = Depends(get_lxd_client),
+) -> dict[str, str]:
+    """"Time machine" restore: rolls this world back to one of its tracked
+    backups (GET /{name}/backups). Admin-only — stricter than the plain
+    operator-gated POST /{name}/restore/{snapshot_name} above, since this
+    is reachable straight from the dashboard by anyone with a login,
+    rather than requiring CLI/API access to an exact snapshot name."""
+    world, host = _host_and_world(session, name)
+    backup = session.get(WorldBackup, backup_id)
+    if backup is None or backup.world_name != name:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, f"no such backup '{backup_id}' for world '{name}'")
+    try:
+        lxd_client.restore_snapshot(host, world.container_name, backup.snapshot_name)
+    except LXDError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    return {"restored": backup.snapshot_name, "created_at": backup.created_at.isoformat()}
 
 
 @router.post("/{name}/migrate", response_model=WorldResponse, dependencies=[Depends(require_operator)])

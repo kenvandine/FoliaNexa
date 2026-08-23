@@ -379,6 +379,20 @@ class LXDClient:
             if resp.status_code == 202:
                 self._wait_operation(client, resp.json())
 
+    def delete_snapshot(self, host: Host, name: str, snapshot_name: str) -> None:
+        """Deletes one instance snapshot — the retention-pruning
+        counterpart to snapshot_container. 404 is treated as success (the
+        snapshot's already gone, e.g. a previous prune attempt deleted it
+        but failed to commit its own DB row removal)."""
+        with self._client_for(host) as client:
+            resp = client.delete(
+                f"/1.0/instances/{name}/snapshots/{snapshot_name}", params={"project": host.project}
+            )
+            if resp.status_code not in (200, 202, 404):
+                raise LXDError(f"delete of snapshot '{snapshot_name}' for '{name}' on '{host.name}' failed: {resp.text}")
+            if resp.status_code == 202:
+                self._wait_operation(client, resp.json())
+
     def export_backup(self, host: Host, name: str) -> bytes:
         """Exports an instance as a backup tarball, for cross-host copy
         (§13). Deliberately uses LXD's plain-HTTP backup export/import API
