@@ -79,7 +79,7 @@ is the exception, per the above.
 ## Running the test suites
 
 ```bash
-# mgmt (Python) — 373 tests
+# mgmt (Python) — 412 tests
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
@@ -788,6 +788,32 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   §14D's file-browser fix was checked against) and
   `mgmt/tests/test_plugins_api.py`'s end-to-end upload-then-replace/
   upload-then-delete round trips against a real running app.
+- World backups and dashboard "time machine" restores (PLAN.md §6A):
+  `World.backups_enabled` (default `true`), the new `WorldBackup` table,
+  `scheduler.run_scheduled_backups`/`prune_expired_backups` (new reconcile
+  steps — an hourly LXD snapshot per backups-enabled running world, pruned
+  after a week), and the `GET`/`PUT .../backups-config`/`POST
+  .../backups/{id}/restore` endpoints (the restore endpoint is
+  **admin-only**, stricter than the pre-existing operator-gated `POST
+  /{name}/restore/{snapshot_name}`, since it's reachable straight from the
+  dashboard). Real pytest suite (412 tests total, up from 373) covers the
+  hourly-gating and week-long retention logic in isolation
+  (`mgmt/tests/test_scheduler.py`, including snapshot/delete failure retry
+  paths) and the API end-to-end through a real reconcile pass
+  (`mgmt/tests/test_worlds.py`, including the admin-vs-operator restore
+  gate). The dashboard's new Backups section (world details panel,
+  alongside RCON/ops/live logs) was exercised against a real running
+  `folia-nexa-mgmt` instance in real headless Chromium — logged in,
+  created a world, opened its details panel, confirmed the section
+  renders (empty-state text, the enabled-by-default checkbox), toggled it
+  off, and confirmed via a direct API call that `backups_enabled` actually
+  flipped server-side. Not verified: the restore button's click flow (no
+  real LXD daemon or placed world was available in that check to
+  produce an actual backup to restore from) and a real LXD daemon
+  actually taking/pruning snapshots — `LXDClient.snapshot_container`/
+  `restore_snapshot` were already unverified against live LXD before this
+  feature (see the `LXDClient` entry below); `delete_snapshot` (new, for
+  pruning) carries the same caveat.
 
 Written against documented API contracts but **not** exercised against
 live infrastructure:
