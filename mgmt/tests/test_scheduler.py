@@ -32,6 +32,7 @@ from folia_mgmt.scheduler import (
     select_host,
     sync_plugin_config_files,
     sync_whitelisted_worlds,
+    teardown_world,
 )
 
 
@@ -908,4 +909,75 @@ def test_prune_expired_backups_drops_row_when_world_no_longer_exists():
     lxd = _RecordingLXDClient()
     prune_expired_backups(session, lxd)  # must not raise
 
+    assert session.exec(select(WorldBackup)).all() == []
+
+
+def test_teardown_world_deletes_its_backup_rows():
+    # World.name is reusable once its row is gone (teardown_world's own
+    # docstring) — WorldBackup rows are keyed on that bare name string with
+    # no FK, so a new world created with the same name must not inherit an
+    # old, unrelated world's backup history.
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    world = World(
+        name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+        phase=WorldPhase.draining, host_name="node-a", container_name="world-a",
+    )
+    session.add(world)
+    session.add(WorldBackup(world_name="world-a", snapshot_name="auto-1", kind="scheduled"))
+    session.add(WorldBackup(world_name="world-a", snapshot_name="auto-2", kind="scheduled"))
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    teardown_world(session, lxd, world)
+
+    assert session.get(World, world.id) is None
+    assert session.exec(select(WorldBackup).where(WorldBackup.world_name == "world-a")).all() == []
+
+
+def test_teardown_world_leaves_backup_rows_when_container_delete_fails():
+    # Teardown itself retries next tick on failure (the pre-existing
+    # behavior) — the backup rows must survive that retry too, not be
+    # dropped before the world row they belong to is actually gone.
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    world = World(
+        name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+        phase=WorldPhase.draining, host_name="node-a", container_name="world-a",
+    )
+    session.add(world)
+    session.add(WorldBackup(world_name="world-a", snapshot_name="auto-1", kind="scheduled"))
+    session.commit()
+
+    class _FailingLXDClient(_RecordingLXDClient):
+        def delete_container(self, host, name, *, stop_first=True):
+            raise LXDError("simulated delete failure")
+
+    teardown_world(session, _FailingLXDClient(), world)
+
+    assert session.get(World, world.id) is not None
+    assert len(session.exec(select(WorldBackup).where(WorldBackup.world_name == "world-a")).all()) == 1
+
+
+def test_run_scheduled_backups_skips_worlds_on_an_offline_host():
+    # A host outage must not turn into a fresh LXD call (and a fresh
+    # exception log) for every affected world on every 15s reconcile tick —
+    # check_host_health (which runs earlier in the same reconcile pass)
+    # already marks the host offline, so this waits for it to come back
+    # rather than hammering it.
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.offline))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+            backups_enabled=True,
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    run_scheduled_backups(session, lxd)  # must not raise
+
+    assert lxd.snapshots == []
     assert session.exec(select(WorldBackup)).all() == []

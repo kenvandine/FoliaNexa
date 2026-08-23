@@ -974,7 +974,7 @@ function renderWorldBackups(name, backups) {
     <tr>
       <td>${escapeHtml(new Date(b.created_at + 'Z').toLocaleString())}</td>
       <td>${escapeHtml(b.kind)}</td>
-      <td>${state.role === 'admin' ? `<button class="btn ghost" onclick="restoreWorldBackup('${escapeHtml(name)}', ${b.id})">Restore</button>` : ''}</td>
+      <td>${state.role === 'admin' ? `<button class="btn ghost" onclick="restoreWorldBackup(state.detailsWorld, ${b.id})">Restore</button>` : ''}</td>
     </tr>
   `).join('') || '<tr><td colspan="3" class="hint">No backups yet — the first automatic backup is taken within an hour of the world starting.</td></tr>';
 }
@@ -985,12 +985,13 @@ async function toggleWorldBackups(enabled) {
   const errorEl = document.getElementById('world-backups-error');
   errorEl.textContent = '';
   try {
-    await api('/worlds/' + encodeURIComponent(name) + '/backups-config', {
+    const result = await api('/worlds/' + encodeURIComponent(name) + '/backups-config', {
       method: 'PUT',
       body: JSON.stringify({ enabled }),
     });
     const world = state.worlds.find(w => w.name === name);
-    if (world) world.backups_enabled = enabled;
+    if (world) world.backups_enabled = result.backups_enabled;
+    document.getElementById('details-backups-enabled').checked = result.backups_enabled;
   } catch (e) {
     document.getElementById('details-backups-enabled').checked = !enabled; // revert on failure
     errorEl.textContent = e.message;

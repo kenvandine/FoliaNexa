@@ -9,6 +9,7 @@ three callers.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 from datetime import timedelta
 from typing import Callable
@@ -29,6 +30,7 @@ from folia_mgmt.models import (
     WorldBackup,
     WorldPhase,
     WorldPluginConfigFile,
+    epoch_seconds,
     utcnow,
 )
 from folia_mgmt.plugin_files import MANAGED_PLUGIN_IDS, plugin_root
@@ -37,6 +39,13 @@ from folia_mgmt.plugin_files import MANAGED_PLUGIN_IDS, plugin_root
 # LXD snapshot of every backups_enabled running world, kept for a week.
 BACKUP_INTERVAL = timedelta(hours=1)
 BACKUP_RETENTION = timedelta(days=7)
+
+# Added on top of BACKUP_INTERVAL, per world, so a batch of worlds created
+# around the same time (e.g. configs/worlds/create-all.sh) don't all take
+# their hourly snapshot on the exact same wall-clock tick forever — a
+# stable hash of the world's own name, not real randomness, so the same
+# world always gets the same offset across restarts.
+BACKUP_JITTER = timedelta(minutes=5)
 
 logger = logging.getLogger(__name__)
 
@@ -260,6 +269,14 @@ def teardown_world(session: Session, lxd_client: LXDClient, world: World) -> Non
     itself stays, since a container mid-teardown that fails here (LXD
     unreachable) still needs *some* transient state, but success means
     genuinely gone, not parked forever.
+
+    Also drops every WorldBackup row for this world's name: those rows
+    are keyed on a bare world_name string (no FK to World.id), and the
+    LXD snapshots they reference die with the container above anyway — so
+    leaving them behind would hand a *new* world created with the same,
+    now-reusable name someone else's old, meaningless backup history
+    (list_backups/restore_backup, routers/worlds.py, don't check
+    anything but the name).
     """
     if world.host_name and world.container_name:
         host = session.exec(select(Host).where(Host.name == world.host_name)).first()
@@ -269,6 +286,8 @@ def teardown_world(session: Session, lxd_client: LXDClient, world: World) -> Non
             except LXDError:
                 logger.exception("failed to delete container for world '%s', will retry", world.name)
                 return
+    for backup in session.exec(select(WorldBackup).where(WorldBackup.world_name == world.name)).all():
+        session.delete(backup)
     session.delete(world)
     session.commit()
 
@@ -479,37 +498,69 @@ def sync_plugin_config_files(session: Session, lxd_client: LXDClient) -> None:
                 )
 
 
+def _backup_jitter(world_name: str) -> timedelta:
+    seed = int(hashlib.sha256(world_name.encode()).hexdigest(), 16)
+    return timedelta(seconds=seed % int(BACKUP_JITTER.total_seconds()))
+
+
 def run_scheduled_backups(session: Session, lxd_client: LXDClient) -> None:
     """Takes an hourly LXD snapshot of every backups_enabled running world,
     tracked in WorldBackup so the dashboard can list backups and restore
     from one ("time machine" style) — unlike the older ad-hoc POST
     /worlds/{name}/snapshot, which creates a raw LXD snapshot mgmt never
     records anywhere. reconcile() itself runs every 15s (see
-    RECONCILE_INTERVAL_SECONDS in main.py), so this self-gates to hourly by
+    RECONCILE_INTERVAL_SECONDS in main.py), so this self-gates to roughly
+    hourly (BACKUP_INTERVAL + a stable per-world _backup_jitter) by
     comparing "now" against each world's own most recent scheduled-backup
-    row rather than firing every tick."""
+    row rather than firing every tick.
+
+    A world whose host isn't currently `online` (per check_host_health,
+    which runs earlier in the same reconcile pass) is skipped without
+    attempting the LXD call at all — during a host outage this would
+    otherwise retry, and log a fresh exception for, every affected world
+    on every 15s tick instead of quietly waiting for the host to come
+    back and the next hourly window to open.
+    """
     worlds = session.exec(
         select(World).where(World.phase == WorldPhase.running, World.backups_enabled.is_(True))
     ).all()
+    if not worlds:
+        return
     now = utcnow()
+
+    # One query for the latest scheduled backup of every candidate world,
+    # instead of one query per world (N+1) on every 15s tick.
+    world_names = [w.name for w in worlds]
+    latest_by_world: dict[str, WorldBackup] = {}
+    for backup in session.exec(
+        select(WorldBackup)
+        .where(WorldBackup.world_name.in_(world_names), WorldBackup.kind == "scheduled")
+        .order_by(WorldBackup.created_at.desc())
+    ).all():
+        latest_by_world.setdefault(backup.world_name, backup)
+
+    host_names = {w.host_name for w in worlds if w.host_name}
+    hosts_by_name = {
+        host.name: host for host in session.exec(select(Host).where(Host.name.in_(host_names))).all()
+    } if host_names else {}
+
+    dirty = False
     for world in worlds:
-        latest = session.exec(
-            select(WorldBackup)
-            .where(WorldBackup.world_name == world.name, WorldBackup.kind == "scheduled")
-            .order_by(WorldBackup.created_at.desc())
-        ).first()
-        if latest is not None and now - latest.created_at < BACKUP_INTERVAL:
+        latest = latest_by_world.get(world.name)
+        if latest is not None and now - latest.created_at < BACKUP_INTERVAL + _backup_jitter(world.name):
             continue
-        host = session.exec(select(Host).where(Host.name == world.host_name)).first()
-        if host is None or not world.container_name:
+        host = hosts_by_name.get(world.host_name) if world.host_name else None
+        if host is None or not world.container_name or host.status != HostStatus.online:
             continue
-        label = f"auto-{int(now.timestamp())}"
+        label = f"auto-{epoch_seconds(now)}"
         try:
             lxd_client.snapshot_container(host, world.container_name, label)
         except LXDError:
             logger.exception("scheduled backup of world '%s' failed, will retry next reconcile", world.name)
             continue
         session.add(WorldBackup(world_name=world.name, snapshot_name=label, kind="scheduled", created_at=now))
+        dirty = True
+    if dirty:
         session.commit()
 
 
@@ -519,13 +570,31 @@ def prune_expired_backups(session: Session, lxd_client: LXDClient) -> None:
     a backup is older than that. A snapshot-delete failure (e.g. the
     world's host is unreachable right now) leaves the row in place so it's
     retried on a later reconcile tick, rather than mgmt losing track of a
-    snapshot that's still actually sitting on the host's storage pool."""
+    snapshot that's still actually sitting on the host's storage pool.
+    When the owning world or its host can't be resolved at all (deleted
+    since, or never placed), there's no LXD snapshot left to reach —
+    dropping the row is correct, but it's logged rather than silent, since
+    it's the one path here that can't actually confirm nothing was left
+    behind on a host's storage pool."""
     cutoff = utcnow() - BACKUP_RETENTION
     expired = session.exec(select(WorldBackup).where(WorldBackup.created_at < cutoff)).all()
+    if not expired:
+        return
+
+    world_names = {b.world_name for b in expired}
+    worlds_by_name = {
+        world.name: world for world in session.exec(select(World).where(World.name.in_(world_names))).all()
+    }
+    host_names = {w.host_name for w in worlds_by_name.values() if w.host_name}
+    hosts_by_name = {
+        host.name: host for host in session.exec(select(Host).where(Host.name.in_(host_names))).all()
+    } if host_names else {}
+
+    dirty = False
     for backup in expired:
-        world = session.exec(select(World).where(World.name == backup.world_name)).first()
+        world = worlds_by_name.get(backup.world_name)
         if world is not None and world.host_name and world.container_name:
-            host = session.exec(select(Host).where(Host.name == world.host_name)).first()
+            host = hosts_by_name.get(world.host_name)
             if host is not None:
                 try:
                     lxd_client.delete_snapshot(host, world.container_name, backup.snapshot_name)
@@ -536,7 +605,21 @@ def prune_expired_backups(session: Session, lxd_client: LXDClient) -> None:
                         backup.world_name,
                     )
                     continue
+            else:
+                logger.warning(
+                    "expired backup '%s' for world '%s' points at unknown host '%s' — dropping the row "
+                    "without confirming the LXD snapshot was actually deleted",
+                    backup.snapshot_name, backup.world_name, world.host_name,
+                )
+        else:
+            logger.warning(
+                "expired backup '%s' for world '%s' has no resolvable world/host anymore — dropping the "
+                "row without confirming the LXD snapshot was actually deleted",
+                backup.snapshot_name, backup.world_name,
+            )
         session.delete(backup)
+        dirty = True
+    if dirty:
         session.commit()
 
 

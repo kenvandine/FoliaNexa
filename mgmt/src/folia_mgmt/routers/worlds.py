@@ -19,7 +19,17 @@ from folia_mgmt.datapack_catalog import load_catalog as load_datapack_catalog
 from folia_mgmt.db import get_session
 from folia_mgmt.deps import get_lxd_client, get_uuid_resolver, settings_dependency
 from folia_mgmt.lxd_client import LXDClient, LXDError
-from folia_mgmt.models import Host, HostStatus, MinecraftVersionConfig, World, WorldBackup, WorldPhase, WorldType, utcnow
+from folia_mgmt.models import (
+    Host,
+    HostStatus,
+    MinecraftVersionConfig,
+    World,
+    WorldBackup,
+    WorldPhase,
+    WorldType,
+    epoch_seconds,
+    utcnow,
+)
 from folia_mgmt.routers.cluster import migrate_world_to_current_version
 from folia_mgmt.plugin_catalog import load_catalog
 from folia_mgmt.rcon import RconError, execute_rcon_command
@@ -634,12 +644,19 @@ def snapshot_world(
     lxd_client: LXDClient = Depends(get_lxd_client),
 ) -> dict[str, str]:
     world, host = _host_and_world(session, name)
-    label = snapshot_name or f"manual-{int(utcnow().timestamp())}"
+    label = snapshot_name or f"manual-{epoch_seconds(utcnow())}"
     try:
         lxd_client.snapshot_container(host, world.container_name, label)
     except LXDError as exc:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
     return {"snapshot": label}
+
+
+def _restore_snapshot_or_502(lxd_client: LXDClient, host: Host, world: World, snapshot_name: str) -> None:
+    try:
+        lxd_client.restore_snapshot(host, world.container_name, snapshot_name)
+    except LXDError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
 
 
 @router.post("/{name}/restore/{snapshot_name}", dependencies=[Depends(require_operator)])
@@ -650,10 +667,7 @@ def restore_world(
     lxd_client: LXDClient = Depends(get_lxd_client),
 ) -> dict[str, str]:
     world, host = _host_and_world(session, name)
-    try:
-        lxd_client.restore_snapshot(host, world.container_name, snapshot_name)
-    except LXDError as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    _restore_snapshot_or_502(lxd_client, host, world, snapshot_name)
     return {"restored": snapshot_name}
 
 
@@ -717,10 +731,7 @@ def restore_backup(
     backup = session.get(WorldBackup, backup_id)
     if backup is None or backup.world_name != name:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"no such backup '{backup_id}' for world '{name}'")
-    try:
-        lxd_client.restore_snapshot(host, world.container_name, backup.snapshot_name)
-    except LXDError as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    _restore_snapshot_or_502(lxd_client, host, world, backup.snapshot_name)
     return {"restored": backup.snapshot_name, "created_at": backup.created_at.isoformat()}
 
 

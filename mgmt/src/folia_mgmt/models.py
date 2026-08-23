@@ -18,6 +18,15 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
+def epoch_seconds(dt: datetime) -> int:
+    """Converts a utcnow()-produced (naive-but-UTC-valued) datetime to a
+    real Unix epoch integer. dt.timestamp() on a naive datetime assumes
+    *local* time, which silently corrupts the result whenever the process
+    isn't running in UTC — every snapshot-name timestamp in this codebase
+    must go through this instead."""
+    return int((dt - datetime(1970, 1, 1)).total_seconds())
+
+
 class HostStatus(str, enum.Enum):
     online = "online"
     offline = "offline"
