@@ -213,6 +213,17 @@ def worlds_restore(name: str, snapshot_name: str, mgmt_url: str | None = None) -
     typer.echo(f"restored '{name}' from snapshot '{snapshot_name}'")
 
 
+@worlds_app.command("migrate")
+def worlds_migrate(name: str, target_host: str, mgmt_url: str | None = None) -> None:
+    """Move a world to a different trusted LXD host: stop it, export/import
+    its container, and start it on the target. A brief outage is expected
+    (this isn't a live migration) — see POST /worlds/{name}/migrate."""
+    with _client(mgmt_url) as client:
+        resp = client.post(f"/api/v1/worlds/{name}/migrate", params={"target_host": target_host})
+        _fail_on_error(resp)
+    typer.echo(f"migrated '{name}' to '{target_host}'")
+
+
 @worlds_app.command("restart")
 def worlds_restart(name: str, mgmt_url: str | None = None) -> None:
     """Restart a world's container — e.g. to apply an edited plugin config
