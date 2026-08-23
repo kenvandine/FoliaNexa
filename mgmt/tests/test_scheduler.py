@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from folia_mgmt.config import Settings
@@ -11,19 +13,26 @@ from folia_mgmt.models import (
     HostStatus,
     MinecraftVersionConfig,
     World,
+    WorldBackup,
     WorldPhase,
     WorldPluginConfigFile,
     WorldType,
+    utcnow,
 )
 from folia_mgmt.scheduler import (
+    BACKUP_INTERVAL,
+    BACKUP_RETENTION,
     _node_config,
     check_host_health,
     check_running_worlds,
     migrate_worlds_off_draining_hosts,
+    prune_expired_backups,
     recover_crashed_worlds,
+    run_scheduled_backups,
     select_host,
     sync_plugin_config_files,
     sync_whitelisted_worlds,
+    teardown_world,
 )
 
 
@@ -118,6 +127,10 @@ class _RecordingLXDClient:
         self.deleted: list[tuple[str, str]] = []
         self.fail_migrate_for: set[str] = set()
         self.fail_push_for: set[str] = set()  # paths to raise LXDError for
+        self.snapshots: list[tuple[str, str, str]] = []  # (host, name, snapshot_name)
+        self.deleted_snapshots: list[tuple[str, str, str]] = []
+        self.fail_snapshot_for: set[str] = set()  # world/container names to raise LXDError for
+        self.fail_delete_snapshot_for: set[str] = set()  # snapshot names to raise LXDError for
 
     def restart_container(self, host, name):
         self.restarted.append(name)
@@ -134,6 +147,16 @@ class _RecordingLXDClient:
 
     def delete_container(self, host, name, *, stop_first=True):
         self.deleted.append((host.name, name))
+
+    def snapshot_container(self, host, name, snapshot_name):
+        if name in self.fail_snapshot_for:
+            raise LXDError(f"simulated snapshot failure for {name}")
+        self.snapshots.append((host.name, name, snapshot_name))
+
+    def delete_snapshot(self, host, name, snapshot_name):
+        if snapshot_name in self.fail_delete_snapshot_for:
+            raise LXDError(f"simulated snapshot delete failure for {snapshot_name}")
+        self.deleted_snapshots.append((host.name, name, snapshot_name))
 
 
 def test_check_running_worlds_marks_unhealthy_worlds_crashed():
@@ -654,3 +677,307 @@ def test_sync_plugin_config_files_skips_managed_plugin_rows():
     sync_plugin_config_files(session, lxd)
 
     assert lxd.pushed == {}
+
+
+def test_run_scheduled_backups_snapshots_running_backups_enabled_world():
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+            backups_enabled=True,
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    run_scheduled_backups(session, lxd)
+
+    assert len(lxd.snapshots) == 1
+    host_name, container_name, snapshot_name = lxd.snapshots[0]
+    assert (host_name, container_name) == ("node-a", "world-a")
+    assert snapshot_name.startswith("auto-")
+
+    rows = session.exec(select(WorldBackup).where(WorldBackup.world_name == "world-a")).all()
+    assert len(rows) == 1
+    assert rows[0].snapshot_name == snapshot_name
+    assert rows[0].kind == "scheduled"
+
+
+def test_run_scheduled_backups_skips_when_disabled():
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+            backups_enabled=False,
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    run_scheduled_backups(session, lxd)
+
+    assert lxd.snapshots == []
+    assert session.exec(select(WorldBackup)).all() == []
+
+
+def test_run_scheduled_backups_skips_non_running_worlds():
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.stopped, host_name="node-a", container_name="world-a",
+            backups_enabled=True,
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    run_scheduled_backups(session, lxd)
+
+    assert lxd.snapshots == []
+
+
+def test_run_scheduled_backups_skips_worlds_backed_up_within_the_last_hour():
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+            backups_enabled=True,
+        )
+    )
+    session.add(
+        WorldBackup(
+            world_name="world-a", snapshot_name="auto-recent", kind="scheduled",
+            created_at=utcnow() - (BACKUP_INTERVAL - timedelta(minutes=5)),
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    run_scheduled_backups(session, lxd)
+
+    assert lxd.snapshots == []
+    assert len(session.exec(select(WorldBackup)).all()) == 1  # no new row added
+
+
+def test_run_scheduled_backups_takes_a_new_backup_once_the_interval_has_passed():
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+            backups_enabled=True,
+        )
+    )
+    session.add(
+        WorldBackup(
+            world_name="world-a", snapshot_name="auto-old", kind="scheduled",
+            created_at=utcnow() - (BACKUP_INTERVAL + timedelta(minutes=5)),
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    run_scheduled_backups(session, lxd)
+
+    assert len(lxd.snapshots) == 1
+    assert len(session.exec(select(WorldBackup)).all()) == 2
+
+
+def test_run_scheduled_backups_tolerates_snapshot_failure_and_continues():
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-broken", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-broken",
+            backups_enabled=True,
+        )
+    )
+    session.add(
+        World(
+            name="world-ok", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-ok",
+            backups_enabled=True,
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    lxd.fail_snapshot_for.add("world-broken")
+    run_scheduled_backups(session, lxd)  # must not raise
+
+    names_backed_up = {row.world_name for row in session.exec(select(WorldBackup)).all()}
+    assert names_backed_up == {"world-ok"}
+
+
+def test_prune_expired_backups_deletes_snapshot_and_row_older_than_a_week():
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+        )
+    )
+    session.add(
+        WorldBackup(
+            world_name="world-a", snapshot_name="auto-ancient", kind="scheduled",
+            created_at=utcnow() - (BACKUP_RETENTION + timedelta(hours=1)),
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    prune_expired_backups(session, lxd)
+
+    assert ("node-a", "world-a", "auto-ancient") in lxd.deleted_snapshots
+    assert session.exec(select(WorldBackup)).all() == []
+
+
+def test_prune_expired_backups_keeps_backups_within_retention():
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+        )
+    )
+    session.add(
+        WorldBackup(
+            world_name="world-a", snapshot_name="auto-recent", kind="scheduled",
+            created_at=utcnow() - timedelta(days=1),
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    prune_expired_backups(session, lxd)
+
+    assert lxd.deleted_snapshots == []
+    assert len(session.exec(select(WorldBackup)).all()) == 1
+
+
+def test_prune_expired_backups_retries_on_snapshot_delete_failure():
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+        )
+    )
+    session.add(
+        WorldBackup(
+            world_name="world-a", snapshot_name="auto-ancient", kind="scheduled",
+            created_at=utcnow() - (BACKUP_RETENTION + timedelta(hours=1)),
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    lxd.fail_delete_snapshot_for.add("auto-ancient")
+    prune_expired_backups(session, lxd)  # must not raise
+
+    assert lxd.deleted_snapshots == []
+    # row kept so the next reconcile tick retries the snapshot deletion
+    assert len(session.exec(select(WorldBackup)).all()) == 1
+
+
+def test_prune_expired_backups_drops_row_when_world_no_longer_exists():
+    # A world can be deleted entirely while its old backup rows are still
+    # pending expiry — nothing left to reach on LXD's side, so just drop
+    # the now-orphaned row rather than getting stuck forever.
+    session = _session()
+    session.add(
+        WorldBackup(
+            world_name="world-gone", snapshot_name="auto-ancient", kind="scheduled",
+            created_at=utcnow() - (BACKUP_RETENTION + timedelta(hours=1)),
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    prune_expired_backups(session, lxd)  # must not raise
+
+    assert session.exec(select(WorldBackup)).all() == []
+
+
+def test_teardown_world_deletes_its_backup_rows():
+    # World.name is reusable once its row is gone (teardown_world's own
+    # docstring) — WorldBackup rows are keyed on that bare name string with
+    # no FK, so a new world created with the same name must not inherit an
+    # old, unrelated world's backup history.
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    world = World(
+        name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+        phase=WorldPhase.draining, host_name="node-a", container_name="world-a",
+    )
+    session.add(world)
+    session.add(WorldBackup(world_name="world-a", snapshot_name="auto-1", kind="scheduled"))
+    session.add(WorldBackup(world_name="world-a", snapshot_name="auto-2", kind="scheduled"))
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    teardown_world(session, lxd, world)
+
+    assert session.get(World, world.id) is None
+    assert session.exec(select(WorldBackup).where(WorldBackup.world_name == "world-a")).all() == []
+
+
+def test_teardown_world_leaves_backup_rows_when_container_delete_fails():
+    # Teardown itself retries next tick on failure (the pre-existing
+    # behavior) — the backup rows must survive that retry too, not be
+    # dropped before the world row they belong to is actually gone.
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    world = World(
+        name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+        phase=WorldPhase.draining, host_name="node-a", container_name="world-a",
+    )
+    session.add(world)
+    session.add(WorldBackup(world_name="world-a", snapshot_name="auto-1", kind="scheduled"))
+    session.commit()
+
+    class _FailingLXDClient(_RecordingLXDClient):
+        def delete_container(self, host, name, *, stop_first=True):
+            raise LXDError("simulated delete failure")
+
+    teardown_world(session, _FailingLXDClient(), world)
+
+    assert session.get(World, world.id) is not None
+    assert len(session.exec(select(WorldBackup).where(WorldBackup.world_name == "world-a")).all()) == 1
+
+
+def test_run_scheduled_backups_skips_worlds_on_an_offline_host():
+    # A host outage must not turn into a fresh LXD call (and a fresh
+    # exception log) for every affected world on every 15s reconcile tick —
+    # check_host_health (which runs earlier in the same reconcile pass)
+    # already marks the host offline, so this waits for it to come back
+    # rather than hammering it.
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.offline))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+            backups_enabled=True,
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    run_scheduled_backups(session, lxd)  # must not raise
+
+    assert lxd.snapshots == []
+    assert session.exec(select(WorldBackup)).all() == []

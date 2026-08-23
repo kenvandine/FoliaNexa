@@ -290,6 +290,19 @@
         </div>
 
         <div style="margin-top:1rem;padding-top:0.8rem;border-top:1px solid var(--border)">
+          <div class="hint" style="margin-bottom:0.3rem">Backups — an automatic snapshot is taken every hour while enabled, kept for a week. Restoring rolls this world's save back to that point in time ("time machine" style) — admin only.</div>
+          <label style="display:inline-flex;align-items:center;gap:0.4rem;margin-bottom:0.5rem">
+            <input type="checkbox" id="details-backups-enabled" onchange="toggleWorldBackups(this.checked)">
+            Automatic hourly backups enabled
+          </label>
+          <table>
+            <thead><tr><th>Taken</th><th>Kind</th><th></th></tr></thead>
+            <tbody id="details-backups-body"></tbody>
+          </table>
+          <div id="world-backups-error" class="error"></div>
+        </div>
+
+        <div style="margin-top:1rem;padding-top:0.8rem;border-top:1px solid var(--border)">
           <div class="hint" style="margin-bottom:0.3rem">Live logs (streams while this panel is open; reconnects automatically if the world restarts):</div>
           <div class="inline" style="margin-bottom:0.4rem">
             <button class="btn ghost" id="log-tab-console" onclick="switchLogTab('console')">Server console</button>
@@ -887,6 +900,9 @@ function openWorldDetails(name) {
   document.getElementById('world-details-card').style.display = 'block';
   document.getElementById('world-details-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   renderWorldOps(world.ops);
+  document.getElementById('details-backups-enabled').checked = world.backups_enabled;
+  document.getElementById('world-backups-error').textContent = '';
+  loadWorldBackups(name);
   switchLogTab('console');
 }
 
@@ -937,6 +953,62 @@ async function removeWorldOp(op) {
   const world = state.worlds.find(w => w.name === name);
   const current = world ? world.ops : [];
   await _putWorldOps(name, current.filter(o => o !== op));
+}
+
+async function loadWorldBackups(name) {
+  const errorEl = document.getElementById('world-backups-error');
+  errorEl.textContent = '';
+  try {
+    const backups = await api('/worlds/' + encodeURIComponent(name) + '/backups');
+    renderWorldBackups(name, backups);
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+}
+
+function renderWorldBackups(name, backups) {
+  const body = document.getElementById('details-backups-body');
+  // created_at comes back as a naive-but-actually-UTC timestamp (see
+  // models.utcnow's docstring) — append 'Z' so Date() parses it as UTC
+  // instead of assuming the browser's local timezone.
+  body.innerHTML = backups.map(b => `
+    <tr>
+      <td>${escapeHtml(new Date(b.created_at + 'Z').toLocaleString())}</td>
+      <td>${escapeHtml(b.kind)}</td>
+      <td>${state.role === 'admin' ? `<button class="btn ghost" onclick="restoreWorldBackup(state.detailsWorld, ${b.id})">Restore</button>` : ''}</td>
+    </tr>
+  `).join('') || '<tr><td colspan="3" class="hint">No backups yet — the first automatic backup is taken within an hour of the world starting.</td></tr>';
+}
+
+async function toggleWorldBackups(enabled) {
+  const name = state.detailsWorld;
+  if (!name) return;
+  const errorEl = document.getElementById('world-backups-error');
+  errorEl.textContent = '';
+  try {
+    const result = await api('/worlds/' + encodeURIComponent(name) + '/backups-config', {
+      method: 'PUT',
+      body: JSON.stringify({ enabled }),
+    });
+    const world = state.worlds.find(w => w.name === name);
+    if (world) world.backups_enabled = result.backups_enabled;
+    document.getElementById('details-backups-enabled').checked = result.backups_enabled;
+  } catch (e) {
+    document.getElementById('details-backups-enabled').checked = !enabled; // revert on failure
+    errorEl.textContent = e.message;
+  }
+}
+
+async function restoreWorldBackup(name, backupId) {
+  const errorEl = document.getElementById('world-backups-error');
+  errorEl.textContent = '';
+  if (!confirm('Restore "' + name + '" to this backup? This rolls the world\'s save back to that point in time — any progress since then is lost.')) return;
+  try {
+    const result = await api('/worlds/' + encodeURIComponent(name) + '/backups/' + backupId + '/restore', { method: 'POST' });
+    alert('Restored ' + name + ' to the backup taken ' + new Date(result.created_at + 'Z').toLocaleString());
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
 }
 
 function closeWorldDetails() {

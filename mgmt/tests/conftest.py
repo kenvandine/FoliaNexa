@@ -24,6 +24,8 @@ class FakeLXDClient:
         self.started: list[tuple[str, str]] = []
         self.snapshots: list[tuple[str, str, str]] = []
         self.restores: list[tuple[str, str, str]] = []
+        self.deleted_snapshots: list[tuple[str, str, str]] = []
+        self.fail_delete_snapshot_for: set[str] = set()  # snapshot names to raise LXDError for
         self._next_ip = 10
         self.fail_launch_for: set[str] = set()
         self.pushed_files: dict[tuple[str, str, str], bytes] = {}  # (host_name, container, path) -> content
@@ -102,6 +104,11 @@ class FakeLXDClient:
 
     def restore_snapshot(self, host, name, snapshot_name):
         self.restores.append((host.name, name, snapshot_name))
+
+    def delete_snapshot(self, host, name, snapshot_name):
+        if snapshot_name in self.fail_delete_snapshot_for:
+            raise LXDError(f"simulated snapshot delete failure for {snapshot_name}")
+        self.deleted_snapshots.append((host.name, name, snapshot_name))
 
     def push_file(self, host, name, path, content, *, mode="0644"):
         if path in self.fail_push_for:

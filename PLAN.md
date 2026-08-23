@@ -250,6 +250,18 @@ Defaults by world type (overridable per-world):
 
 This is strictly better than the old plan's `provision_staging.sh`/manual `lxc snapshot` calls: rollback for *any* world is `lxc restore world-nether <snapshot-name>`, no bespoke tooling needed.
 
+### 6A. Dashboard-managed automatic backups ("time machine" restores)
+
+The `snapshot_schedule`/`snapshot_expiry` LXD-native mechanism above is only ever applied at container **launch** time — nothing re-pushes it on edit, and mgmt never reads LXD's own snapshot list back, so there was no way to browse or restore from it in the dashboard. A separate, mgmt-driven mechanism sits alongside it for that:
+
+- `World.backups_enabled` (default `true`) gates a per-world automatic backup, toggled from the dashboard's world details panel (`PUT /worlds/{name}/backups-config`, operator+) or the API — independent of `snapshot_schedule`.
+- `scheduler.run_scheduled_backups`, one of `reconcile()`'s steps (§5), takes an LXD instance snapshot (`LXDClient.snapshot_container`) of every `backups_enabled` running world once an hour, tracked in a new `WorldBackup` row (world name, snapshot name, `kind="scheduled"`, timestamp) — self-gated to hourly by comparing against each world's own most recent row, since `reconcile()` itself ticks every 15s.
+- `scheduler.prune_expired_backups`, the same loop, deletes both the row and the underlying LXD snapshot once older than a week (`BACKUP_RETENTION`), keeping "a week's worth" per world. A snapshot-delete failure (host briefly unreachable) leaves the row in place for the next tick to retry, rather than losing track of a snapshot still sitting on disk.
+- `GET /worlds/{name}/backups` (viewer+) lists a world's tracked backups newest-first — what the dashboard's "Backups" section (in the world details panel, alongside RCON/ops/logs) renders as a restore list.
+- `POST /worlds/{name}/backups/{backup_id}/restore` is **admin-only** (stricter than the plain operator-gated `POST /worlds/{name}/restore/{snapshot_name}` above, since this is reachable straight from the dashboard by any logged-in operator otherwise) — rolls the world back to that snapshot via the same `LXDClient.restore_snapshot` LXD already exposes.
+
+Real pytest coverage in both `mgmt/tests/test_scheduler.py` (the hourly-gating and retention-pruning logic in isolation, including snapshot/delete failure retry paths) and `mgmt/tests/test_worlds.py` (the API endpoints end-to-end through a real reconcile pass, plus the admin-vs-operator restore gate). The dashboard's new Backups section was also loaded in real headless Chromium against a real running `folia-nexa-mgmt` instance, confirming the enable/disable toggle round-trips through the real API and the empty-state/backup-list rendering — not click-through tested for the restore button itself (no real LXD daemon or placed world available in that check, same caveat as the rest of this dashboard's manually-traced flows per CLAUDE.md).
+
 ---
 
 ## 7. Networking & Edge Proxy

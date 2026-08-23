@@ -147,6 +147,20 @@ class LXDClient:
             raise LXDError(f"LXD operation failed: {metadata.get('err')}")
         return metadata
 
+    def _finish(
+        self, client: httpx.Client, resp: httpx.Response, *, ok_codes: tuple[int, ...], error: str
+    ) -> None:
+        """Shared tail end of every synchronous-or-async LXD call in this
+        class: LXD answers either immediately (200/201) or with a
+        background operation to poll (202) — everything else is a real
+        failure. Centralizing this once means a future change to that
+        convention (e.g. surfacing LXD's structured error `code`/`err`
+        field) only needs to happen here, not in every method below."""
+        if resp.status_code not in ok_codes:
+            raise LXDError(f"{error}: {resp.text}")
+        if resp.status_code == 202:
+            self._wait_operation(client, resp.json())
+
     # -- reachability --------------------------------------------------------
 
     def ping_host(self, host: Host) -> bool:
@@ -243,10 +257,7 @@ class LXDClient:
                 params={"project": host.project},
                 json={"config": config},
             )
-            if resp.status_code not in (200, 202):
-                raise LXDError(f"config update of '{name}' on '{host.name}' failed: {resp.text}")
-            if resp.status_code == 202:
-                self._wait_operation(client, resp.json())
+            self._finish(client, resp, ok_codes=(200, 202), error=f"config update of '{name}' on '{host.name}' failed")
 
     def restart_container(self, host: Host, name: str) -> None:
         # force=false, not true — LXD's own semantics for this flag are
@@ -264,10 +275,7 @@ class LXDClient:
                 params={"project": host.project},
                 json={"action": "restart", "timeout": 30, "force": False},
             )
-            if resp.status_code not in (200, 202):
-                raise LXDError(f"restart of '{name}' on '{host.name}' failed: {resp.text}")
-            if resp.status_code == 202:
-                self._wait_operation(client, resp.json())
+            self._finish(client, resp, ok_codes=(200, 202), error=f"restart of '{name}' on '{host.name}' failed")
 
     def stop_container(self, host: Host, name: str) -> None:
         # force=false — see restart_container's comment above, same
@@ -278,10 +286,7 @@ class LXDClient:
                 params={"project": host.project},
                 json={"action": "stop", "timeout": 30, "force": False},
             )
-            if resp.status_code not in (200, 202):
-                raise LXDError(f"stop of '{name}' on '{host.name}' failed: {resp.text}")
-            if resp.status_code == 202:
-                self._wait_operation(client, resp.json())
+            self._finish(client, resp, ok_codes=(200, 202), error=f"stop of '{name}' on '{host.name}' failed")
 
     def start_container(self, host: Host, name: str) -> None:
         with self._client_for(host) as client:
@@ -290,10 +295,7 @@ class LXDClient:
                 params={"project": host.project},
                 json={"action": "start", "timeout": 30, "force": True},
             )
-            if resp.status_code not in (200, 202):
-                raise LXDError(f"start of '{name}' on '{host.name}' failed: {resp.text}")
-            if resp.status_code == 202:
-                self._wait_operation(client, resp.json())
+            self._finish(client, resp, ok_codes=(200, 202), error=f"start of '{name}' on '{host.name}' failed")
 
     def delete_container(self, host: Host, name: str, *, stop_first: bool = True) -> None:
         with self._client_for(host) as client:
@@ -307,10 +309,7 @@ class LXDClient:
                     self._wait_operation(client, stop.json())
 
             resp = client.delete(f"/1.0/instances/{name}", params={"project": host.project})
-            if resp.status_code not in (200, 202, 404):
-                raise LXDError(f"delete of '{name}' on '{host.name}' failed: {resp.text}")
-            if resp.status_code == 202:
-                self._wait_operation(client, resp.json())
+            self._finish(client, resp, ok_codes=(200, 202, 404), error=f"delete of '{name}' on '{host.name}' failed")
 
     def push_file(self, host: Host, name: str, path: str, content: bytes, *, mode: str = "0644") -> None:
         """Writes a file into a running container via LXD's file API — used
@@ -362,10 +361,7 @@ class LXDClient:
                 params={"project": host.project},
                 json={"name": snapshot_name},
             )
-            if resp.status_code not in (200, 202):
-                raise LXDError(f"snapshot of '{name}' failed: {resp.text}")
-            if resp.status_code == 202:
-                self._wait_operation(client, resp.json())
+            self._finish(client, resp, ok_codes=(200, 202), error=f"snapshot of '{name}' failed")
 
     def restore_snapshot(self, host: Host, name: str, snapshot_name: str) -> None:
         with self._client_for(host) as client:
@@ -374,10 +370,25 @@ class LXDClient:
                 params={"project": host.project},
                 json={"restore": snapshot_name},
             )
-            if resp.status_code not in (200, 202):
-                raise LXDError(f"restore of '{name}' to '{snapshot_name}' failed: {resp.text}")
-            if resp.status_code == 202:
-                self._wait_operation(client, resp.json())
+            self._finish(
+                client, resp, ok_codes=(200, 202), error=f"restore of '{name}' to '{snapshot_name}' failed"
+            )
+
+    def delete_snapshot(self, host: Host, name: str, snapshot_name: str) -> None:
+        """Deletes one instance snapshot — the retention-pruning
+        counterpart to snapshot_container. 404 is treated as success (the
+        snapshot's already gone, e.g. a previous prune attempt deleted it
+        but failed to commit its own DB row removal)."""
+        with self._client_for(host) as client:
+            resp = client.delete(
+                f"/1.0/instances/{name}/snapshots/{snapshot_name}", params={"project": host.project}
+            )
+            self._finish(
+                client,
+                resp,
+                ok_codes=(200, 202, 404),
+                error=f"delete of snapshot '{snapshot_name}' for '{name}' on '{host.name}' failed",
+            )
 
     def export_backup(self, host: Host, name: str) -> bytes:
         """Exports an instance as a backup tarball, for cross-host copy

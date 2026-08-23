@@ -227,3 +227,137 @@ def test_routes_prefers_lobby_over_overworld_as_default(client, admin_token, ope
     default_routes = [r for r in resp.json()["routes"] if r["default"]]
     assert len(default_routes) == 1
     assert default_routes[0]["world"] == "world-lobby"
+
+
+def test_new_world_defaults_to_backups_enabled(client, admin_token, operator_token):
+    _enroll_host(client, admin_token)
+    resp = client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["backups_enabled"] is True
+
+
+def test_put_backups_config_toggles_flag(client, admin_token, operator_token, viewer_token):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+
+    resp = client.put(
+        "/api/v1/worlds/world-overworld/backups-config",
+        json={"enabled": False},
+        headers=auth_header(operator_token),
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["backups_enabled"] is False
+
+    worlds = client.get("/api/v1/worlds", headers=auth_header(operator_token)).json()
+    assert next(w for w in worlds if w["name"] == "world-overworld")["backups_enabled"] is False
+
+    # viewer can't toggle it
+    resp = client.put(
+        "/api/v1/worlds/world-overworld/backups-config",
+        json={"enabled": True},
+        headers=auth_header(viewer_token),
+    )
+    assert resp.status_code == 403
+
+
+def test_list_backups_empty_for_new_world(client, admin_token, operator_token):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+
+    resp = client.get("/api/v1/worlds/world-overworld/backups", headers=auth_header(operator_token))
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_scheduled_backup_appears_in_list_after_reconcile(client, admin_token, operator_token, fake_lxd, trigger_reconcile):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+
+    trigger_reconcile()
+
+    resp = client.get("/api/v1/worlds/world-overworld/backups", headers=auth_header(operator_token))
+    assert resp.status_code == 200
+    backups = resp.json()
+    assert len(backups) == 1
+    assert backups[0]["kind"] == "scheduled"
+    assert ("node-a", "world-overworld", backups[0]["snapshot_name"]) in fake_lxd.snapshots
+
+
+def test_disabled_world_gets_no_scheduled_backup(client, admin_token, operator_token, fake_lxd, trigger_reconcile):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    client.put(
+        "/api/v1/worlds/world-overworld/backups-config",
+        json={"enabled": False},
+        headers=auth_header(operator_token),
+    )
+
+    trigger_reconcile()
+
+    resp = client.get("/api/v1/worlds/world-overworld/backups", headers=auth_header(operator_token))
+    assert resp.status_code == 200
+    assert resp.json() == []
+    assert fake_lxd.snapshots == []
+
+
+def test_restore_backup_requires_admin(client, admin_token, operator_token, fake_lxd, trigger_reconcile):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    trigger_reconcile()
+    backup_id = client.get(
+        "/api/v1/worlds/world-overworld/backups", headers=auth_header(operator_token)
+    ).json()[0]["id"]
+
+    # operator is not enough — this is the "time machine" restore, admin-only
+    resp = client.post(
+        f"/api/v1/worlds/world-overworld/backups/{backup_id}/restore",
+        headers=auth_header(operator_token),
+    )
+    assert resp.status_code == 403
+
+    resp = client.post(
+        f"/api/v1/worlds/world-overworld/backups/{backup_id}/restore",
+        headers=auth_header(admin_token),
+    )
+    assert resp.status_code == 200, resp.text
+    snapshot_name = resp.json()["restored"]
+    assert ("node-a", "world-overworld", snapshot_name) in fake_lxd.restores
+
+
+def test_restore_unknown_backup_id_404s(client, admin_token, operator_token):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+
+    resp = client.post(
+        "/api/v1/worlds/world-overworld/backups/999/restore",
+        headers=auth_header(admin_token),
+    )
+    assert resp.status_code == 404
