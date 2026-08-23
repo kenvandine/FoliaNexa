@@ -757,6 +757,7 @@ async function loadWorlds() {
           ${w.phase === 'running' ? `<button class="btn ghost" onclick="stopWorld('${escapeHtml(w.name)}')">Stop</button>` : ''}
           ${w.phase === 'stopped' ? `<button class="btn ghost" onclick="startWorld('${escapeHtml(w.name)}')">Start</button>` : ''}
           ${stale && w.phase === 'running' ? `<button class="btn ghost" onclick="migrateWorldVersion('${escapeHtml(w.name)}')">Migrate to ${escapeHtml(target.engine)} ${escapeHtml(target.version)}</button>` : ''}
+          ${w.host_name ? `<button class="btn ghost" onclick="migrateWorldHost('${escapeHtml(w.name)}', '${escapeHtml(w.host_name)}')">Migrate to another host</button>` : ''}
           <button class="btn ghost" onclick="snapshotWorld('${escapeHtml(w.name)}')">Snapshot</button>
           <button class="btn ghost" onclick="toggleWhitelist('${escapeHtml(w.name)}', ${w.whitelist_enabled})">${w.whitelist_enabled ? 'Disable' : 'Enable'} whitelist</button>
           <button class="btn danger" onclick="deleteWorld('${escapeHtml(w.name)}')">Delete</button>
@@ -1342,6 +1343,34 @@ async function startWorld(name) {
     await loadWorlds();
   } catch (e) {
     document.getElementById('worlds-error').textContent = e.message;
+  }
+}
+
+async function migrateWorldHost(name, currentHost) {
+  const errorEl = document.getElementById('worlds-error');
+  errorEl.textContent = '';
+  let hosts;
+  try {
+    hosts = await api('/hosts');
+  } catch (e) {
+    errorEl.textContent = e.message;
+    return;
+  }
+  const candidates = hosts.filter(h => h.status === 'online' && h.name !== currentHost);
+  if (!candidates.length) {
+    errorEl.textContent = 'no other online host to migrate to';
+    return;
+  }
+  const target = prompt(
+    `Migrate "${name}" from "${currentHost}" to which host?\nOnline hosts: ${candidates.map(h => h.name).join(', ')}`
+  );
+  if (!target) return;
+  if (!confirm(`Migrate "${name}" to "${target}" now? The world stops, its container moves, then it starts again — players will be disconnected until it's back up.`)) return;
+  try {
+    await api('/worlds/' + encodeURIComponent(name) + '/migrate?target_host=' + encodeURIComponent(target), { method: 'POST' });
+    await loadWorlds();
+  } catch (e) {
+    errorEl.textContent = e.message;
   }
 }
 
