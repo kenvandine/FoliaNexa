@@ -818,6 +818,33 @@ def test_run_scheduled_backups_tolerates_snapshot_failure_and_continues():
     names_backed_up = {row.world_name for row in session.exec(select(WorldBackup)).all()}
     assert names_backed_up == {"world-ok"}
 
+    broken = session.exec(select(World).where(World.name == "world-broken")).one()
+    assert broken.last_backup_error == "simulated snapshot failure for world-broken"
+    assert broken.last_backup_attempt_at is not None
+
+    ok = session.exec(select(World).where(World.name == "world-ok")).one()
+    assert ok.last_backup_error is None
+    assert ok.last_backup_attempt_at is not None
+
+
+def test_run_scheduled_backups_clears_a_previously_recorded_error_on_success():
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+            backups_enabled=True, last_backup_error="stale failure from a previous tick",
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    run_scheduled_backups(session, lxd)
+
+    world = session.exec(select(World).where(World.name == "world-a")).one()
+    assert world.last_backup_error is None
+
 
 def test_prune_expired_backups_deletes_snapshot_and_row_older_than_a_week():
     session = _session()

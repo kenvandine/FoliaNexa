@@ -320,6 +320,70 @@ def test_disabled_world_gets_no_scheduled_backup(client, admin_token, operator_t
     assert fake_lxd.snapshots == []
 
 
+def test_manual_backup_creates_a_backup_immediately(client, admin_token, operator_token, fake_lxd):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+
+    resp = client.post(
+        "/api/v1/worlds/world-overworld/backups/manual", headers=auth_header(operator_token)
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["kind"] == "manual"
+    assert body["snapshot_name"].startswith("manual-")
+    assert ("node-a", "world-overworld", body["snapshot_name"]) in fake_lxd.snapshots
+
+    backups = client.get(
+        "/api/v1/worlds/world-overworld/backups", headers=auth_header(operator_token)
+    ).json()
+    assert len(backups) == 1
+    assert backups[0]["kind"] == "manual"
+
+
+def test_manual_backup_works_even_when_automatic_backups_disabled(client, admin_token, operator_token, fake_lxd):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    client.put(
+        "/api/v1/worlds/world-overworld/backups-config",
+        json={"enabled": False},
+        headers=auth_header(operator_token),
+    )
+
+    resp = client.post(
+        "/api/v1/worlds/world-overworld/backups/manual", headers=auth_header(operator_token)
+    )
+    assert resp.status_code == 200, resp.text
+
+
+def test_manual_backup_requires_operator(client, admin_token, operator_token, viewer_token):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+
+    resp = client.post(
+        "/api/v1/worlds/world-overworld/backups/manual", headers=auth_header(viewer_token)
+    )
+    assert resp.status_code == 403
+
+
+def test_manual_backup_requires_placed_world(client, operator_token):
+    resp = client.post(
+        "/api/v1/worlds/no-such-world/backups/manual", headers=auth_header(operator_token)
+    )
+    assert resp.status_code == 404
+
+
 def test_restore_backup_requires_admin(client, admin_token, operator_token, fake_lxd, trigger_reconcile):
     _enroll_host(client, admin_token)
     client.post(

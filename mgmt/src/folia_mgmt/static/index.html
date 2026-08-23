@@ -295,6 +295,10 @@
             <input type="checkbox" id="details-backups-enabled" onchange="toggleWorldBackups(this.checked)">
             Automatic hourly backups enabled
           </label>
+          <div class="inline" style="margin-bottom:0.5rem">
+            <button class="btn ghost" onclick="manualWorldBackup()">Back up now</button>
+          </div>
+          <div id="details-backup-failure" class="error" style="margin-bottom:0.5rem"></div>
           <table>
             <thead><tr><th>Taken</th><th>Kind</th><th></th></tr></thead>
             <tbody id="details-backups-body"></tbody>
@@ -902,6 +906,7 @@ function openWorldDetails(name) {
   renderWorldOps(world.ops);
   document.getElementById('details-backups-enabled').checked = world.backups_enabled;
   document.getElementById('world-backups-error').textContent = '';
+  renderBackupFailure(world);
   loadWorldBackups(name);
   switchLogTab('console');
 }
@@ -953,6 +958,26 @@ async function removeWorldOp(op) {
   const world = state.worlds.find(w => w.name === name);
   const current = world ? world.ops : [];
   await _putWorldOps(name, current.filter(o => o !== op));
+}
+
+function renderBackupFailure(world) {
+  const el = document.getElementById('details-backup-failure');
+  el.textContent = world.last_backup_error
+    ? 'Last automatic backup attempt (' + new Date(world.last_backup_attempt_at + 'Z').toLocaleString() + ') failed: ' + world.last_backup_error
+    : '';
+}
+
+async function manualWorldBackup() {
+  const name = state.detailsWorld;
+  if (!name) return;
+  const errorEl = document.getElementById('world-backups-error');
+  errorEl.textContent = '';
+  try {
+    await api('/worlds/' + encodeURIComponent(name) + '/backups/manual', { method: 'POST' });
+    await loadWorldBackups(name);
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
 }
 
 async function loadWorldBackups(name) {

@@ -77,6 +77,8 @@ class WorldResponse(BaseModel):
     whitelist_enabled: bool
     ops: list[str]
     backups_enabled: bool
+    last_backup_attempt_at: datetime | None
+    last_backup_error: str | None
 
 
 def _to_response(world: World) -> WorldResponse:
@@ -98,6 +100,8 @@ def _to_response(world: World) -> WorldResponse:
         whitelist_enabled=world.whitelist_enabled,
         ops=world.ops,
         backups_enabled=world.backups_enabled,
+        last_backup_attempt_at=world.last_backup_attempt_at,
+        last_backup_error=world.last_backup_error,
     )
 
 
@@ -713,6 +717,34 @@ def put_backup_config(
     session.add(world)
     session.commit()
     return {"backups_enabled": world.backups_enabled}
+
+
+@router.post("/{name}/backups/manual", response_model=BackupResponse, dependencies=[Depends(require_operator)])
+def create_manual_backup(
+    name: str,
+    session: Session = Depends(get_session),
+    lxd_client: LXDClient = Depends(get_lxd_client),
+) -> BackupResponse:
+    """Takes a backup right now, independent of the hourly schedule (e.g.
+    right before a risky plugin upgrade) — operator-gated like the older
+    ad-hoc POST /{name}/snapshot, but tracked as a WorldBackup row (kind=
+    "manual") so it shows up in, and can be restored from, the same
+    dashboard list as scheduled backups, and expires on the same
+    BACKUP_RETENTION schedule as prune_expired_backups. Works regardless
+    of World.backups_enabled — that flag only gates the automatic hourly
+    schedule, not an operator's own explicit request."""
+    world, host = _host_and_world(session, name)
+    now = utcnow()
+    label = f"manual-{epoch_seconds(now)}"
+    try:
+        lxd_client.snapshot_container(host, world.container_name, label)
+    except LXDError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    backup = WorldBackup(world_name=name, snapshot_name=label, kind="manual", created_at=now)
+    session.add(backup)
+    session.commit()
+    session.refresh(backup)
+    return BackupResponse(id=backup.id, snapshot_name=backup.snapshot_name, kind=backup.kind, created_at=backup.created_at)
 
 
 @router.post("/{name}/backups/{backup_id}/restore", dependencies=[Depends(require_admin)])

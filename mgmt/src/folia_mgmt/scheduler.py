@@ -553,11 +553,17 @@ def run_scheduled_backups(session: Session, lxd_client: LXDClient) -> None:
         if host is None or not world.container_name or host.status != HostStatus.online:
             continue
         label = f"auto-{epoch_seconds(now)}"
+        world.last_backup_attempt_at = now
         try:
             lxd_client.snapshot_container(host, world.container_name, label)
-        except LXDError:
+        except LXDError as exc:
             logger.exception("scheduled backup of world '%s' failed, will retry next reconcile", world.name)
+            world.last_backup_error = str(exc)
+            session.add(world)
+            dirty = True
             continue
+        world.last_backup_error = None
+        session.add(world)
         session.add(WorldBackup(world_name=world.name, snapshot_name=label, kind="scheduled", created_at=now))
         dirty = True
     if dirty:

@@ -815,6 +815,32 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   feature (see the `LXDClient` entry below); `delete_snapshot` (new, for
   pruning) carries the same caveat.
 
+  Follow-up (2026-08-23), from a real operator report of "backups enabled
+  but nothing ever shows up in the list": `run_scheduled_backups` used to
+  swallow a failed `snapshot_container` call into nothing but a
+  `logger.exception` line — since that call has never actually been
+  exercised against a real LXD daemon (still true, see above), a failure
+  there in a real deployment would produce exactly the reported symptom
+  with zero visible explanation anywhere in the dashboard. `World` now
+  gains `last_backup_attempt_at`/`last_backup_error`, stamped on every
+  scheduled-backup attempt (cleared back to `None` on the next success),
+  and the dashboard's Backups section surfaces the error string directly
+  instead of just an empty, unexplained list. Also added, since the same
+  report asked for it: `POST /worlds/{name}/backups/manual`
+  (operator-gated, like the older ad-hoc `POST /{name}/snapshot`) takes a
+  backup on demand — writes a `kind="manual"` `WorldBackup` row that
+  shares the same list/restore/retention path as scheduled ones, and
+  works regardless of `backups_enabled` — plus a "Back up now" button in
+  the dashboard. Real pytest coverage (`mgmt/tests/test_scheduler.py`'s
+  error-stamp/clear assertions, `mgmt/tests/test_worlds.py`'s new
+  manual-backup tests — creation, working while automatic backups are
+  disabled, the operator gate, and 404 on an unplaced world). This is a
+  visibility fix, not a fix to `snapshot_container` itself — if an
+  operator's real deployment is still failing, `last_backup_error` is now
+  where the actual LXD error message shows up to explain why, but the
+  underlying call remains unverified against live LXD until someone
+  actually watches it succeed there.
+
 Written against documented API contracts but **not** exercised against
 live infrastructure:
 
