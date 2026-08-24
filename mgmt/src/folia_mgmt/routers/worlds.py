@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from folia_mgmt.access_apply import UuidResolver, apply_ops, apply_whitelist
+from folia_mgmt.access_apply import NODE_WORLD_DIR, UuidResolver, apply_ops, apply_whitelist
 from folia_mgmt.auth import require_admin, require_operator, require_viewer
 from folia_mgmt.config import Settings
 from folia_mgmt.datapack_catalog import load_catalog as load_datapack_catalog
@@ -36,6 +36,7 @@ from folia_mgmt.routers.cluster import migrate_world_to_current_version
 from folia_mgmt.plugin_catalog import load_catalog
 from folia_mgmt.rcon import RconError, execute_rcon_command
 from folia_mgmt.scheduler import allocated_capacity, finalize_provisioning, place_world, teardown_world, _node_config
+from folia_mgmt import world_backups
 
 # Minecraft's conventional RCON port — not configurable per-world today
 # (mirrors the fixed 25565 game port every world already uses), just a
@@ -653,6 +654,25 @@ def _host_and_world(session: Session, name: str) -> tuple[World, Host]:
     return world, host
 
 
+def _require_lxd_snapshot_backups_enabled(settings: Settings) -> None:
+    """The ad-hoc LXD-instance-snapshot endpoints below are kept as a
+    feature (Settings.lxd_snapshot_backups_enabled's own docstring has
+    the full rationale) but off by default — the tracked "time machine"
+    backup feature (create_manual_backup/restore_backup below) never
+    depends on this flag at all, it always uses the file-level
+    world_backups.py path regardless of its setting. LXDClient itself
+    separately, unconditionally refuses a "dir"-backed instance no matter
+    what this flag says (LXDClient.get_storage_driver_for_instance) —
+    this check is purely the "feature is off by default" toggle, not the
+    safety net."""
+    if not settings.lxd_snapshot_backups_enabled:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "LXD snapshot backups are disabled (Settings.lxd_snapshot_backups_enabled) — "
+            "use the tracked world backup feature instead (POST /{name}/backups/manual)",
+        )
+
+
 def _snapshot_or_502(lxd_client: LXDClient, host: Host, world: World, snapshot_name: str) -> None:
     try:
         lxd_client.snapshot_container(host, world.container_name, snapshot_name)
@@ -666,7 +686,9 @@ def snapshot_world(
     snapshot_name: str | None = None,
     session: Session = Depends(get_session),
     lxd_client: LXDClient = Depends(get_lxd_client),
+    settings: Settings = Depends(settings_dependency),
 ) -> dict[str, str]:
+    _require_lxd_snapshot_backups_enabled(settings)
     world, host = _host_and_world(session, name)
     label = snapshot_name or f"manual-{epoch_seconds(utcnow())}"
     _snapshot_or_502(lxd_client, host, world, label)
@@ -686,7 +708,9 @@ def restore_world(
     snapshot_name: str,
     session: Session = Depends(get_session),
     lxd_client: LXDClient = Depends(get_lxd_client),
+    settings: Settings = Depends(settings_dependency),
 ) -> dict[str, str]:
+    _require_lxd_snapshot_backups_enabled(settings)
     world, host = _host_and_world(session, name)
     _restore_snapshot_or_502(lxd_client, host, world, snapshot_name)
     return {"restored": snapshot_name}
@@ -697,6 +721,7 @@ class BackupResponse(BaseModel):
     snapshot_name: str
     kind: str
     created_at: datetime
+    size_bytes: int | None = None
 
 
 @router.get("/{name}/backups", response_model=list[BackupResponse], dependencies=[Depends(require_viewer)])
@@ -710,7 +735,10 @@ def list_backups(name: str, session: Session = Depends(get_session)) -> list[Bac
         select(WorldBackup).where(WorldBackup.world_name == name).order_by(WorldBackup.created_at.desc())
     ).all()
     return [
-        BackupResponse(id=row.id, snapshot_name=row.snapshot_name, kind=row.kind, created_at=row.created_at)
+        BackupResponse(
+            id=row.id, snapshot_name=row.snapshot_name, kind=row.kind,
+            created_at=row.created_at, size_bytes=row.size_bytes,
+        )
         for row in rows
     ]
 
@@ -745,11 +773,18 @@ def put_backup_config(
     return {"backups_enabled": world.backups_enabled}
 
 
+def _backup_or_502(settings: Settings, world: World, label: str) -> int:
+    try:
+        return world_backups.fetch_and_store_backup(settings, world, label)
+    except world_backups.BackupTransferError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+
+
 @router.post("/{name}/backups/manual", response_model=BackupResponse, dependencies=[Depends(require_operator)])
 def create_manual_backup(
     name: str,
     session: Session = Depends(get_session),
-    lxd_client: LXDClient = Depends(get_lxd_client),
+    settings: Settings = Depends(settings_dependency),
 ) -> BackupResponse:
     """Takes a backup right now, independent of the hourly schedule (e.g.
     right before a risky plugin upgrade) — operator-gated like the older
@@ -758,23 +793,31 @@ def create_manual_backup(
     dashboard list as scheduled backups, and expires on the same
     BACKUP_RETENTION schedule as prune_expired_backups. Works regardless
     of World.backups_enabled — that flag only gates the automatic hourly
-    schedule, not an operator's own explicit request.
+    schedule, not an operator's own explicit request. Streams a tar.gz of
+    the world save + plugins/ off the world's own node agent
+    (world_backups.fetch_and_store_backup) — doesn't touch LXD at all, so
+    it works the same regardless of the host's storage pool driver.
 
     The label is manual-backup-<epoch>-<random>, not plain manual-<epoch>
     — that format is already used by the older ad-hoc POST /{name}/snapshot
-    (which LXD would reject as a duplicate name if both fired in the same
-    second), and the random suffix also protects against two calls to
-    this endpoint itself landing in the same second (e.g. a double-clicked
-    "Back up now" button)."""
-    world, host = _host_and_world(session, name)
+    (off by default, see Settings.lxd_snapshot_backups_enabled), and the
+    random suffix also protects against two calls to this endpoint itself
+    landing in the same second (e.g. a double-clicked "Back up now"
+    button)."""
+    world = _get_world_or_404(session, name)
+    if not world.address:
+        raise HTTPException(status.HTTP_409_CONFLICT, f"world '{name}' is not placed on a host yet")
     now = utcnow()
     label = f"manual-backup-{epoch_seconds(now)}-{secrets.token_hex(3)}"
-    _snapshot_or_502(lxd_client, host, world, label)
-    backup = WorldBackup(world_name=name, snapshot_name=label, kind="manual", created_at=now)
+    size_bytes = _backup_or_502(settings, world, label)
+    backup = WorldBackup(world_name=name, snapshot_name=label, kind="manual", created_at=now, size_bytes=size_bytes)
     session.add(backup)
     session.commit()
     session.refresh(backup)
-    return BackupResponse(id=backup.id, snapshot_name=backup.snapshot_name, kind=backup.kind, created_at=backup.created_at)
+    return BackupResponse(
+        id=backup.id, snapshot_name=backup.snapshot_name, kind=backup.kind,
+        created_at=backup.created_at, size_bytes=backup.size_bytes,
+    )
 
 
 @router.post("/{name}/backups/{backup_id}/restore", dependencies=[Depends(require_admin)])
@@ -783,18 +826,55 @@ def restore_backup(
     backup_id: int,
     session: Session = Depends(get_session),
     lxd_client: LXDClient = Depends(get_lxd_client),
+    settings: Settings = Depends(settings_dependency),
 ) -> dict[str, str]:
     """"Time machine" restore: rolls this world back to one of its tracked
     backups (GET /{name}/backups). Admin-only — stricter than the plain
     operator-gated POST /{name}/restore/{snapshot_name} above, since this
     is reachable straight from the dashboard by anyone with a login,
-    rather than requiring CLI/API access to an exact snapshot name."""
+    rather than requiring CLI/API access to an exact snapshot name.
+
+    Pushes the stored tar.gz to {NODE_WORLD_DIR}/.pending-restore.tar.gz
+    (proven against a *running* container — every push_file call site in
+    this codebase already targets a live world, same as this one) and
+    restarts the container — the same restart_container call
+    scheduler.recover_crashed_worlds already relies on, which fully
+    cycles the node agent process (it's the container's PID 1), so its
+    main() runs from scratch and picks up the marker before any other
+    staging (node/src/folia_node/agent.py). Sets phase back to
+    provisioning, mirroring exactly what recover_crashed_worlds does
+    after its own restart_container call — the existing reconcile
+    machinery (finalize_provisioning) confirms the world comes back
+    healthy from there, no new polling logic needed. Restoring onto a
+    *different* host works the same way with no special-casing: this
+    endpoint only ever looks at wherever `world.host_name`/`container_name`
+    currently point, not the host the backup was originally taken on —
+    place a same-named world on a healthy host first (or migrate an
+    existing one there), then call this."""
     world, host = _host_and_world(session, name)
     backup = session.get(WorldBackup, backup_id)
     if backup is None or backup.world_name != name:
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"no such backup '{backup_id}' for world '{name}'")
-    _restore_snapshot_or_502(lxd_client, host, world, backup.snapshot_name)
-    return {"restored": backup.snapshot_name, "created_at": backup.created_at.isoformat()}
+
+    backup_path = world_backups.backup_file_path(settings, name, backup.snapshot_name)
+    if not backup_path.is_file():
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND,
+            f"backup '{backup_id}' for world '{name}' has no tarball on this mgmt host's disk "
+            f"(expected {backup_path})",
+        )
+    tar_bytes = backup_path.read_bytes()
+
+    try:
+        lxd_client.push_file(host, world.container_name, f"{NODE_WORLD_DIR}/.pending-restore.tar.gz", tar_bytes)
+        lxd_client.restart_container(host, world.container_name)
+    except LXDError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+
+    world.phase = WorldPhase.provisioning
+    session.add(world)
+    session.commit()
+    return {"restoring": backup.snapshot_name, "created_at": backup.created_at.isoformat()}
 
 
 @router.post("/{name}/migrate", response_model=WorldResponse, dependencies=[Depends(require_operator)])

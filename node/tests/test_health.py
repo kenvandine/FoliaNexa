@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import queue
+import tarfile
 import urllib.error
 import urllib.request
+from io import BytesIO
 
 import pytest
 
@@ -16,6 +18,19 @@ def server():
     srv = start_health_server(state, port=0)  # OS-assigned free port
     yield srv, state
     srv.shutdown()
+
+
+@pytest.fixture
+def server_with_world_dir(tmp_path):
+    state = AgentState(world_name="world-nether", world_dir=tmp_path)
+    srv = start_health_server(state, port=0)
+    yield srv, state, tmp_path
+    srv.shutdown()
+
+
+def _get_bytes(port: int, path: str) -> bytes:
+    with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5) as resp:
+        return resp.read()
 
 
 def _get(port: int, path: str):
@@ -59,6 +74,32 @@ def test_unknown_path_404s(server):
     srv, _state = server
     status, _body = _get(srv.server_port, "/nope")
     assert status == 404
+
+
+def test_backup_archive_includes_world_and_plugins_dirs(server_with_world_dir):
+    srv, _state, world_dir = server_with_world_dir
+    (world_dir / "world").mkdir()
+    (world_dir / "world" / "level.dat").write_bytes(b"fake level data")
+    (world_dir / "plugins").mkdir()
+    (world_dir / "plugins" / "SomePlugin.jar").write_bytes(b"fake jar bytes")
+
+    raw = _get_bytes(srv.server_port, "/backup")
+
+    with tarfile.open(fileobj=BytesIO(raw), mode="r:gz") as tf:
+        names = set(tf.getnames())
+    assert "world/level.dat" in names
+    assert "plugins/SomePlugin.jar" in names
+
+
+def test_backup_archive_skips_missing_directories(server_with_world_dir):
+    # A world that hasn't generated a save yet (or has no plugins) must
+    # still get a valid, if empty, archive back — not an error.
+    srv, _state, _world_dir = server_with_world_dir
+
+    raw = _get_bytes(srv.server_port, "/backup")
+
+    with tarfile.open(fileobj=BytesIO(raw), mode="r:gz") as tf:
+        assert tf.getnames() == []
 
 
 # -- LogBroadcaster (pure unit, no HTTP) -------------------------------------

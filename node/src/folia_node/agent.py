@@ -10,19 +10,58 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import signal
+import tarfile
 import time
 from pathlib import Path
 
 from folia_node.devlxd import DevLXDClient, DevLXDError
 from folia_node.health import AgentState, BroadcastLogHandler, start_health_server
 from folia_node.runner import JVMRunner, build_java_command
-from folia_node.staging import ensure_staged, sync_world_config
+from folia_node.staging import LEVEL_NAME, ensure_staged, sync_world_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger(__name__)
 
 CRASH_RESTART_DELAY_SECONDS = 5
+
+# Where mgmt pushes a backup tarball ahead of a restore (POST
+# /worlds/{name}/backups/{id}/restore, mgmt's routers/worlds.py) — pushed
+# via LXD's file API while this container is still running, then the
+# whole container is restarted (LXDClient.restart_container), which is
+# what gets us to _apply_pending_restore below on a fresh process before
+# the JVM has even started.
+PENDING_RESTORE_MARKER = ".pending-restore.tar.gz"
+
+
+def _apply_pending_restore(world_dir: Path) -> None:
+    """If a restore was requested, extract the tarball over WORLD_DIR now
+    — replacing the old world save + plugins/ entirely — before any of
+    the staging below runs (already idempotent/reconciling, so it layers
+    fine on top of what a restore just put there). A missing marker is
+    the normal case (nothing to do); a present-but-corrupt one is logged
+    and skipped rather than crash-looping the whole agent forever on a
+    bad restore — the world just comes back up with whatever was already
+    on disk, same as if the restore had never been requested.
+    filter="data" (Python 3.12+) rejects absolute paths/traversal entries
+    in the tarball, same defense-in-depth this codebase already applies
+    to other operator/mgmt-supplied paths (see mgmt's plugin_upload.py/
+    plugin_files.py)."""
+    marker = world_dir / PENDING_RESTORE_MARKER
+    if not marker.exists():
+        return
+    logger.info("pending restore found (%s) — extracting over %s before staging", marker, world_dir)
+    try:
+        with tarfile.open(marker, mode="r:gz") as tf:
+            for name in (LEVEL_NAME, "plugins"):
+                shutil.rmtree(world_dir / name, ignore_errors=True)
+            tf.extractall(path=world_dir, filter="data")
+        logger.info("restore applied successfully")
+    except (tarfile.TarError, OSError, EOFError):
+        logger.exception("pending restore at %s is corrupt/unreadable — skipping, world starts as-is", marker)
+    finally:
+        marker.unlink(missing_ok=True)
 
 
 def main() -> None:
@@ -39,6 +78,7 @@ def main() -> None:
     # *serve* it live yet (start_health_server hasn't run), but the
     # history backfill still has it once a viewer connects.
     state = AgentState()
+    state.world_dir = world_dir
     logging.getLogger().addHandler(BroadcastLogHandler(state.agent_log))
 
     devlxd = DevLXDClient(devlxd_socket)
@@ -51,6 +91,8 @@ def main() -> None:
     state.world_name = assignment.world_name
     start_health_server(state, port=health_port)
     logger.info("health server up on :%d for world '%s'", health_port, assignment.world_name)
+
+    _apply_pending_restore(world_dir)
 
     jar_path = ensure_staged(world_dir, assignment)
     # Unlike ensure_staged, always runs — picks up any plugins/datapacks/

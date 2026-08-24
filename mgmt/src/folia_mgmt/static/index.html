@@ -300,7 +300,7 @@
           </div>
           <div id="details-backup-failure" class="error" style="margin-bottom:0.5rem"></div>
           <table>
-            <thead><tr><th>Taken</th><th>Kind</th><th></th></tr></thead>
+            <thead><tr><th>Taken</th><th>Kind</th><th>Size</th><th></th></tr></thead>
             <tbody id="details-backups-body"></tbody>
           </table>
           <div id="world-backups-error" class="error"></div>
@@ -1023,9 +1023,10 @@ function renderWorldBackups(name, backups) {
     <tr>
       <td>${escapeHtml(new Date(b.created_at + 'Z').toLocaleString())}</td>
       <td>${escapeHtml(b.kind)}</td>
+      <td>${b.size_bytes != null ? escapeHtml((b.size_bytes / 1024 / 1024).toFixed(1) + ' MB') : ''}</td>
       <td>${state.role === 'admin' ? `<button class="btn ghost" onclick="restoreWorldBackup(state.detailsWorld, ${b.id})">Restore</button>` : ''}</td>
     </tr>
-  `).join('') || '<tr><td colspan="3" class="hint">No backups yet — the first automatic backup is taken within an hour of the world starting.</td></tr>';
+  `).join('') || '<tr><td colspan="4" class="hint">No backups yet — the first automatic backup is taken within an hour of the world starting.</td></tr>';
 }
 
 async function toggleWorldBackups(enabled) {

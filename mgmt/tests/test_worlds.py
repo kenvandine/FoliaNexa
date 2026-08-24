@@ -133,7 +133,25 @@ def test_world_name_can_be_reused_after_deletion(client, admin_token, operator_t
     assert resp.json()["phase"] != "deleted"
 
 
-def test_snapshot_requires_placed_world(client, operator_token):
+def test_snapshot_disabled_by_default(client, admin_token, operator_token, fake_lxd):
+    # The ad-hoc LXD-instance-snapshot endpoints are kept as a feature
+    # but off by default (Settings.lxd_snapshot_backups_enabled) — the
+    # tracked "time machine" backup feature never depends on this flag,
+    # only this older, lower-level escape hatch does.
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+
+    resp = client.post("/api/v1/worlds/world-overworld/snapshot", headers=auth_header(operator_token))
+    assert resp.status_code == 403
+    assert fake_lxd.snapshots == []
+
+
+def test_snapshot_requires_placed_world(client, operator_token, monkeypatch):
+    monkeypatch.setenv("FOLIA_MGMT_LXD_SNAPSHOT_BACKUPS_ENABLED", "true")
     client.post(
         "/api/v1/worlds",
         json={"name": "world-stuck", "type": "nether", "cpu_cores": 2, "memory_gb": 3},
@@ -143,7 +161,8 @@ def test_snapshot_requires_placed_world(client, operator_token):
     assert resp.status_code == 409
 
 
-def test_snapshot_running_world(client, admin_token, operator_token, fake_lxd):
+def test_snapshot_running_world(client, admin_token, operator_token, fake_lxd, monkeypatch):
+    monkeypatch.setenv("FOLIA_MGMT_LXD_SNAPSHOT_BACKUPS_ENABLED", "true")
     _enroll_host(client, admin_token)
     client.post(
         "/api/v1/worlds",
@@ -336,7 +355,7 @@ def test_list_backups_empty_for_new_world(client, admin_token, operator_token):
     assert resp.json() == []
 
 
-def test_scheduled_backup_appears_in_list_after_reconcile(client, admin_token, operator_token, fake_lxd, trigger_reconcile):
+def test_scheduled_backup_appears_in_list_after_reconcile(client, admin_token, operator_token, fake_world_backups, trigger_reconcile):
     _enroll_host(client, admin_token)
     client.post(
         "/api/v1/worlds",
@@ -351,10 +370,11 @@ def test_scheduled_backup_appears_in_list_after_reconcile(client, admin_token, o
     backups = resp.json()
     assert len(backups) == 1
     assert backups[0]["kind"] == "scheduled"
-    assert ("node-a", "world-overworld", backups[0]["snapshot_name"]) in fake_lxd.snapshots
+    assert backups[0]["size_bytes"] is not None and backups[0]["size_bytes"] > 0
+    assert ("world-overworld", backups[0]["snapshot_name"]) in fake_world_backups.fetched
 
 
-def test_disabled_world_gets_no_scheduled_backup(client, admin_token, operator_token, fake_lxd, trigger_reconcile):
+def test_disabled_world_gets_no_scheduled_backup(client, admin_token, operator_token, fake_world_backups, trigger_reconcile):
     _enroll_host(client, admin_token)
     client.post(
         "/api/v1/worlds",
@@ -372,10 +392,10 @@ def test_disabled_world_gets_no_scheduled_backup(client, admin_token, operator_t
     resp = client.get("/api/v1/worlds/world-overworld/backups", headers=auth_header(operator_token))
     assert resp.status_code == 200
     assert resp.json() == []
-    assert fake_lxd.snapshots == []
+    assert fake_world_backups.fetched == []
 
 
-def test_manual_backup_creates_a_backup_immediately(client, admin_token, operator_token, fake_lxd):
+def test_manual_backup_creates_a_backup_immediately(client, admin_token, operator_token, fake_world_backups):
     _enroll_host(client, admin_token)
     client.post(
         "/api/v1/worlds",
@@ -390,7 +410,8 @@ def test_manual_backup_creates_a_backup_immediately(client, admin_token, operato
     body = resp.json()
     assert body["kind"] == "manual"
     assert body["snapshot_name"].startswith("manual-")
-    assert ("node-a", "world-overworld", body["snapshot_name"]) in fake_lxd.snapshots
+    assert body["size_bytes"] is not None and body["size_bytes"] > 0
+    assert ("world-overworld", body["snapshot_name"]) in fake_world_backups.fetched
 
     backups = client.get(
         "/api/v1/worlds/world-overworld/backups", headers=auth_header(operator_token)
@@ -400,7 +421,7 @@ def test_manual_backup_creates_a_backup_immediately(client, admin_token, operato
 
 
 def test_manual_backup_label_does_not_collide_with_ad_hoc_snapshot_or_itself(
-    client, admin_token, operator_token, fake_lxd
+    client, admin_token, operator_token
 ):
     _enroll_host(client, admin_token)
     client.post(
@@ -506,8 +527,10 @@ def test_restore_backup_requires_admin(client, admin_token, operator_token, fake
         headers=auth_header(admin_token),
     )
     assert resp.status_code == 200, resp.text
-    snapshot_name = resp.json()["restored"]
-    assert ("node-a", "world-overworld", snapshot_name) in fake_lxd.restores
+    assert resp.json()["restoring"]
+    assert ("node-a", "world-overworld") in fake_lxd.restarted
+    pushed_paths = [path for (h, n, path) in fake_lxd.pushed_files if (h, n) == ("node-a", "world-overworld")]
+    assert any(path.endswith(".pending-restore.tar.gz") for path in pushed_paths)
 
 
 def test_restore_unknown_backup_id_404s(client, admin_token, operator_token):

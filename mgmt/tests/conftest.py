@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import io
+import tarfile
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlmodel import Session
 
+from folia_mgmt import world_backups
 from folia_mgmt.auth import hash_password
 from folia_mgmt.db import get_engine, init_db
 from folia_mgmt.deps import get_health_check, get_lxd_client, get_uuid_resolver
@@ -151,6 +155,45 @@ def fake_lxd():
     return FakeLXDClient()
 
 
+class FakeWorldBackupTransfer:
+    """Stands in for world_backups.fetch_and_store_backup in tests — no
+    real network call to a world's node agent (the real implementation
+    does a plain httpx GET against world.address, which in tests is
+    either unset or one of FakeLXDClient's fake 10.0.1.x addresses,
+    neither of which anything is actually listening on). Writes a small
+    but real, valid tar.gz to the real on-disk path
+    (world_backups.backup_file_path) so downstream reads — e.g. the
+    restore endpoint's backup_path.read_bytes() — work exactly like the
+    real implementation would. delete_backup_file is NOT faked: it's a
+    plain local-disk delete with no network dependency, so the real
+    implementation is already test-safe as-is (operating on
+    tmp_path-scoped settings.world_backups_dir)."""
+
+    def __init__(self):
+        self.fetched: list[tuple[str, str]] = []  # (world_name, label)
+        self.fail_for: set[str] = set()  # world names to raise BackupTransferError for
+
+    def fetch_and_store_backup(self, settings, world, label):
+        if world.name in self.fail_for:
+            raise world_backups.BackupTransferError(f"simulated backup transfer failure for {world.name}")
+        self.fetched.append((world.name, label))
+        path = world_backups.backup_file_path(settings, world.name, label)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        content = f"fake backup of {world.name}".encode()
+        with tarfile.open(path, "w:gz") as tf:
+            info = tarfile.TarInfo(name="world/level.dat")
+            info.size = len(content)
+            tf.addfile(info, io.BytesIO(content))
+        return path.stat().st_size
+
+
+@pytest.fixture
+def fake_world_backups(monkeypatch):
+    fake = FakeWorldBackupTransfer()
+    monkeypatch.setattr(world_backups, "fetch_and_store_backup", fake.fetch_and_store_backup)
+    return fake
+
+
 class FakeHealthCheck:
     """Defaults every world to healthy — tests that want to exercise crash
     detection mark specific world names unhealthy via `.unhealthy.add(name)`."""
@@ -184,7 +227,7 @@ def fake_uuid_resolver():
 
 
 @pytest.fixture
-def app(tmp_path, monkeypatch, fake_lxd, fake_health_check, fake_uuid_resolver):
+def app(tmp_path, monkeypatch, fake_lxd, fake_health_check, fake_uuid_resolver, fake_world_backups):
     monkeypatch.setenv("FOLIA_MGMT_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("FOLIA_MGMT_PUBLIC_URL", "https://mgmt.example:8443")
     # Import after the env var is set so any module-level Settings() reads

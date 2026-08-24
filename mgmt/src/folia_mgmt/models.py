@@ -149,21 +149,33 @@ class World(SQLModel, table=True):
 
 
 class WorldBackup(SQLModel, table=True):
-    """One tracked backup — an LXD instance snapshot (LXDClient.
-    snapshot_container) plus the metadata (when, what kind) mgmt needs to
-    list and restore from in the dashboard's "time machine" backups UI.
+    """One tracked backup — a tar.gz of the world save + plugins/
+    (world_backups.py, fetched from folia-nexa-node's own /backup
+    endpoint over plain HTTP, stored on mgmt's own disk under
+    Settings.world_backups_dir) plus the metadata (when, what kind) mgmt
+    needs to list and restore from in the dashboard's "time machine"
+    backups UI.
+
+    `snapshot_name` predates the file-based redesign and is kept as-is
+    rather than renamed (e.g. to "label") even though it's no longer an
+    LXD snapshot name — it's now the backup's filename stem instead. This
+    project's DB story (db.py's _add_missing_columns) only auto-handles
+    adding nullable columns to an already-live DB, not renames, so
+    reusing the field avoids requiring manual DB surgery on a running
+    deployment.
 
     Distinct from the older ad-hoc POST /worlds/{name}/snapshot: that
-    endpoint creates a raw LXD snapshot mgmt never records anywhere, so
-    there was previously no way to list what snapshots exist for a world
-    at all. scheduler.run_scheduled_backups writes kind="scheduled" rows
-    hourly for every backups_enabled running world; POST
-    /worlds/{name}/backups/manual writes kind="manual" rows on demand, for
-    an operator who wants a snapshot right now (e.g. right before a risky
-    plugin upgrade) rather than waiting for the next hourly window — both
-    kinds share the same list/restore/retention handling.
-    scheduler.prune_expired_backups deletes both the row and the
-    underlying LXD snapshot once older than BACKUP_RETENTION (a week).
+    endpoint (still LXD-instance-snapshot-based, off by default — see
+    Settings.lxd_snapshot_backups_enabled) creates a raw LXD snapshot
+    mgmt never records anywhere, so there was previously no way to list
+    what snapshots exist for a world at all. scheduler.run_scheduled_backups
+    writes kind="scheduled" rows hourly for every backups_enabled running
+    world; POST /worlds/{name}/backups/manual writes kind="manual" rows
+    on demand, for an operator who wants a backup right now (e.g. right
+    before a risky plugin upgrade) rather than waiting for the next
+    hourly window — both kinds share the same list/restore/retention
+    handling. scheduler.prune_expired_backups deletes both the row and
+    the underlying tarball once older than BACKUP_RETENTION (a week).
     """
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -171,6 +183,7 @@ class WorldBackup(SQLModel, table=True):
     snapshot_name: str
     kind: str = "scheduled"  # "scheduled" (hourly, auto-pruned after a week) or "manual"
     created_at: datetime = Field(default_factory=utcnow, index=True)
+    size_bytes: Optional[int] = None
 
 
 class WorldPluginConfigFile(SQLModel, table=True):

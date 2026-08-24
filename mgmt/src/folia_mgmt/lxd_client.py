@@ -380,6 +380,40 @@ class LXDClient:
                 raise LXDError(f"'{path}' on '{name}' on '{host.name}' is not a file")
             return resp.content
 
+    def get_storage_driver_for_instance(self, host: Host, name: str) -> str:
+        """Resolves which storage-pool driver backs this instance's root
+        disk (e.g. "zfs", "dir", "btrfs") — used to unconditionally
+        refuse snapshot_container/restore_snapshot on "dir", which has no
+        native copy-on-write support and freezes the whole container for
+        the duration of a full rootfs copy (see LONG_OPERATION_TIMEOUT's
+        comment for the live incident this caused). Storage pools aren't
+        project-scoped in LXD, unlike everything else in this class."""
+        with self._client_for(host) as client:
+            resp = client.get(f"/1.0/instances/{name}", params={"project": host.project})
+            if resp.status_code != 200:
+                raise LXDError(f"failed to read instance '{name}' on '{host.name}': {resp.text}")
+            expanded_devices = resp.json().get("metadata", {}).get("expanded_devices", {})
+            pool = (expanded_devices.get("root") or {}).get("pool")
+            if not pool:
+                raise LXDError(f"instance '{name}' on '{host.name}' has no root disk device")
+
+            pool_resp = client.get(f"/1.0/storage-pools/{pool}")
+            if pool_resp.status_code != 200:
+                raise LXDError(f"failed to read storage pool '{pool}' on '{host.name}': {pool_resp.text}")
+            return pool_resp.json().get("metadata", {}).get("driver", "")
+
+    def _refuse_dir_backend(self, host: Host, name: str, action: str) -> None:
+        driver = self.get_storage_driver_for_instance(host, name)
+        if driver == "dir":
+            raise LXDError(
+                f"refusing to {action} '{name}' on '{host.name}': its storage pool uses the "
+                "'dir' driver, which has no native snapshot support and freezes the whole "
+                "container for the duration of a full rootfs copy — see CLAUDE.md's World "
+                "backups entry. Migrate that host's storage pool to zfs/btrfs/lvm first "
+                "(tools/migrate-storage-to-zfs.sh), or use the file-level world backup feature "
+                "instead, which doesn't depend on the storage pool at all."
+            )
+
     def snapshot_container(self, host: Host, name: str, snapshot_name: str) -> None:
         """Raises LXDError immediately, without ever reaching the network,
         if a snapshot of this exact (host, container) is already in
@@ -391,7 +425,12 @@ class LXDClient:
         for the duration of a real rootfs copy, and LXD doesn't tolerate
         a second concurrent snapshot request for the same instance while
         that's in progress — confirmed live, it wedges the container in
-        FREEZING rather than queueing cleanly."""
+        FREEZING rather than queueing cleanly. Also unconditionally
+        refuses a "dir"-backed instance outright (_refuse_dir_backend) —
+        this check is independent of Settings.lxd_snapshot_backups_enabled
+        (a router-layer feature toggle) and can't be bypassed by any
+        caller, present or future."""
+        self._refuse_dir_backend(host, name, "snapshot")
         key = (host.name, name)
         with self._snapshot_lock:
             if key in self._snapshots_in_flight:
@@ -410,6 +449,10 @@ class LXDClient:
                 self._snapshots_in_flight.discard(key)
 
     def restore_snapshot(self, host: Host, name: str, snapshot_name: str) -> None:
+        """See snapshot_container's docstring — the same unconditional
+        "dir" refusal applies here (restoring on a non-COW backend is the
+        same kind of full-copy, freeze-prone operation as taking one)."""
+        self._refuse_dir_backend(host, name, "restore")
         with self._client_for(host) as client:
             resp = client.put(
                 f"/1.0/instances/{name}",

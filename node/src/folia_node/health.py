@@ -17,10 +17,14 @@ import collections
 import json
 import logging
 import queue
+import tarfile
 import threading
 import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+from folia_node.staging import LEVEL_NAME
 
 DEFAULT_PORT = 8123
 
@@ -108,6 +112,10 @@ class AgentState:
     lock: threading.Lock = field(default_factory=threading.Lock)
     console_log: LogBroadcaster = field(default_factory=LogBroadcaster)
     agent_log: LogBroadcaster = field(default_factory=LogBroadcaster)
+    # Set by agent.py's main() right after construction — the default
+    # here just mirrors main()'s own WORLD_DIR env-var fallback so a bare
+    # AgentState() (e.g. in tests) still has a sane value.
+    world_dir: Path = field(default_factory=lambda: Path("/tmp/folia-world"))
 
     def snapshot(self) -> dict:
         with self.lock:
@@ -156,12 +164,40 @@ def _make_handler(state: AgentState) -> type[BaseHTTPRequestHandler]:
             finally:
                 broadcaster.unsubscribe(q)
 
+        def _stream_backup_archive(self) -> None:
+            """Streams a tar.gz of the world save + plugins/ (jars
+            included, not just plugin data, so a restore brings back the
+            exact plugin versions that were running at backup time)
+            straight over the response socket via tarfile's streaming
+            write mode ("w|gz", for non-seekable output) — no temp file
+            needed on this container's own disk, and no dependency on
+            the LXD host's storage pool at all (see CLAUDE.md's World
+            backups entry for why that matters). Mirrors _stream_log's
+            raw-wfile approach since neither knows the response length up
+            front. Either directory (e.g. a world that hasn't generated
+            a save yet) is skipped, not an error, if it doesn't exist."""
+            self.send_response(200)
+            self.send_header("Content-Type", "application/gzip")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            try:
+                with tarfile.open(fileobj=self.wfile, mode="w|gz") as tf:
+                    for name in (LEVEL_NAME, "plugins"):
+                        path = state.world_dir / name
+                        if path.exists():
+                            tf.add(path, arcname=name)
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # client disconnected mid-stream
+
         def do_GET(self) -> None:  # noqa: N802 - stdlib method name
             if self.path == "/logs/console/stream":
                 self._stream_log(state.console_log)
                 return
             if self.path == "/logs/agent/stream":
                 self._stream_log(state.agent_log)
+                return
+            if self.path == "/backup":
+                self._stream_backup_archive()
                 return
             snapshot = state.snapshot()
             if self.path == "/healthz":

@@ -100,11 +100,40 @@ def _purge_soft_deleted_worlds(engine) -> None:
             )
 
 
+def _purge_legacy_lxd_snapshot_backups(engine) -> None:
+    """One-time cleanup for WorldBackup rows created before the
+    file-level backup redesign — they reference LXD snapshot names the
+    new restore path (world_backups.py) can't do anything with, since
+    there's no corresponding tarball on disk for them. Targeted by
+    `size_bytes IS NULL`: that column didn't exist before this change, so
+    every pre-existing row has it NULL (backfilled by _add_missing_columns
+    above, which must run first), while every backup created by the new
+    fetch_and_store_backup always sets it to a real byte count — so this
+    naturally becomes a no-op after the first run, same pattern as
+    _purge_soft_deleted_worlds above, no separate one-time marker needed.
+    The underlying LXD snapshots these rows pointed at are left orphaned
+    on their host's storage pool rather than best-effort-deleted through
+    the very snapshot API this change exists to stop depending on for
+    routine backups."""
+    inspector = inspect(engine)
+    if not inspector.has_table("worldbackup"):
+        return
+    with engine.begin() as conn:
+        result = conn.execute(text("DELETE FROM worldbackup WHERE size_bytes IS NULL"))
+        if result.rowcount:
+            logger.info(
+                "purged %d legacy LXD-snapshot-based world backup row(s) — "
+                "no longer restorable via the file-level backup path",
+                result.rowcount,
+            )
+
+
 def init_db(settings: Settings | None = None) -> None:
     engine = get_engine(settings)
     SQLModel.metadata.create_all(engine)
     _add_missing_columns(engine)
     _purge_soft_deleted_worlds(engine)
+    _purge_legacy_lxd_snapshot_backups(engine)
 
 
 def get_session() -> Generator[Session, None, None]:

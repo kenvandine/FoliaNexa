@@ -80,11 +80,11 @@ is the exception, per the above.
 ## Running the test suites
 
 ```bash
-# mgmt (Python) — 429 tests
+# mgmt (Python) — 439 tests
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
-# node (Python) — 17 tests
+# node (Python) — 54 tests
 cd node && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
@@ -1003,6 +1003,122 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   host's storage pool to something with native snapshot support (ZFS or
   btrfs) is an operational fix outside this codebase, not something
   either change here addresses.
+
+  Redesign (2026-08-24), same day: ZFS migration was considered as the
+  fix for the `dir`-backend freeze above — it genuinely would fix it at
+  the root (COW snapshots don't need to freeze anything) — but is
+  blocked on this operator's actual host: both its disks are already
+  fully consumed by one LVM volume group backing the root filesystem, so
+  there's no free space to hand ZFS without a risky live root-filesystem
+  shrink. `tools/migrate-storage-to-zfs.sh` is written and ready for
+  whenever that becomes feasible (creates/reuses a ZFS pool, points the
+  project's default profile at it, migrates existing containers —
+  written against LXD's documented storage-pool/`move` CLI contract, not
+  exercised against a live LXD in this environment; every `lxc` call it
+  makes against instances/profiles is scoped to `--project`, never
+  touching anything outside the target project). In the meantime, the
+  tracked "time machine" backup feature was rebuilt around file-level
+  tar.gz archives (world save + `plugins/`, jars included so a restore
+  brings back the exact plugin versions running at backup time) instead
+  of LXD instance snapshots at all — sidesteps the `dir`-backend problem
+  entirely rather than working around it, since nothing in this path
+  touches LXD's storage layer.
+
+  New node-agent endpoint `GET /backup` (`node/src/folia_node/health.py`)
+  streams a `tarfile` in `"w|gz"` mode straight over the response socket
+  (mirrors the existing `_stream_log` handler's raw-`wfile` approach) —
+  no LXD exec/websocket capability exists anywhere in this codebase (only
+  single-file GET/PUT and non-recursive directory listing), so this was
+  the only way to get a directory tree off a container without adding
+  one. mgmt's new `world_backups.py` does a streaming `httpx` GET against
+  it and writes straight to **mgmt's own disk**
+  (`Settings.world_backups_dir`, `world-backups/<world_name>/<label>.tar.gz`)
+  — deliberately not the world's LXD host or container, so an operator
+  can point a plain rsync job at that directory from a separate backup
+  host as a full disaster-recovery story for losing the mgmt node
+  itself, no code involved on either side. Validates the downloaded
+  stream actually opens as a tar before treating it as a good backup
+  (a truncated/corrupt download must not look like a success), and uses
+  a generous, separate timeout (`Settings.world_backup_fetch_timeout_seconds`,
+  600s) for the fetch — not repeating the exact class of bug just fixed
+  for LXD's own operation-wait poll above.
+
+  Restore reuses `LXDClient.restart_container` — the same call
+  `recover_crashed_worlds` already relies on — rather than adding any new
+  JVM-pause/resume capability to the node agent (investigated and
+  confirmed to be substantial new plumbing: nothing today connects the
+  health server's HTTP thread to the JVM supervision loop at all). mgmt
+  pushes the tarball to `{NODE_WORLD_DIR}/.pending-restore.tar.gz` while
+  the container is still running (the same, already-proven-safe
+  `push_file`-against-a-running-container pattern every other push in
+  this codebase already uses), then restarts the container; the node
+  agent's freshly-restarted `main()` extracts the marker over `world/`/
+  `plugins/` before any other staging, using `filter="data"`
+  (Python 3.12+) to reject a path-traversal entry in a corrupt/tampered
+  archive, same defense-in-depth this codebase already applies to other
+  mgmt-supplied paths (plugin_upload.py/plugin_files.py). Restoring a
+  world onto a *different* host than it was backed up on needed no
+  special-casing at all: `WorldBackup` joins to a world by name, not by
+  the host it was taken on, so placing a same-named world on a healthy
+  host and then restoring just works, with manual re-placement as the
+  only "massaging" required.
+
+  The older LXD-instance-snapshot mechanism (`LXDClient.
+  snapshot_container`/`restore_snapshot`, the ad-hoc `POST
+  /{name}/snapshot`/`POST /{name}/restore/{snapshot_name}` endpoints) was
+  **kept**, not deleted — useful once a host's storage pool actually has
+  native snapshot support — but is now off by default
+  (`Settings.lxd_snapshot_backups_enabled`, `False`) and, independent of
+  that flag, `LXDClient` itself unconditionally refuses to snapshot or
+  restore a "dir"-backed instance (new `get_storage_driver_for_instance`:
+  reads an instance's `expanded_devices.root.pool`, then that pool's
+  `driver`) — a hard safety net so this exact incident can't recur even
+  if the flag is re-enabled on a host still using `dir`. Existing
+  `WorldBackup` rows from before this redesign reference LXD snapshot
+  names the new restore path can't do anything with; `db.py` gained
+  `_purge_legacy_lxd_snapshot_backups`, a one-off startup cleanup (same
+  pattern as the existing `_purge_soft_deleted_worlds`) that drops them,
+  targeted by `size_bytes IS NULL` (a column that didn't exist before
+  this change, so every pre-existing row has it unset while every new
+  file-based backup always sets it) rather than a separate one-time
+  marker — their underlying LXD snapshots are left orphaned on-disk
+  rather than best-effort-deleted through the very snapshot API this
+  redesign exists to stop depending on for routine backups.
+
+  Real pytest coverage: new `mgmt/tests/test_world_backups.py` (fetch/
+  store/validate against a real local `http.server` standing in for a
+  node agent — success, non-200, a truncated/corrupt stream rejected
+  rather than stored, connection refused), new node coverage in
+  `test_health.py` (`/backup`'s tar contents, gracefully skipping a
+  missing `world/`/`plugins/`) and new `test_agent.py`
+  (`_apply_pending_restore` — extracts and replaces existing dirs, a
+  missing marker is a no-op, a corrupt marker is skipped without
+  crashing the agent, a path-traversal entry is rejected). Updated
+  `test_scheduler.py`'s backup tests (fakes `world_backups.
+  fetch_and_store_backup` instead of `LXDClient.snapshot_container` —
+  this session's mid-flight-disable/hard-deleted-world race-guard
+  regression tests needed no logic changes, just a different fake
+  underneath, since that logic was always generic to "this call can be
+  slow, world state can change underneath it") and `test_worlds.py`
+  (manual-backup/restore endpoints for the new flow, plus the ad-hoc
+  endpoints' new disabled-by-default 403). New `test_lxd_client.py`
+  coverage for `get_storage_driver_for_instance` and the "dir" refusal
+  (439 mgmt tests total, up from 429; node 54, up from 48). Dropped: the
+  old `test_prune_expired_backups_retries_on_snapshot_delete_failure` —
+  that retry-on-failure behavior doesn't exist in the new design
+  (`world_backups.delete_backup_file` is best-effort/never-raises by
+  design, matching the "greatly simplify" goal — a failed local file
+  delete is a much lower-stakes, much rarer failure mode than the LXD API
+  call it replaced).
+
+  Not verified against live infrastructure: a real `folia-nexa-node`'s
+  `/backup` streaming and restore-extraction path against a real running
+  Folia server (no live cluster available in this environment, same
+  caveat as every other manifest-driven or file-API-driven flow in this
+  list) and `get_storage_driver_for_instance` itself (written against
+  LXD's documented `GET /1.0/instances/{name}` and `GET
+  /1.0/storage-pools/{name}` contract, same as everything else in
+  `LXDClient` except `snapshot_container`).
 
 Written against documented API contracts but **not** exercised against
 live infrastructure:

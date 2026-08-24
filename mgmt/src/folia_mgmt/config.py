@@ -51,6 +51,37 @@ class Settings(BaseSettings):
     node_health_port: int = 8123
     node_health_timeout_seconds: float = 3.0
 
+    # World backups (PLAN.md §6A) — a plain tar.gz of the world save +
+    # plugins/ (jars included, not just data, so a restore brings back
+    # the exact plugin versions that were running at backup time), fetched
+    # from folia-nexa-node's own /backup endpoint over plain HTTP rather
+    # than through LXD's storage layer at all. See world_backups.py.
+    # Deliberately generous, separate from node_health_timeout_seconds
+    # above (that one's for fast /healthz-style polls) — a real world
+    # save can legitimately take a while to stream, and a too-short
+    # timeout here would repeat the exact mistake LXD's own operation-wait
+    # poll made this same session (see lxd_client.py's
+    # LONG_OPERATION_TIMEOUT comment): mgmt giving up and reporting a
+    # false failure while the transfer is still genuinely in progress.
+    world_backup_fetch_timeout_seconds: float = 600.0
+
+    # LXD container-level snapshot backups (LXDClient.snapshot_container/
+    # restore_snapshot, and the ad-hoc POST /{name}/snapshot and POST
+    # /{name}/restore/{snapshot_name} endpoints) — kept in the codebase as
+    # a feature for whenever a host's storage pool has native
+    # copy-on-write snapshot support (ZFS/btrfs/LVM), but off by default.
+    # The tracked "time machine" backup feature (scheduled + manual,
+    # dashboard restore) never depends on this flag at all — it always
+    # uses the file-level world_backups.py path. Independent of this
+    # flag, LXDClient itself unconditionally refuses to snapshot/restore
+    # an instance on a "dir"-backed storage pool (see
+    # get_storage_driver_for_instance) — a "dir" pool has no native
+    # snapshot support and freezes the whole container for a full rootfs
+    # copy, which wedged a live world this same session even with this
+    # flag's equivalent left implicitly "on". Flipping this flag on a
+    # dir-backed host will not bypass that check.
+    lxd_snapshot_backups_enabled: bool = False
+
     # LXD host trust / enrollment (PLAN.md §3, §4)
     join_token_ttl_seconds: int = 15 * 60
 
@@ -140,10 +171,24 @@ class Settings(BaseSettings):
     def plugin_uploads_dir(self) -> Path:
         return self.state_dir / "plugin-jars"
 
+    # World backup tarballs (world_backups.py) — one file per backup at
+    # world-backups/<world_name>/<label>.tar.gz. Lives on *this* mgmt
+    # host's own disk, never the world's own LXD host/container — mgmt
+    # actively pulls the tarball over HTTP and stores it here. This flat,
+    # deterministic layout is deliberately rsync-friendly: an operator
+    # can point a cron/systemd-timer rsync job at this directory from a
+    # separate backup host as a disaster-recovery measure for a lost mgmt
+    # node, with no code involved on either side — see CLAUDE.md's World
+    # backups entry for the full recovery procedure.
+    @property
+    def world_backups_dir(self) -> Path:
+        return self.state_dir / "world-backups"
+
 
 def get_settings() -> Settings:
     settings = Settings()
     settings.state_dir.mkdir(parents=True, exist_ok=True)
     settings.certs_dir.mkdir(parents=True, exist_ok=True)
     settings.plugin_uploads_dir.mkdir(parents=True, exist_ok=True)
+    settings.world_backups_dir.mkdir(parents=True, exist_ok=True)
     return settings

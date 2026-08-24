@@ -1,11 +1,15 @@
-"""Regression coverage for LXDClient.snapshot_container's per-container
-in-flight lock — see LONG_OPERATION_TIMEOUT's comment in lxd_client.py
-for the live incident this closes: an operator's manual world backup on
-a "dir"-backend LXD host timed out client-side while genuinely still
-running server-side, the retry piled a second concurrent snapshot
-request onto the same container, and LXD wedged it in FREEZING. Every
-other LXDClient method is still untested here (see CLAUDE.md) — this
-file only covers the one thing that's now been confirmed live.
+"""Regression coverage for the two live incidents LXDClient's snapshot/
+restore methods have caused on "dir"-backend LXD hosts: the per-container
+in-flight lock (see LONG_OPERATION_TIMEOUT's comment in lxd_client.py —
+an operator's manual world backup timed out client-side while genuinely
+still running server-side, the retry piled a second concurrent snapshot
+request onto the same container, and LXD wedged it in FREEZING), and the
+unconditional "dir" refusal added after the redesign to file-level world
+backups (get_storage_driver_for_instance / _refuse_dir_backend) — since
+the tracked "time machine" backup feature no longer depends on LXD
+snapshots at all, this file's remaining reason to exist is exercising
+the lower-level ad-hoc snapshot/restore endpoints' safety net. Every
+other LXDClient method is still untested here (see CLAUDE.md).
 """
 
 from __future__ import annotations
@@ -28,6 +32,64 @@ def _host() -> Host:
     )
 
 
+class _FakeHttpClient:
+    """Fakes the two GETs get_storage_driver_for_instance makes (instance
+    -> its root pool, then that pool -> its driver) so every test in this
+    file can control which driver a container appears to sit on, plus a
+    configurable POST for snapshot_container's own call. Defaults to
+    "zfs" (i.e. not "dir") so tests that aren't specifically about the
+    dir-refusal don't need to think about it at all."""
+
+    def __init__(self, driver: str = "zfs", on_post=None):
+        self.driver = driver
+        self._on_post = on_post
+
+    def get(self, path, **kwargs):
+        resp = MagicMock()
+        resp.status_code = 200
+        if "/storage-pools/" in path:
+            resp.json.return_value = {"metadata": {"driver": self.driver}}
+        else:
+            resp.json.return_value = {"metadata": {"expanded_devices": {"root": {"pool": "default"}}}}
+        return resp
+
+    def post(self, path, **kwargs):
+        if self._on_post is not None:
+            self._on_post(path, **kwargs)
+        resp = MagicMock()
+        resp.status_code = 200
+        return resp
+
+
+def test_get_storage_driver_for_instance_reads_the_instances_root_pool(monkeypatch):
+    client = LXDClient(Path("/dev/null"), Path("/dev/null"))
+    host = _host()
+
+    @contextmanager
+    def _fake_client_for(self, host):
+        yield _FakeHttpClient(driver="btrfs")
+
+    monkeypatch.setattr(LXDClient, "_client_for", _fake_client_for)
+
+    assert client.get_storage_driver_for_instance(host, "world-a") == "btrfs"
+
+
+@pytest.mark.parametrize("method_name", ["snapshot_container", "restore_snapshot"])
+def test_refuses_dir_backed_instance(monkeypatch, method_name):
+    client = LXDClient(Path("/dev/null"), Path("/dev/null"))
+    host = _host()
+
+    @contextmanager
+    def _fake_client_for(self, host):
+        yield _FakeHttpClient(driver="dir")
+
+    monkeypatch.setattr(LXDClient, "_client_for", _fake_client_for)
+
+    method = getattr(client, method_name)
+    with pytest.raises(LXDError, match="'dir' driver"):
+        method(host, "world-a", "some-snapshot")
+
+
 def test_snapshot_container_rejects_a_second_concurrent_call_for_the_same_container(monkeypatch):
     client = LXDClient(Path("/dev/null"), Path("/dev/null"))
     host = _host()
@@ -35,7 +97,7 @@ def test_snapshot_container_rejects_a_second_concurrent_call_for_the_same_contai
     first_call_started = threading.Event()
     release_first_call = threading.Event()
 
-    class _FakeHttpClient:
+    class _LockTestHttpClient(_FakeHttpClient):
         def post(self, path, **kwargs):
             # Only the world-a snapshot blocks (simulating a slow, still-
             # in-flight LXD operation) — the world-b call used below to
@@ -50,7 +112,7 @@ def test_snapshot_container_rejects_a_second_concurrent_call_for_the_same_contai
 
     @contextmanager
     def _fake_client_for(self, host):
-        yield _FakeHttpClient()
+        yield _LockTestHttpClient()
 
     monkeypatch.setattr(LXDClient, "_client_for", _fake_client_for)
     monkeypatch.setattr(LXDClient, "_finish", lambda self, client, resp, *, ok_codes, error: None)
