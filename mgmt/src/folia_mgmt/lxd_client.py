@@ -36,22 +36,35 @@ DEFAULT_TIMEOUT = 15.0
 # host on every reconcile tick (scheduler.check_host_health), so a single
 # dead host must not stall the whole tick for the full 15s.
 PING_TIMEOUT = 5.0
-# Deliberately much longer than DEFAULT_TIMEOUT, and applied only to the
-# operation-wait poll in _wait_operation: a snapshot/restore on a storage
-# pool with no native COW support (LXD's "dir" driver) is a real,
-# potentially large rootfs copy rather than an instant atomic operation,
-# and DEFAULT_TIMEOUT is sized for ordinary fast CRUD calls. Confirmed
-# live (2026-08-24): a manual world backup on a dir-backend host
-# genuinely took longer than 15s, so this GET timed out client-side while
-# the snapshot was still legitimately running on LXD's side; mgmt
-# reported that as a failure, the operator retried, and three separate
-# snapshot operations ended up queued against the very same container —
-# which wedged it in FREEZING (LXD's dir driver has to freeze the
-# container for the duration of the copy, and doesn't tolerate that
-# happening more than once concurrently for the same instance). The
-# per-container lock in snapshot_container below is the other half of
-# this fix — it stops mgmt from ever issuing that second concurrent
-# request in the first place, regardless of how long the first one takes.
+# Deliberately much longer than DEFAULT_TIMEOUT, and passed explicitly
+# only to the handful of calls below that actually need it
+# (snapshot_container/restore_snapshot) rather than being _wait_operation's
+# own default: a snapshot/restore on a storage pool with no native COW
+# support (LXD's "dir" driver) is a real, potentially large rootfs copy
+# rather than an instant atomic operation, and DEFAULT_TIMEOUT is sized
+# for ordinary fast CRUD calls like restart/stop/start. Confirmed live
+# (2026-08-24): a manual world backup on a dir-backend host genuinely took
+# longer than 15s, so this GET timed out client-side while the snapshot
+# was still legitimately running on LXD's side; mgmt reported that as a
+# failure, the operator retried, and three separate snapshot operations
+# ended up queued against the very same container — which wedged it in
+# FREEZING (LXD's dir driver has to freeze the container for the duration
+# of the copy, and doesn't tolerate that happening more than once
+# concurrently for the same instance). The per-container lock in
+# snapshot_container below is the other half of this fix — it stops mgmt
+# from ever issuing that second concurrent request in the first place,
+# regardless of how long the first one takes.
+#
+# _wait_operation/_finish previously applied this 600s timeout to every
+# async LXD call (restart/stop/start/delete/launch/migrate too, via the
+# same shared helper) rather than just the two calls above — since
+# reconcile() runs its steps synchronously in one call, a single merely-
+# slow-not-dead host could stall the entire reconcile tick (whitelist
+# sync, LuckPerms sync, backups, teardown, everything) for up to 10
+# minutes, exactly the "single dead host must not stall the whole tick"
+# failure PING_TIMEOUT's own comment above says to avoid. Fixed by making
+# DEFAULT_TIMEOUT _wait_operation/_finish's default and opting into this
+# long timeout only where it's actually needed.
 LONG_OPERATION_TIMEOUT = 600.0
 
 
@@ -161,11 +174,13 @@ class LXDClient:
             except (httpx.HTTPError, ssl.SSLError, OSError) as exc:
                 raise LXDError(f"could not reach host '{host.name}': {exc}") from exc
 
-    def _wait_operation(self, client: httpx.Client, op_body: dict) -> dict:
+    def _wait_operation(
+        self, client: httpx.Client, op_body: dict, *, timeout: float = DEFAULT_TIMEOUT
+    ) -> dict:
         op_url = op_body.get("operation")
         if not op_url:
             return op_body
-        resp = client.get(f"{op_url}/wait", timeout=LONG_OPERATION_TIMEOUT)
+        resp = client.get(f"{op_url}/wait", timeout=timeout)
         resp.raise_for_status()
         result = resp.json()
         metadata = result.get("metadata") or {}
@@ -174,18 +189,29 @@ class LXDClient:
         return metadata
 
     def _finish(
-        self, client: httpx.Client, resp: httpx.Response, *, ok_codes: tuple[int, ...], error: str
+        self,
+        client: httpx.Client,
+        resp: httpx.Response,
+        *,
+        ok_codes: tuple[int, ...],
+        error: str,
+        timeout: float = DEFAULT_TIMEOUT,
     ) -> None:
         """Shared tail end of every synchronous-or-async LXD call in this
         class: LXD answers either immediately (200/201) or with a
         background operation to poll (202) — everything else is a real
         failure. Centralizing this once means a future change to that
         convention (e.g. surfacing LXD's structured error `code`/`err`
-        field) only needs to happen here, not in every method below."""
+        field) only needs to happen here, not in every method below.
+        `timeout` only affects the 202 operation-wait poll — pass
+        LONG_OPERATION_TIMEOUT explicitly for calls that can involve a
+        real full-rootfs copy (see that constant's own comment); every
+        other call gets DEFAULT_TIMEOUT so a slow-not-dead host fails
+        fast instead of stalling the whole reconcile tick."""
         if resp.status_code not in ok_codes:
             raise LXDError(f"{error}: {resp.text}")
         if resp.status_code == 202:
-            self._wait_operation(client, resp.json())
+            self._wait_operation(client, resp.json(), timeout=timeout)
 
     # -- reachability --------------------------------------------------------
 
@@ -351,6 +377,17 @@ class LXDClient:
             if resp.status_code not in (200, 201):
                 raise LXDError(f"failed to push '{path}' to '{name}' on '{host.name}': {resp.text}")
 
+    def delete_file(self, host: Host, name: str, path: str) -> None:
+        """Deletes a single file inside a running container — the
+        cleanup counterpart to push_file, used by routers/worlds.py's
+        restore_backup to remove an armed-but-unconsumed pending-restore
+        marker if the restart that was supposed to consume it fails. 404
+        is treated as success (nothing to clean up)."""
+        with self._client_for(host) as client:
+            resp = client.delete(f"/1.0/instances/{name}/files", params={"project": host.project, "path": path})
+            if resp.status_code not in (200, 202, 404):
+                raise LXDError(f"failed to delete '{path}' on '{name}' on '{host.name}': {resp.text}")
+
     def list_files(self, host: Host, name: str, path: str) -> list[str]:
         """Lists entries directly under `path` inside the container (not
         recursive — callers walk the tree themselves, see
@@ -443,7 +480,13 @@ class LXDClient:
                     params={"project": host.project},
                     json={"name": snapshot_name},
                 )
-                self._finish(client, resp, ok_codes=(200, 202), error=f"snapshot of '{name}' failed")
+                self._finish(
+                    client,
+                    resp,
+                    ok_codes=(200, 202),
+                    error=f"snapshot of '{name}' failed",
+                    timeout=LONG_OPERATION_TIMEOUT,
+                )
         finally:
             with self._snapshot_lock:
                 self._snapshots_in_flight.discard(key)
@@ -460,7 +503,11 @@ class LXDClient:
                 json={"restore": snapshot_name},
             )
             self._finish(
-                client, resp, ok_codes=(200, 202), error=f"restore of '{name}' to '{snapshot_name}' failed"
+                client,
+                resp,
+                ok_codes=(200, 202),
+                error=f"restore of '{name}' to '{snapshot_name}' failed",
+                timeout=LONG_OPERATION_TIMEOUT,
             )
 
     def delete_snapshot(self, host: Host, name: str, snapshot_name: str) -> None:

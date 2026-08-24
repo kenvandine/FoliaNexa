@@ -14,6 +14,7 @@ than fabricating game-level numbers.
 from __future__ import annotations
 
 import collections
+import hmac
 import json
 import logging
 import queue
@@ -116,6 +117,14 @@ class AgentState:
     # here just mirrors main()'s own WORLD_DIR env-var fallback so a bare
     # AgentState() (e.g. in tests) still has a sane value.
     world_dir: Path = field(default_factory=lambda: Path("/tmp/folia-world"))
+    # Set by agent.py's main() from the devlxd world assignment
+    # (DevLXDClient.get_world_assignment's node_agent_shared_secret) —
+    # required to authenticate GET /backup, since that endpoint streams
+    # plugins/ verbatim, secrets (e.g. LuckPerms' config.yml) included.
+    # None means this container hasn't picked up the config key yet (an
+    # old world not yet restarted since mgmt started setting it) — /backup
+    # fails closed rather than serving unauthenticated in that case.
+    backup_shared_secret: str | None = None
 
     def snapshot(self) -> dict:
         with self.lock:
@@ -164,6 +173,20 @@ def _make_handler(state: AgentState) -> type[BaseHTTPRequestHandler]:
             finally:
                 broadcaster.unsubscribe(q)
 
+        def _backup_auth_ok(self) -> bool:
+            """Constant-time comparison against state.backup_shared_secret
+            — None (config key not picked up yet, e.g. an existing world
+            not restarted since mgmt started sending it) always fails
+            closed rather than falling back to no auth."""
+            expected = state.backup_shared_secret
+            if not expected:
+                return False
+            got = self.headers.get("Authorization", "")
+            prefix = "Bearer "
+            if not got.startswith(prefix):
+                return False
+            return hmac.compare_digest(got[len(prefix):], expected)
+
         def _stream_backup_archive(self) -> None:
             """Streams a tar.gz of the world save + plugins/ (jars
             included, not just plugin data, so a restore brings back the
@@ -175,7 +198,20 @@ def _make_handler(state: AgentState) -> type[BaseHTTPRequestHandler]:
             backups entry for why that matters). Mirrors _stream_log's
             raw-wfile approach since neither knows the response length up
             front. Either directory (e.g. a world that hasn't generated
-            a save yet) is skipped, not an error, if it doesn't exist."""
+            a save yet) is skipped, not an error, if it doesn't exist.
+
+            Requires Authorization: Bearer <state.backup_shared_secret> —
+            unlike every other endpoint here, this one streams secrets
+            (plugin config files like LuckPerms' config.yml) back out, so
+            unlike /healthz, /metrics, /logs/*, it can't be left open to
+            anything that can reach this container's health port. See
+            AgentState.backup_shared_secret / _backup_auth_ok above."""
+            if not self._backup_auth_ok():
+                self.send_response(401)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(b"missing or invalid Authorization header\n")
+                return
             self.send_response(200)
             self.send_header("Content-Type", "application/gzip")
             self.send_header("Cache-Control", "no-cache")

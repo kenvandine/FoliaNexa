@@ -20,16 +20,20 @@ def server():
     srv.shutdown()
 
 
+BACKUP_SECRET = "test-backup-secret"
+
+
 @pytest.fixture
 def server_with_world_dir(tmp_path):
-    state = AgentState(world_name="world-nether", world_dir=tmp_path)
+    state = AgentState(world_name="world-nether", world_dir=tmp_path, backup_shared_secret=BACKUP_SECRET)
     srv = start_health_server(state, port=0)
     yield srv, state, tmp_path
     srv.shutdown()
 
 
-def _get_bytes(port: int, path: str) -> bytes:
-    with urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5) as resp:
+def _get_bytes(port: int, path: str, headers: dict[str, str] | None = None) -> bytes:
+    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", headers=headers or {})
+    with urllib.request.urlopen(req, timeout=5) as resp:
         return resp.read()
 
 
@@ -76,6 +80,10 @@ def test_unknown_path_404s(server):
     assert status == 404
 
 
+def _auth_headers(secret: str = BACKUP_SECRET) -> dict[str, str]:
+    return {"Authorization": f"Bearer {secret}"}
+
+
 def test_backup_archive_includes_world_and_plugins_dirs(server_with_world_dir):
     srv, _state, world_dir = server_with_world_dir
     (world_dir / "world").mkdir()
@@ -83,7 +91,7 @@ def test_backup_archive_includes_world_and_plugins_dirs(server_with_world_dir):
     (world_dir / "plugins").mkdir()
     (world_dir / "plugins" / "SomePlugin.jar").write_bytes(b"fake jar bytes")
 
-    raw = _get_bytes(srv.server_port, "/backup")
+    raw = _get_bytes(srv.server_port, "/backup", headers=_auth_headers())
 
     with tarfile.open(fileobj=BytesIO(raw), mode="r:gz") as tf:
         names = set(tf.getnames())
@@ -96,10 +104,34 @@ def test_backup_archive_skips_missing_directories(server_with_world_dir):
     # still get a valid, if empty, archive back — not an error.
     srv, _state, _world_dir = server_with_world_dir
 
-    raw = _get_bytes(srv.server_port, "/backup")
+    raw = _get_bytes(srv.server_port, "/backup", headers=_auth_headers())
 
     with tarfile.open(fileobj=BytesIO(raw), mode="r:gz") as tf:
         assert tf.getnames() == []
+
+
+def test_backup_archive_401s_without_authorization_header(server_with_world_dir):
+    srv, _state, _world_dir = server_with_world_dir
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _get_bytes(srv.server_port, "/backup")
+    assert exc_info.value.code == 401
+
+
+def test_backup_archive_401s_with_wrong_secret(server_with_world_dir):
+    srv, _state, _world_dir = server_with_world_dir
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _get_bytes(srv.server_port, "/backup", headers=_auth_headers("wrong-secret"))
+    assert exc_info.value.code == 401
+
+
+def test_backup_archive_401s_when_no_secret_configured(server):
+    # A world whose container hasn't picked up the config key yet (e.g.
+    # not restarted since mgmt started setting it) must fail closed, not
+    # silently serve unauthenticated.
+    srv, _state = server
+    with pytest.raises(urllib.error.HTTPError) as exc_info:
+        _get_bytes(srv.server_port, "/backup", headers=_auth_headers())
+    assert exc_info.value.code == 401
 
 
 # -- LogBroadcaster (pure unit, no HTTP) -------------------------------------

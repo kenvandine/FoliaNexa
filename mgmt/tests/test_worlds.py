@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from sqlmodel import select
 
+from folia_mgmt.access_apply import NODE_WORLD_DIR
+from folia_mgmt.lxd_client import LXDError
 from folia_mgmt.models import World, utcnow
 from helpers import auth_header
 
@@ -531,6 +533,65 @@ def test_restore_backup_requires_admin(client, admin_token, operator_token, fake
     assert ("node-a", "world-overworld") in fake_lxd.restarted
     pushed_paths = [path for (h, n, path) in fake_lxd.pushed_files if (h, n) == ("node-a", "world-overworld")]
     assert any(path.endswith(".pending-restore.tar.gz") for path in pushed_paths)
+
+
+def test_restore_backup_cleans_up_pending_marker_when_restart_fails(
+    client, admin_token, operator_token, fake_lxd, trigger_reconcile
+):
+    # push_file succeeds (the marker is armed), but restart_container then
+    # fails — without cleanup, the armed marker would sit on disk and get
+    # silently applied on some later unrelated restart (see
+    # CLAUDE.md's World backups entry / node/src/folia_node/agent.py's
+    # _apply_pending_restore).
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    trigger_reconcile()
+    backup_id = client.get(
+        "/api/v1/worlds/world-overworld/backups", headers=auth_header(operator_token)
+    ).json()[0]["id"]
+
+    fake_lxd.fail_restart_with["world-overworld"] = LXDError("simulated restart failure")
+
+    resp = client.post(
+        f"/api/v1/worlds/world-overworld/backups/{backup_id}/restore",
+        headers=auth_header(admin_token),
+    )
+    assert resp.status_code == 502
+
+    marker_path = f"{NODE_WORLD_DIR}/.pending-restore.tar.gz"
+    assert ("node-a", "world-overworld", marker_path) in fake_lxd.pushed_files
+    assert ("node-a", "world-overworld", marker_path) in fake_lxd.deleted_files
+
+
+def test_restore_backup_survives_marker_cleanup_itself_failing(
+    client, admin_token, operator_token, fake_lxd, trigger_reconcile
+):
+    # If restart AND the best-effort marker cleanup both fail, the
+    # endpoint must still fail cleanly (502) rather than raising an
+    # unhandled exception.
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    trigger_reconcile()
+    backup_id = client.get(
+        "/api/v1/worlds/world-overworld/backups", headers=auth_header(operator_token)
+    ).json()[0]["id"]
+
+    fake_lxd.fail_restart_with["world-overworld"] = LXDError("simulated restart failure")
+    fake_lxd.fail_delete_file_for.add(f"{NODE_WORLD_DIR}/.pending-restore.tar.gz")
+
+    resp = client.post(
+        f"/api/v1/worlds/world-overworld/backups/{backup_id}/restore",
+        headers=auth_header(admin_token),
+    )
+    assert resp.status_code == 502  # must not raise despite cleanup itself failing
 
 
 def test_restore_unknown_backup_id_404s(client, admin_token, operator_token):

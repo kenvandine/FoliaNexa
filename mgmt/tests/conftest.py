@@ -33,6 +33,8 @@ class FakeLXDClient:
         self._next_ip = 10
         self.fail_launch_for: set[str] = set()
         self.pushed_files: dict[tuple[str, str, str], bytes] = {}  # (host_name, container, path) -> content
+        self.deleted_files: list[tuple[str, str, str]] = []  # (host_name, container, path)
+        self.fail_delete_file_for: set[str] = set()  # absolute paths to raise LXDError for
         self.migrations: list[tuple[str, str, str]] = []  # (source_host, container, target_host)
         self.fail_migrate_for: set[str] = set()
         self.updated_config: dict[tuple[str, str], dict] = {}  # (host_name, container) -> last config pushed
@@ -119,6 +121,12 @@ class FakeLXDClient:
             raise LXDError(f"simulated push failure for {path}")
         self.pushed_files[(host.name, name, path)] = content
         self.container_files[(host.name, name, path.rstrip("/"))] = content
+
+    def delete_file(self, host, name, path):
+        if path in self.fail_delete_file_for:
+            raise LXDError(f"simulated delete failure for {path}")
+        self.deleted_files.append((host.name, name, path))
+        self.container_files.pop((host.name, name, path.rstrip("/")), None)
 
     def list_files(self, host, name, path):
         norm_path = path.rstrip("/")

@@ -49,12 +49,24 @@ def fetch_and_store_backup(settings: Settings, world: World, label: str) -> int:
         raise BackupTransferError(f"world '{world.name}' has no known address yet")
     container_ip = world.address.split(":", 1)[0]
     url = f"http://{container_ip}:{settings.node_health_port}/backup"
+    # /backup is the one node-agent endpoint that returns secrets (plugin
+    # config files like LuckPerms' config.yml) — see health.py's
+    # _backup_auth_ok / Settings.get_node_agent_shared_secret. A world
+    # whose container hasn't been restarted since mgmt started setting
+    # this config key returns 401, surfaced below like any other failure.
+    headers = {"Authorization": f"Bearer {settings.get_node_agent_shared_secret()}"}
 
     path = backup_file_path(settings, world.name, label)
-    path.parent.mkdir(parents=True, exist_ok=True)
 
     try:
-        with httpx.stream("GET", url, timeout=settings.world_backup_fetch_timeout_seconds) as resp:
+        # mkdir is inside this try too, not just the HTTP transfer below —
+        # an unwritable world_backups_dir (permissions, or a stray
+        # same-named file blocking the parent dir) is exactly the kind of
+        # local OSError this except clause exists to catch.
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with httpx.stream(
+            "GET", url, headers=headers, timeout=settings.world_backup_fetch_timeout_seconds
+        ) as resp:
             if resp.status_code != 200:
                 raise BackupTransferError(
                     f"node agent for world '{world.name}' returned HTTP {resp.status_code}"
@@ -62,15 +74,27 @@ def fetch_and_store_backup(settings: Settings, world: World, label: str) -> int:
             with path.open("wb") as f:
                 for chunk in resp.iter_bytes():
                     f.write(chunk)
-    except httpx.HTTPError as exc:
-        path.unlink(missing_ok=True)
+    except (httpx.HTTPError, OSError) as exc:
+        # OSError alongside httpx.HTTPError: a disk-full/permission error
+        # from mkdir/path.open("wb")/f.write() must land here too, not
+        # escape unhandled — run_scheduled_backups only catches
+        # BackupTransferError per world, so an uncaught OSError from one
+        # world would otherwise propagate out of the whole reconcile step
+        # and skip every other backups-enabled world for that tick (see
+        # CLAUDE.md's World backups entry). delete_backup_file (not a bare
+        # path.unlink) since the same class of OSError that got us here
+        # (e.g. path.parent existing as a plain file, not a directory) can
+        # make a bare unlink itself raise something missing_ok=True
+        # doesn't suppress (IsADirectoryError/NotADirectoryError) — this
+        # cleanup must never itself become the thing that escapes unhandled.
+        delete_backup_file(settings, world.name, label)
         raise BackupTransferError(f"failed to fetch backup for world '{world.name}': {exc}") from exc
 
     try:
         with tarfile.open(path, mode="r:gz") as tf:
             tf.getmembers()  # forces a full read, catching a truncated/corrupt stream
     except (tarfile.TarError, OSError, EOFError) as exc:
-        path.unlink(missing_ok=True)
+        delete_backup_file(settings, world.name, label)
         raise BackupTransferError(
             f"backup for world '{world.name}' downloaded but isn't a valid tar.gz: {exc}"
         ) from exc

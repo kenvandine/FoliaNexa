@@ -65,3 +65,33 @@ def test_apply_pending_restore_rejects_path_traversal_entries(tmp_path):
 
     assert not (tmp_path.parent.parent / "etc" / "passwd").exists()
     assert not marker.exists()
+
+
+def test_apply_pending_restore_leaves_existing_data_untouched_when_a_later_member_is_truncated(tmp_path):
+    # tarfile.open() only reads the first member's header lazily — it
+    # doesn't fail just because a member later in the stream is
+    # truncated/corrupt. That failure only surfaces once extractall
+    # actually reaches it, by which point a first member ("world/level.dat"
+    # below) may have already been extracted. A restore must not let that
+    # partial success land on the real world/plugins dirs — see
+    # _apply_pending_restore's own docstring.
+    (tmp_path / "world").mkdir()
+    (tmp_path / "world" / "level.dat").write_bytes(b"pre-existing level data")
+    (tmp_path / "plugins").mkdir()
+    (tmp_path / "plugins" / "OldPlugin.jar").write_bytes(b"pre-existing jar")
+
+    marker = tmp_path / PENDING_RESTORE_MARKER
+    _write_tar_gz(marker, {
+        "world/level.dat": b"restored level data",
+        "plugins/RestoredPlugin.jar": b"restored jar bytes" * 1000,
+    })
+    # Truncate well past the first member but before the archive is
+    # complete, so the second member's data is cut short.
+    raw = marker.read_bytes()
+    marker.write_bytes(raw[: len(raw) - 200])
+
+    _apply_pending_restore(tmp_path)  # must not raise
+
+    assert (tmp_path / "world" / "level.dat").read_bytes() == b"pre-existing level data"
+    assert (tmp_path / "plugins" / "OldPlugin.jar").read_bytes() == b"pre-existing jar"
+    assert not marker.exists()

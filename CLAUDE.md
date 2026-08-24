@@ -80,11 +80,11 @@ is the exception, per the above.
 ## Running the test suites
 
 ```bash
-# mgmt (Python) — 439 tests
+# mgmt (Python) — 443 tests
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
-# node (Python) — 54 tests
+# node (Python) — 58 tests
 cd node && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
@@ -1119,6 +1119,69 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   LXD's documented `GET /1.0/instances/{name}` and `GET
   /1.0/storage-pools/{name}` contract, same as everything else in
   `LXDClient` except `snapshot_container`).
+
+  Code review on the PR that shipped this redesign (2026-08-24, GitHub
+  PR #16) found and closed five gaps, all covered by new tests:
+  `GET /backup` (`node/src/folia_node/health.py`) had no authentication
+  at all despite streaming `plugins/` verbatim — including secret-bearing
+  config files like LuckPerms' `config.yml` — to anything that could
+  reach a world container's health port, bypassing the exact protection
+  mgmt's own plugin-file browser was built to enforce
+  (`plugin_files.py`'s `MANAGED_PLUGIN_IDS`); fixed with a new shared
+  secret (`Settings.get_node_agent_shared_secret`, delivered over devlxd
+  config the same way `velocity_forwarding_secret` already is, checked
+  via constant-time comparison in a new `_backup_auth_ok`) — a world
+  whose container hasn't been restarted since mgmt started setting the
+  key fails closed (401), not open. `_wait_operation`/`_finish`
+  (`lxd_client.py`) previously applied `LONG_OPERATION_TIMEOUT` (600s) to
+  every async LXD call, not just snapshot/restore — since `reconcile()`
+  runs synchronously, a single merely-slow-not-dead host on, say,
+  `restart_container` could stall the *entire* reconcile tick for up to
+  10 minutes; now DEFAULT_TIMEOUT (15s) is the default and the long
+  timeout is opted into explicitly only where the "real, potentially
+  large rootfs copy" reasoning actually applies (`snapshot_container`/
+  `restore_snapshot`). `restore_backup`'s (`routers/worlds.py`) pending-
+  restore marker could be left armed on a world's disk if `push_file`
+  succeeded but the following `restart_container` failed — silently
+  applied on some later *unrelated* restart with no operator awareness;
+  fixed with a new `LXDClient.delete_file` (the read/list side already
+  had a counterpart, push never did) that best-effort-removes the marker
+  if the restart fails. `_apply_pending_restore`
+  (`node/src/folia_node/agent.py`) used to `shutil.rmtree` the existing
+  `world`/`plugins` dirs *before* `tf.extractall` ran, inside the same
+  try/except meant to catch a corrupt archive — but `tarfile.open()` only
+  validates the first block, so a member later in the stream failing
+  mid-extract could leave a world with neither the old save nor a
+  complete new one; fixed by extracting into a scratch directory first
+  (`tempfile.TemporaryDirectory(dir=world_dir)`, same filesystem) and
+  only deleting/replacing the real dirs once the whole archive is known
+  good. `fetch_and_store_backup` (`world_backups.py`) only caught
+  `httpx.HTTPError`, so a local `OSError` (disk full, an unwritable
+  `world_backups_dir`) escaped past `run_scheduled_backups`' narrow
+  per-world `except BackupTransferError` and aborted its *entire*
+  reconcile step, skipping every other backups-enabled world that tick
+  with none of the `last_backup_error` visibility this feature was built
+  around; fixed by catching `OSError` alongside `httpx.HTTPError` (and
+  moving the `mkdir` call inside the same `try`, since "unwritable
+  backups dir" was the finding's own example and that call was outside
+  it). That fix's own regression test then caught a second bug one layer
+  deeper: the except block's cleanup (`path.unlink(missing_ok=True)`) can
+  itself raise `IsADirectoryError`/`NotADirectoryError` in exactly the
+  kind of situation that got it there (e.g. `path.parent` already
+  existing as a plain file) — `missing_ok` only suppresses
+  `FileNotFoundError` — which would have escaped unhandled from the
+  *cleanup* path instead, the identical bug just relocated; fixed by
+  reusing `delete_backup_file`'s existing best-effort/never-raises
+  pattern instead of a bare `unlink` call. New/updated coverage:
+  `test_health.py` (`/backup` 401s with no header, wrong secret, or no
+  secret configured yet), `test_agent.py` (a truncated second tar member
+  leaves pre-existing world/plugins data untouched), `test_lxd_client.py`
+  (the `_finish`/`_wait_operation` timeout default), `test_worlds.py`
+  (restore cleans up the marker on restart failure, and survives the
+  cleanup itself also failing), `test_world_backups.py` (a local write
+  failure and an unwritable backups dir both raise `BackupTransferError`
+  cleanly rather than an unhandled `OSError`) (443 mgmt tests total, up
+  from 439; node 58, up from 54).
 
 Written against documented API contracts but **not** exercised against
 live infrastructure:

@@ -13,6 +13,7 @@ import os
 import shutil
 import signal
 import tarfile
+import tempfile
 import time
 from pathlib import Path
 
@@ -47,16 +48,32 @@ def _apply_pending_restore(world_dir: Path) -> None:
     filter="data" (Python 3.12+) rejects absolute paths/traversal entries
     in the tarball, same defense-in-depth this codebase already applies
     to other operator/mgmt-supplied paths (see mgmt's plugin_upload.py/
-    plugin_files.py)."""
+    plugin_files.py).
+
+    Extracts into a scratch directory first and only deletes/replaces the
+    real world/plugins dirs once the *entire* archive has been read
+    successfully — tarfile.open() only validates the gzip header/first
+    block, so a member later in the stream can still be truncated/corrupt
+    (a disk error on mgmt between backup and restore, or a corrupted
+    push_file transfer) and only surface once extractall reaches it. Doing
+    the delete before that point (the original approach) could leave a
+    world with neither the old save nor a complete new one; this way a
+    failure here always leaves world_dir untouched, matching the
+    "world starts as-is" guarantee this function documents above."""
     marker = world_dir / PENDING_RESTORE_MARKER
     if not marker.exists():
         return
     logger.info("pending restore found (%s) — extracting over %s before staging", marker, world_dir)
     try:
-        with tarfile.open(marker, mode="r:gz") as tf:
+        with tempfile.TemporaryDirectory(dir=world_dir) as scratch:
+            scratch_dir = Path(scratch)
+            with tarfile.open(marker, mode="r:gz") as tf:
+                tf.extractall(path=scratch_dir, filter="data")
             for name in (LEVEL_NAME, "plugins"):
                 shutil.rmtree(world_dir / name, ignore_errors=True)
-            tf.extractall(path=world_dir, filter="data")
+                extracted = scratch_dir / name
+                if extracted.exists():
+                    shutil.move(str(extracted), str(world_dir / name))
         logger.info("restore applied successfully")
     except (tarfile.TarError, OSError, EOFError):
         logger.exception("pending restore at %s is corrupt/unreadable — skipping, world starts as-is", marker)
@@ -89,6 +106,7 @@ def main() -> None:
         raise
 
     state.world_name = assignment.world_name
+    state.backup_shared_secret = assignment.node_agent_shared_secret
     start_health_server(state, port=health_port)
     logger.info("health server up on :%d for world '%s'", health_port, assignment.world_name)
 

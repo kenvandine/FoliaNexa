@@ -181,6 +181,11 @@ def _node_config(session: Session, world: World, settings: Settings) -> dict[str
         # "modern" forwarding (PLAN.md §7, routers/routes.py's matching
         # /forwarding-secret endpoint the proxy itself polls).
         "user.folia.velocity-forwarding-secret": settings.get_velocity_forwarding_secret(),
+        # Authenticates mgmt to this world's own node agent for GET
+        # .../backup (world_backups.py) — see Settings.
+        # get_node_agent_shared_secret's own comment for why this is a
+        # separate secret from velocity-forwarding-secret above.
+        "user.folia.node-agent-shared-secret": settings.get_node_agent_shared_secret(),
     }
     if world.rcon_password:
         # See World.rcon_password's own comment for why this rides along

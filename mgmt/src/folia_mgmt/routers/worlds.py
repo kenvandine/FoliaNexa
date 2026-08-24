@@ -864,11 +864,31 @@ def restore_backup(
             f"(expected {backup_path})",
         )
     tar_bytes = backup_path.read_bytes()
+    marker_path = f"{NODE_WORLD_DIR}/.pending-restore.tar.gz"
 
     try:
-        lxd_client.push_file(host, world.container_name, f"{NODE_WORLD_DIR}/.pending-restore.tar.gz", tar_bytes)
+        lxd_client.push_file(host, world.container_name, marker_path, tar_bytes)
+    except LXDError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+
+    try:
         lxd_client.restart_container(host, world.container_name)
     except LXDError as exc:
+        # The marker is now armed but the restart that was supposed to
+        # consume it (node/src/folia_node/agent.py's
+        # _apply_pending_restore, on the next process start) never
+        # happened — left as-is, it would silently fire on some later
+        # unrelated restart with no operator awareness. Best-effort
+        # remove it so this restore attempt fails cleanly instead.
+        try:
+            lxd_client.delete_file(host, world.container_name, marker_path)
+        except LXDError:
+            logger.exception(
+                "restore of world '%s' failed to restart AND failed to clean up its pending-restore "
+                "marker at %s — it may still be applied on a later unrelated restart",
+                name,
+                marker_path,
+            )
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
 
     world.phase = WorldPhase.provisioning

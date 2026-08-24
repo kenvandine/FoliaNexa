@@ -151,6 +151,25 @@ class Settings(BaseSettings):
             path.write_text(secrets.token_urlsafe(32))
         return path.read_text().strip()
 
+    # Shared secret authenticating mgmt to a world's own node agent over
+    # plain HTTP (world_backups.py's GET .../backup — the only node-agent
+    # endpoint that returns anything sensitive, since it streams plugins/
+    # verbatim, secrets like LuckPerms' config.yml included). Delivered to
+    # every world the exact same way as velocity_forwarding_secret above
+    # (scheduler.py's _node_config, over devlxd config — never HTTP), kept
+    # as its own separate secret rather than reusing that one so a leak of
+    # either doesn't widen the other's blast radius.
+    @property
+    def node_agent_shared_secret_path(self) -> Path:
+        return self.state_dir / "node-agent-shared-secret"
+
+    def get_node_agent_shared_secret(self) -> str:
+        path = self.node_agent_shared_secret_path
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(secrets.token_urlsafe(32))
+        return path.read_text().strip()
+
     @property
     def db_path(self) -> Path:
         return self.state_dir / "mgmt.db"

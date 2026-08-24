@@ -115,7 +115,7 @@ def test_snapshot_container_rejects_a_second_concurrent_call_for_the_same_contai
         yield _LockTestHttpClient()
 
     monkeypatch.setattr(LXDClient, "_client_for", _fake_client_for)
-    monkeypatch.setattr(LXDClient, "_finish", lambda self, client, resp, *, ok_codes, error: None)
+    monkeypatch.setattr(LXDClient, "_finish", lambda self, client, resp, *, ok_codes, error, timeout=None: None)
 
     first_call_error: list[Exception] = []
 

@@ -127,6 +127,67 @@ def test_fetch_and_store_backup_raises_on_corrupt_stream(tmp_path):
     assert not backup_file_path(settings, "world-a", "auto-123").exists()
 
 
+def test_fetch_and_store_backup_raises_backup_transfer_error_on_local_write_failure(tmp_path):
+    # A local OSError (disk full, permission denied, an unwritable
+    # world_backups_dir) must be wrapped into BackupTransferError like any
+    # other failure here, not escape unhandled — run_scheduled_backups
+    # only catches BackupTransferError per world, so an uncaught OSError
+    # would otherwise abort its whole reconcile step, skipping every
+    # other backups-enabled world for that tick.
+    content = _valid_tar_gz_bytes()
+
+    def handler(req):
+        req.send_response(200)
+        req.send_header("Content-Type", "application/gzip")
+        req.end_headers()
+        req.wfile.write(content)
+
+    server = _FakeNodeServer(handler)
+    try:
+        settings = Settings(state_dir=tmp_path, node_health_port=server.port)
+        world = _world(f"127.0.0.1:{server.port}")
+
+        # Make the destination file path a directory instead of a regular
+        # file, so path.open("wb") raises IsADirectoryError (an OSError).
+        path = backup_file_path(settings, "world-a", "auto-123")
+        path.parent.mkdir(parents=True)
+        path.mkdir()
+
+        with pytest.raises(BackupTransferError, match="failed to fetch backup"):
+            fetch_and_store_backup(settings, world, "auto-123")
+    finally:
+        server.close()
+
+
+def test_fetch_and_store_backup_raises_backup_transfer_error_when_backups_dir_unwritable(tmp_path):
+    # Same as above, but the OSError comes from mkdir (an unwritable/
+    # blocked world_backups_dir) rather than the file write itself.
+    content = _valid_tar_gz_bytes()
+
+    def handler(req):
+        req.send_response(200)
+        req.send_header("Content-Type", "application/gzip")
+        req.end_headers()
+        req.wfile.write(content)
+
+    server = _FakeNodeServer(handler)
+    try:
+        settings = Settings(state_dir=tmp_path, node_health_port=server.port)
+        world = _world(f"127.0.0.1:{server.port}")
+
+        # Pre-create a plain file where the per-world backup directory
+        # needs to go, so mkdir(parents=True, exist_ok=True) raises
+        # FileExistsError (an OSError subclass) instead of succeeding.
+        path = backup_file_path(settings, "world-a", "auto-123")
+        path.parent.parent.mkdir(parents=True)
+        path.parent.write_bytes(b"blocking this path from being a directory")
+
+        with pytest.raises(BackupTransferError, match="failed to fetch backup"):
+            fetch_and_store_backup(settings, world, "auto-123")
+    finally:
+        server.close()
+
+
 def test_fetch_and_store_backup_raises_when_connection_refused(tmp_path):
     settings = Settings(state_dir=tmp_path, node_health_port=1)  # nothing listening
     world = _world("127.0.0.1:1")
