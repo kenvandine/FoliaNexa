@@ -83,11 +83,14 @@ class WorldResponse(BaseModel):
     last_backup_error: str | None
 
 
-def _to_response(world: World, *, redact_backup_error: bool = False) -> WorldResponse:
+def _to_response(world: World, *, redact_backup_error: bool) -> WorldResponse:
     """`redact_backup_error` drops `last_backup_error` for viewer-role
     callers — it carries raw `LXDError` text (see scheduler.py's
     run_scheduled_backups), which is internal backend detail nobody
-    below operator has otherwise been able to see through this API."""
+    below operator has otherwise been able to see through this API.
+    No default: every call site must state its caller's role explicitly,
+    so a future endpoint that opens this response to viewer-role callers
+    can't forget to redact simply by not passing the keyword."""
     return WorldResponse(
         name=world.name,
         type=world.type.value,
@@ -285,7 +288,7 @@ def create_world(
 
     _place_best_effort(session, lxd_client, world, settings)
     session.refresh(world)
-    return _to_response(world)
+    return _to_response(world, redact_backup_error=False)
 
 
 @router.get("", response_model=list[WorldResponse])
@@ -355,7 +358,7 @@ def update_world(
                     name,
                 )
 
-    return _to_response(world)
+    return _to_response(world, redact_backup_error=False)
 
 
 @router.post("/{name}/restart", dependencies=[Depends(require_operator)])
@@ -622,7 +625,7 @@ def delete_world(
     session.add(world)
     session.commit()
     session.refresh(world)
-    draining_snapshot = _to_response(world)
+    draining_snapshot = _to_response(world, redact_backup_error=False)
 
     _teardown_best_effort(session, lxd_client, world)
 
@@ -637,7 +640,7 @@ def delete_world(
     if still_present is None:
         return draining_snapshot.model_copy(update={"phase": WorldPhase.deleted.value})
     session.refresh(still_present)
-    return _to_response(still_present)
+    return _to_response(still_present, redact_backup_error=False)
 
 
 def _host_and_world(session: Session, name: str) -> tuple[World, Host]:
@@ -650,6 +653,13 @@ def _host_and_world(session: Session, name: str) -> tuple[World, Host]:
     return world, host
 
 
+def _snapshot_or_502(lxd_client: LXDClient, host: Host, world: World, snapshot_name: str) -> None:
+    try:
+        lxd_client.snapshot_container(host, world.container_name, snapshot_name)
+    except LXDError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+
+
 @router.post("/{name}/snapshot", dependencies=[Depends(require_operator)])
 def snapshot_world(
     name: str,
@@ -659,10 +669,7 @@ def snapshot_world(
 ) -> dict[str, str]:
     world, host = _host_and_world(session, name)
     label = snapshot_name or f"manual-{epoch_seconds(utcnow())}"
-    try:
-        lxd_client.snapshot_container(host, world.container_name, label)
-    except LXDError as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    _snapshot_or_502(lxd_client, host, world, label)
     return {"snapshot": label}
 
 
@@ -762,10 +769,7 @@ def create_manual_backup(
     world, host = _host_and_world(session, name)
     now = utcnow()
     label = f"manual-backup-{epoch_seconds(now)}-{secrets.token_hex(3)}"
-    try:
-        lxd_client.snapshot_container(host, world.container_name, label)
-    except LXDError as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    _snapshot_or_502(lxd_client, host, world, label)
     backup = WorldBackup(world_name=name, snapshot_name=label, kind="manual", created_at=now)
     session.add(backup)
     session.commit()
@@ -850,7 +854,7 @@ def migrate_world(
             source_host.name,
         )
 
-    return _to_response(world)
+    return _to_response(world, redact_backup_error=False)
 
 
 class AccessUpdateRequest(BaseModel):

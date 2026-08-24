@@ -15,6 +15,7 @@ from datetime import timedelta
 from typing import Callable
 
 import httpx
+from sqlalchemy.exc import InvalidRequestError
 from sqlmodel import Session, select
 
 from folia_mgmt.access_apply import apply_whitelist
@@ -544,7 +545,32 @@ def run_scheduled_backups(session: Session, lxd_client: LXDClient) -> None:
         host.name: host for host in session.exec(select(Host).where(Host.name.in_(host_names))).all()
     } if host_names else {}
 
-    dirty = False
+    def backups_still_enabled(world: World) -> bool:
+        """Re-reads backups_enabled straight from the DB for this one
+        world, since an operator's PUT .../backups-config may have
+        changed it while this world's (potentially slow) LXD call was in
+        flight — `world` was loaded above back when it was still True,
+        and would otherwise still show that stale value.
+
+        Also guards against the world having been hard-deleted
+        concurrently (e.g. DELETE /worlds/{name} -> teardown_world, once
+        its container is actually gone, committed in that request's own
+        session — not this function's, so `world` is already sitting in
+        *this* session's identity map and a plain session.get() lookup
+        would just return that stale cached instance without ever
+        checking the DB). Refreshing a row no longer in the DB raises
+        InvalidRequestError ("Could not refresh instance") from
+        session.refresh() itself, which would otherwise propagate
+        uncaught and abort the whole reconcile-tick session — the same
+        kind of hazard delete_world already guards against, there with
+        session.get() first since that check *is* effective within a
+        single session (routers/worlds.py)."""
+        try:
+            session.refresh(world, attribute_names=["backups_enabled"])
+        except InvalidRequestError:
+            return False
+        return world.backups_enabled
+
     for world in worlds:
         latest = latest_by_world.get(world.name)
         if latest is not None and now - latest.created_at < BACKUP_INTERVAL + _backup_jitter(world.name):
@@ -556,33 +582,29 @@ def run_scheduled_backups(session: Session, lxd_client: LXDClient) -> None:
         try:
             lxd_client.snapshot_container(host, world.container_name, label)
         except LXDError as exc:
-            # Re-check backups_enabled *after* the (potentially slow) LXD
-            # call, not just before it — an operator's PUT
-            # .../backups-config may disable backups and clear a stale
-            # error banner in the window while this call was in flight
-            # (it was already committed as True when the query above ran).
-            # Without this, a failure here would stamp last_backup_error
-            # right back onto a world whose backups the operator just
-            # turned off, and it would never clear again since a disabled
-            # world is never revisited by this loop.
-            session.refresh(world, attribute_names=["backups_enabled"])
-            if not world.backups_enabled:
-                continue
             logger.exception("scheduled backup of world '%s' failed, will retry next reconcile", world.name)
-            world.last_backup_attempt_at = now
-            world.last_backup_error = str(exc)
-            session.add(world)
-            dirty = True
+            if backups_still_enabled(world):
+                world.last_backup_attempt_at = now
+                world.last_backup_error = str(exc)
+                session.add(world)
+                # Committed immediately, per-world, rather than batched
+                # to the end of the loop — otherwise an operator's
+                # PUT .../backups-config clear for *this* world, landing
+                # while the loop is still busy with later worlds, would
+                # get silently overwritten when the batched commit
+                # finally flushes this world's now-stale in-memory
+                # attempt_at/error back over it.
+                session.commit()
             continue
-        session.refresh(world, attribute_names=["backups_enabled"])
-        if not world.backups_enabled:
-            continue
-        world.last_backup_attempt_at = now
-        world.last_backup_error = None
-        session.add(world)
+        # Record the WorldBackup row regardless of whether backups_enabled
+        # got flipped off mid-flight — the snapshot succeeded and is now
+        # really sitting on the host's storage pool; skipping this would
+        # leave it an orphaned, untracked, never-pruned snapshot.
         session.add(WorldBackup(world_name=world.name, snapshot_name=label, kind="scheduled", created_at=now))
-        dirty = True
-    if dirty:
+        if backups_still_enabled(world):
+            world.last_backup_attempt_at = now
+            world.last_backup_error = None
+            session.add(world)
         session.commit()
 
 

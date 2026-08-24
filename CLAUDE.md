@@ -79,7 +79,7 @@ is the exception, per the above.
 ## Running the test suites
 
 ```bash
-# mgmt (Python) — 412 tests
+# mgmt (Python) — 428 tests
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
@@ -858,6 +858,81 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   world's details panel is open, not just when the panel is first
   opened, so a backup that recovers after the operator opened the panel
   is reflected without needing to close and reopen it.
+
+  A second review pass on the same PR (2026-08-24) found that the fix
+  above for the mid-flight-disable race had a gap of its own on the
+  *success* side: `run_scheduled_backups` re-checked `backups_enabled`
+  after a successful `snapshot_container` call and skipped writing the
+  `WorldBackup` row entirely if an operator had disabled backups for
+  that world in the window while the LXD call was in flight — but the
+  snapshot had already really been taken and was sitting on the host's
+  storage pool, so skipping the row left it orphaned: untracked,
+  invisible to the dashboard, and never picked up by
+  `prune_expired_backups` (which only iterates `WorldBackup` rows). The
+  function now always records the row for a snapshot that actually
+  succeeded, regardless of that race, and only skips stamping
+  `last_backup_attempt_at`/`last_backup_error` back onto the
+  now-disabled world (consistent with the original failure-path fix,
+  which is left untouched). The same review also found the failure-path
+  branch was swallowing its own `logger.exception` call in the identical
+  race, contradicting this section's claim that the log line is
+  effectively the only trace of a failure — that log call now always
+  fires before the re-check, win or lose the race. Both branches' repeated
+  "re-check backups_enabled" logic was also factored into one
+  `backups_still_enabled` helper instead of being duplicated, which is
+  how the success-path gap diverged from the failure-path fix in the
+  first place. Covered by a new regression test in
+  `mgmt/tests/test_scheduler.py`
+  (`test_run_scheduled_backups_still_records_a_snapshot_that_succeeds_despite_being_disabled_mid_flight`),
+  confirmed to fail against the pre-fix code. The same review flagged
+  `GET /worlds`' viewer-role redaction of `last_backup_error`
+  (`_to_response`'s `redact_backup_error` flag) as a one-off rather than
+  structural guarantee; closed by dropping that parameter's default, so
+  every `_to_response` call site (all of them operator/admin-gated today
+  except `list_worlds`) must now state the caller's role explicitly
+  instead of silently getting "don't redact" by omission.
+
+  A third review pass on the same PR (2026-08-24) found two more races
+  in the same helper, both closed: `backups_still_enabled()`'s
+  `session.refresh()` assumed the world row was still there, but a
+  concurrent `DELETE /worlds/{name}` (once `teardown_world` hard-deletes
+  it, in that request's own session — not this loop's) makes SQLAlchemy
+  raise a plain `InvalidRequestError` ("Could not refresh instance") on
+  the next refresh, which was uncaught and would abort the whole
+  reconcile-tick session, rolling back every other world's
+  already-committed backup progress from the same pass; a first attempt
+  at guarding this with `session.get()` first (mirroring `delete_world`'s
+  own guard, routers/worlds.py) didn't actually work, since `session.get()`
+  just returns the object already sitting in *this* session's identity
+  map without checking the DB — the fix instead wraps the `refresh()`
+  call itself in a `try`/`except InvalidRequestError`. Separately, the
+  function's single `session.commit()` deferred to the end of the loop
+  only narrowed the mid-flight-disable race the two passes above already
+  closed, rather than closing it: an operator's disable-and-clear for a
+  world processed *early* in the loop could still get silently
+  overwritten once the batched commit at the end flushed that world's
+  now-stale in-memory `last_backup_attempt_at`/`last_backup_error`
+  back over it, if the disable landed anytime during the remainder of
+  the loop's (potentially slow) processing of later worlds — now fixed
+  by committing per-world immediately instead of batching. Also found:
+  the dashboard's `toggleWorldBackups()` didn't clear the rendered
+  failure banner locally on a successful disable, even though the
+  server clears it immediately — it now does, instead of waiting on the
+  next poll tick. Covered by two new regression tests in
+  `mgmt/tests/test_scheduler.py`
+  (`test_run_scheduled_backups_tolerates_world_hard_deleted_mid_flight`,
+  `test_run_scheduled_backups_commits_per_world_so_a_later_worlds_call_cant_clobber_an_earlier_disable`),
+  both confirmed to fail against the pre-fix code. The same pass also
+  deduplicated the LXDError-\>502 translation between `snapshot_world`
+  and `create_manual_backup` into one `_snapshot_or_502` helper
+  (mirroring the pre-existing `_restore_snapshot_or_502`), factored the
+  dashboard's repeated error-clear/try/catch boilerplate across three
+  Backups-section functions into one `withBackupsError` helper, dropped
+  the now-redundant `# require_operator-gated` comment repeated at 5
+  `_to_response` call sites (the same rule is already stated once in
+  that function's own docstring), and corrected this file's own stale
+  "412 tests" count in the "Running the test suites" section above
+  (426 at the time, 428 after these two new regression tests).
 
 Written against documented API contracts but **not** exercised against
 live infrastructure:
