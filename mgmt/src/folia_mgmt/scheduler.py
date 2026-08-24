@@ -553,15 +553,31 @@ def run_scheduled_backups(session: Session, lxd_client: LXDClient) -> None:
         if host is None or not world.container_name or host.status != HostStatus.online:
             continue
         label = f"auto-{epoch_seconds(now)}"
-        world.last_backup_attempt_at = now
         try:
             lxd_client.snapshot_container(host, world.container_name, label)
         except LXDError as exc:
+            # Re-check backups_enabled *after* the (potentially slow) LXD
+            # call, not just before it — an operator's PUT
+            # .../backups-config may disable backups and clear a stale
+            # error banner in the window while this call was in flight
+            # (it was already committed as True when the query above ran).
+            # Without this, a failure here would stamp last_backup_error
+            # right back onto a world whose backups the operator just
+            # turned off, and it would never clear again since a disabled
+            # world is never revisited by this loop.
+            session.refresh(world, attribute_names=["backups_enabled"])
+            if not world.backups_enabled:
+                continue
             logger.exception("scheduled backup of world '%s' failed, will retry next reconcile", world.name)
+            world.last_backup_attempt_at = now
             world.last_backup_error = str(exc)
             session.add(world)
             dirty = True
             continue
+        session.refresh(world, attribute_names=["backups_enabled"])
+        if not world.backups_enabled:
+            continue
+        world.last_backup_attempt_at = now
         world.last_backup_error = None
         session.add(world)
         session.add(WorldBackup(world_name=world.name, snapshot_name=label, kind="scheduled", created_at=now))

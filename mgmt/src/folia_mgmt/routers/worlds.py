@@ -23,6 +23,8 @@ from folia_mgmt.models import (
     Host,
     HostStatus,
     MinecraftVersionConfig,
+    User,
+    UserRole,
     World,
     WorldBackup,
     WorldPhase,
@@ -81,7 +83,11 @@ class WorldResponse(BaseModel):
     last_backup_error: str | None
 
 
-def _to_response(world: World) -> WorldResponse:
+def _to_response(world: World, *, redact_backup_error: bool = False) -> WorldResponse:
+    """`redact_backup_error` drops `last_backup_error` for viewer-role
+    callers — it carries raw `LXDError` text (see scheduler.py's
+    run_scheduled_backups), which is internal backend detail nobody
+    below operator has otherwise been able to see through this API."""
     return WorldResponse(
         name=world.name,
         type=world.type.value,
@@ -101,7 +107,7 @@ def _to_response(world: World) -> WorldResponse:
         ops=world.ops,
         backups_enabled=world.backups_enabled,
         last_backup_attempt_at=world.last_backup_attempt_at,
-        last_backup_error=world.last_backup_error,
+        last_backup_error=None if redact_backup_error else world.last_backup_error,
     )
 
 
@@ -282,9 +288,13 @@ def create_world(
     return _to_response(world)
 
 
-@router.get("", response_model=list[WorldResponse], dependencies=[Depends(require_viewer)])
-def list_worlds(session: Session = Depends(get_session)) -> list[WorldResponse]:
-    return [_to_response(w) for w in session.exec(select(World)).all()]
+@router.get("", response_model=list[WorldResponse])
+def list_worlds(
+    session: Session = Depends(get_session),
+    user: User = Depends(require_viewer),
+) -> list[WorldResponse]:
+    redact = user.role == UserRole.viewer
+    return [_to_response(w, redact_backup_error=redact) for w in session.exec(select(World)).all()]
 
 
 class UpdateWorldRequest(BaseModel):

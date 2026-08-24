@@ -297,6 +297,32 @@ def test_disabling_backups_clears_a_stale_failure(client, admin_token, operator_
     assert world_body["last_backup_attempt_at"] is None
 
 
+def test_viewer_role_cannot_see_last_backup_error(client, admin_token, operator_token, viewer_token, db_session):
+    """last_backup_error carries raw LXDError text (internal backend
+    detail) — a viewer-role token should still see backups_enabled and
+    last_backup_attempt_at, but not the error message itself."""
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    world = db_session.exec(select(World).where(World.name == "world-overworld")).one()
+    world.last_backup_error = "raw LXD error detail"
+    world.last_backup_attempt_at = utcnow()
+    db_session.add(world)
+    db_session.commit()
+
+    viewer_worlds = client.get("/api/v1/worlds", headers=auth_header(viewer_token)).json()
+    viewer_body = next(w for w in viewer_worlds if w["name"] == "world-overworld")
+    assert viewer_body["last_backup_error"] is None
+    assert viewer_body["last_backup_attempt_at"] is not None
+
+    operator_worlds = client.get("/api/v1/worlds", headers=auth_header(operator_token)).json()
+    operator_body = next(w for w in operator_worlds if w["name"] == "world-overworld")
+    assert operator_body["last_backup_error"] == "raw LXD error detail"
+
+
 def test_list_backups_empty_for_new_world(client, admin_token, operator_token):
     _enroll_host(client, admin_token)
     client.post(

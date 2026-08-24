@@ -846,6 +846,51 @@ def test_run_scheduled_backups_clears_a_previously_recorded_error_on_success():
     assert world.last_backup_error is None
 
 
+def test_run_scheduled_backups_does_not_reset_a_backup_disabled_mid_flight():
+    """Regression test: an operator's PUT .../backups-config can disable
+    backups (and clear a stale error) in a separate session while this
+    world's snapshot_container call is still in flight — since it was
+    already loaded here with backups_enabled=True. A failure that
+    surfaces after that point must not stamp last_backup_error back onto
+    a world whose backups were just turned off, since a disabled world
+    is never revisited by this loop to clear it again."""
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+            backups_enabled=True,
+        )
+    )
+    session.commit()
+
+    other_session = Session(session.bind)
+
+    class _DisablingLXDClient(_RecordingLXDClient):
+        def snapshot_container(self, host, name, snapshot_name):
+            # Simulates a concurrent operator PUT .../backups-config
+            # {enabled: false} committing, in its own session, while this
+            # call is in flight.
+            world = other_session.exec(select(World).where(World.name == name)).one()
+            world.backups_enabled = False
+            world.last_backup_error = None
+            world.last_backup_attempt_at = None
+            other_session.add(world)
+            other_session.commit()
+            return super().snapshot_container(host, name, snapshot_name)
+
+    lxd = _DisablingLXDClient()
+    lxd.fail_snapshot_for.add("world-a")
+
+    run_scheduled_backups(session, lxd)
+
+    world = session.exec(select(World).where(World.name == "world-a")).one()
+    assert world.backups_enabled is False
+    assert world.last_backup_error is None
+    assert world.last_backup_attempt_at is None
+
+
 def test_prune_expired_backups_deletes_snapshot_and_row_older_than_a_week():
     session = _session()
     session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
