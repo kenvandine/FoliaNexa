@@ -834,12 +834,30 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   the dashboard. Real pytest coverage (`mgmt/tests/test_scheduler.py`'s
   error-stamp/clear assertions, `mgmt/tests/test_worlds.py`'s new
   manual-backup tests — creation, working while automatic backups are
-  disabled, the operator gate, and 404 on an unplaced world). This is a
+  disabled, the operator gate, 409 on a world that exists but isn't
+  placed on a host yet, and 404 on a nonexistent world name). This is a
   visibility fix, not a fix to `snapshot_container` itself — if an
   operator's real deployment is still failing, `last_backup_error` is now
   where the actual LXD error message shows up to explain why, but the
   underlying call remains unverified against live LXD until someone
   actually watches it succeed there.
+
+  Code review on the PR that shipped this (2026-08-23) found and closed
+  three gaps, all covered by new tests: `PUT .../backups-config` now
+  clears `last_backup_error`/`last_backup_attempt_at` when an operator
+  disables automatic backups, since `run_scheduled_backups` only ever
+  visits `backups_enabled` worlds — without this, a failure banner from
+  before backups were disabled would stay stuck on the dashboard forever
+  instead of the operator's own "turn it off" action clearing it;
+  `POST .../backups/manual`'s snapshot label changed from
+  `manual-<epoch>` (second-granularity, colliding with the older ad-hoc
+  `POST /{name}/snapshot`'s identical format, or with itself on a
+  double-clicked "Back up now" button) to `manual-backup-<epoch>-
+  <random>`; and the dashboard's failure banner (`renderBackupFailure`)
+  is now also refreshed on every `loadWorlds()` poll tick while a
+  world's details panel is open, not just when the panel is first
+  opened, so a backup that recovers after the operator opened the panel
+  is reflected without needing to close and reopen it.
 
 Written against documented API contracts but **not** exercised against
 live infrastructure:

@@ -783,6 +783,10 @@ async function loadWorlds() {
     `;
     }).join('') || '<tr><td colspan="8" class="hint">No worlds declared yet.</td></tr>';
     renderBroadcastTargets(worlds);
+    if (state.detailsWorld) {
+      const openWorld = worlds.find(w => w.name === state.detailsWorld);
+      if (openWorld) renderBackupFailure(openWorld);
+    }
   } catch (e) {
     errorEl.textContent = e.message;
   }

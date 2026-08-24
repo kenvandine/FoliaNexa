@@ -710,9 +710,18 @@ def put_backup_config(
     default — World.backups_enabled). Disabling only stops *future*
     scheduled backups; it doesn't delete backups already taken, and those
     still expire on their normal week-long schedule via
-    prune_expired_backups."""
+    prune_expired_backups.
+
+    Disabling also clears last_backup_error/last_backup_attempt_at:
+    run_scheduled_backups only ever visits backups_enabled worlds, so
+    without this a failure banner from before the operator disabled
+    backups would otherwise be stuck on the dashboard forever, never
+    reaching the success path that normally clears it."""
     world = _get_world_or_404(session, name)
     world.backups_enabled = body.enabled
+    if not body.enabled:
+        world.last_backup_error = None
+        world.last_backup_attempt_at = None
     world.updated_at = utcnow()
     session.add(world)
     session.commit()
@@ -732,10 +741,17 @@ def create_manual_backup(
     dashboard list as scheduled backups, and expires on the same
     BACKUP_RETENTION schedule as prune_expired_backups. Works regardless
     of World.backups_enabled — that flag only gates the automatic hourly
-    schedule, not an operator's own explicit request."""
+    schedule, not an operator's own explicit request.
+
+    The label is manual-backup-<epoch>-<random>, not plain manual-<epoch>
+    — that format is already used by the older ad-hoc POST /{name}/snapshot
+    (which LXD would reject as a duplicate name if both fired in the same
+    second), and the random suffix also protects against two calls to
+    this endpoint itself landing in the same second (e.g. a double-clicked
+    "Back up now" button)."""
     world, host = _host_and_world(session, name)
     now = utcnow()
-    label = f"manual-{epoch_seconds(now)}"
+    label = f"manual-backup-{epoch_seconds(now)}-{secrets.token_hex(3)}"
     try:
         lxd_client.snapshot_container(host, world.container_name, label)
     except LXDError as exc:

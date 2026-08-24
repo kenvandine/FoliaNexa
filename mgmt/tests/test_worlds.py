@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from sqlmodel import select
+
+from folia_mgmt.models import World, utcnow
 from helpers import auth_header
 
 
@@ -268,6 +271,32 @@ def test_put_backups_config_toggles_flag(client, admin_token, operator_token, vi
     assert resp.status_code == 403
 
 
+def test_disabling_backups_clears_a_stale_failure(client, admin_token, operator_token, db_session):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    world = db_session.exec(select(World).where(World.name == "world-overworld")).one()
+    world.last_backup_error = "stale failure from a previous tick"
+    world.last_backup_attempt_at = utcnow()
+    db_session.add(world)
+    db_session.commit()
+
+    resp = client.put(
+        "/api/v1/worlds/world-overworld/backups-config",
+        json={"enabled": False},
+        headers=auth_header(operator_token),
+    )
+    assert resp.status_code == 200, resp.text
+
+    worlds = client.get("/api/v1/worlds", headers=auth_header(operator_token)).json()
+    world_body = next(w for w in worlds if w["name"] == "world-overworld")
+    assert world_body["last_backup_error"] is None
+    assert world_body["last_backup_attempt_at"] is None
+
+
 def test_list_backups_empty_for_new_world(client, admin_token, operator_token):
     _enroll_host(client, admin_token)
     client.post(
@@ -344,6 +373,37 @@ def test_manual_backup_creates_a_backup_immediately(client, admin_token, operato
     assert backups[0]["kind"] == "manual"
 
 
+def test_manual_backup_label_does_not_collide_with_ad_hoc_snapshot_or_itself(
+    client, admin_token, operator_token, fake_lxd
+):
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+
+    # Two manual backups back-to-back (e.g. a double-clicked "Back up
+    # now" button) must not collide even within the same wall-clock
+    # second, and the label must not match the older ad-hoc
+    # POST /{name}/snapshot endpoint's plain "manual-<epoch>" format,
+    # since LXD rejects a duplicate snapshot name for the same container.
+    first = client.post(
+        "/api/v1/worlds/world-overworld/backups/manual", headers=auth_header(operator_token)
+    )
+    second = client.post(
+        "/api/v1/worlds/world-overworld/backups/manual", headers=auth_header(operator_token)
+    )
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+
+    first_label = first.json()["snapshot_name"]
+    second_label = second.json()["snapshot_name"]
+    assert first_label != second_label
+    assert first_label.startswith("manual-backup-")
+    assert second_label.startswith("manual-backup-")
+
+
 def test_manual_backup_works_even_when_automatic_backups_disabled(client, admin_token, operator_token, fake_lxd):
     _enroll_host(client, admin_token)
     client.post(
@@ -378,6 +438,18 @@ def test_manual_backup_requires_operator(client, admin_token, operator_token, vi
 
 
 def test_manual_backup_requires_placed_world(client, operator_token):
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-stuck", "type": "nether", "cpu_cores": 2, "memory_gb": 3},
+        headers=auth_header(operator_token),
+    )
+    resp = client.post(
+        "/api/v1/worlds/world-stuck/backups/manual", headers=auth_header(operator_token)
+    )
+    assert resp.status_code == 409
+
+
+def test_manual_backup_requires_existing_world(client, operator_token):
     resp = client.post(
         "/api/v1/worlds/no-such-world/backups/manual", headers=auth_header(operator_token)
     )
