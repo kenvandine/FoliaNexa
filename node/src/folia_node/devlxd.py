@@ -46,6 +46,11 @@ class WorldAssignment:
     # constructor call sites/tests that predate this field don't need to
     # pass it.
     velocity_forwarding_secret: str | None = None
+    # Authenticates mgmt to this agent's own GET /backup endpoint (see
+    # health.py) — delivered over devlxd config, same channel and same
+    # optional-for-back-compat treatment as velocity_forwarding_secret
+    # above.
+    node_agent_shared_secret: str | None = None
 
 
 class DevLXDClient:
@@ -104,4 +109,5 @@ class DevLXDClient:
             jar_engine=config.get("user.folia.jar-engine", "folia"),
             jar_version=config.get("user.folia.jar-version", "1.21.4"),
             velocity_forwarding_secret=config.get("user.folia.velocity-forwarding-secret"),
+            node_agent_shared_secret=config.get("user.folia.node-agent-shared-secret"),
         )

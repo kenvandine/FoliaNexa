@@ -19,6 +19,7 @@ host.
 | `db/` | `folia-nexa-db` — self-contained MariaDB snap for LuckPerms' shared backend | Bash, bundled MariaDB |
 | `tools/build-snap.sh` | Wraps `snapcraft` for any of the six components below so the built snap's version string carries the exact commit (`+git<hash>`, `-dirty` if the tree isn't clean) it was built from — the recommended way to invoke `snapcraft` for all of them, see "Building a snap with a traceable version" below | Bash |
 | `tools/folia-host-join.sh` | Automates trusting an LXD host into the cluster | Bash |
+| `tools/migrate-storage-to-zfs.sh` | Creates a ZFS-backed LXD storage pool and migrates every container in a project onto it — fixes world backups' root cause (LXD's `dir` driver freezes the whole container during a snapshot; ZFS's copy-on-write doesn't) at the storage layer instead of in mgmt's own code. See its own header comment and CLAUDE.md's World backups entry below for the incident history | Bash |
 | `tools/folia-nexa-spawn.sh` | Local dev tool: spins up a single-machine Folia server with a plugin built from local source loaded, for fast plugin iteration — no cluster/mgmt/proxy involved. See `docs/plugin-dev/01-environment-setup.md` §1.8 | Bash |
 | `configs/worlds/*.sh` | Starter world declarations (CLI wrappers) | Bash |
 | `mgmt/src/folia_mgmt/catalog.yaml` | Curated plugin catalog (PLAN.md §14A) — mgmt generates per-world manifests from this + a world's `plugins` list, no hand-authored manifest files | YAML |
@@ -79,11 +80,11 @@ is the exception, per the above.
 ## Running the test suites
 
 ```bash
-# mgmt (Python) — 428 tests
+# mgmt (Python) — 458 tests
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
-# node (Python) — 17 tests
+# node (Python) — 59 tests
 cd node && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
@@ -934,15 +935,374 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   "412 tests" count in the "Running the test suites" section above
   (426 at the time, 428 after these two new regression tests).
 
+  First real-LXD confirmation (2026-08-24), from a live operator report:
+  `snapshot_container` failed on an already-joined host with `Project
+  "folia" doesn't allow for snapshot creation` (a 500 from LXD's own
+  API, surfaced correctly through `last_backup_error` — the visibility
+  fix earlier in this section doing exactly what it was built for). Root
+  cause: LXD's `restricted=true` projects default several `restricted.*`
+  keys to `block` unless explicitly overridden, and `restricted.snapshots`
+  is one of them — `folia-host-join.sh`'s `lxc project create` (PLAN.md
+  §3) only ever set `restricted.containers.nesting=block`, never touching
+  `restricted.snapshots`, so every project this script has ever created
+  silently blocked the one capability this whole backups feature depends
+  on. Fixed by adding `restricted.snapshots=allow` to that `lxc project
+  create` call (PLAN.md's matching snippet updated to match) *and* a new
+  unconditional step right after it (mirroring the existing "Step 3b:
+  ensure the project's own default profile is actually usable" pattern)
+  that sets it via `lxc project set` for a project that already existed
+  before this fix — so re-running `folia-host-join.sh` against an
+  already-joined host repairs it without needing a full rejoin. This is
+  the first `LXDClient` method to get any real-LXD confirmation at all
+  (see the `LXDClient` entry below) — and it confirmed the call's own
+  request/response handling is correct; the only problem was the
+  project-level permission it was never given.
+
+  Second real-LXD incident, same day (2026-08-24), right after the fix
+  above unblocked snapshot creation: a manual backup left a world's
+  container wedged in `FREEZING` — confirmed via `lxc operation list`
+  showing three separate "Snapshotting instance" tasks queued against
+  the *same* container within about a minute of each other, none
+  cancelable, plus a "Restarting instance" task queued behind all three;
+  `ps aux | grep rsync` and disk usage on the host confirmed no actual
+  copy activity, i.e. genuinely wedged, not just slow. Root cause: this
+  host's LXD storage pool uses the `dir` driver, which has no native
+  copy-on-write snapshot support — LXD instead freezes the container and
+  rsync-copies its entire rootfs, which for a real Minecraft world save
+  can take far longer than `LXDClient`'s flat `DEFAULT_TIMEOUT` (15s,
+  applied uniformly to every call including the operation-`/wait` poll).
+  The first snapshot attempt was still genuinely running server-side
+  when mgmt's own HTTP client gave up waiting and reported it as a
+  failure; the operator (reasonably) retried, and nothing anywhere
+  stopped that retry from firing a second real `POST .../snapshots`
+  at LXD for the same container while the first was still in flight —
+  three of those piling up is what wedged the freeze. Two-part fix, both
+  in `lxd_client.py`: (1) a new `LONG_OPERATION_TIMEOUT` (600s) applied
+  only to the operation-`/wait` poll (a per-request `httpx` timeout
+  override, not a change to the client's default — fast calls still fail
+  fast on a genuinely dead host), so mgmt no longer gives up early and
+  misreports an in-progress snapshot as failed; (2) `snapshot_container`
+  now holds a process-local per-`(host, container)` lock and rejects a
+  second concurrent call for the same container immediately, before ever
+  reaching the network — closing the actual race regardless of *why* a
+  second call might be attempted (retry, double-click, or scheduled and
+  manual backups landing at the same time), not just the client-timeout
+  trigger that happened to cause it this time. The dashboard's "Back up
+  now" button is also now disabled for the duration of its own request,
+  as cheap first-line insurance against the same double-click. Covered
+  by a new `mgmt/tests/test_lxd_client.py` (`LXDClient`'s first-ever
+  test file — every other method is still only exercised through the
+  `_RecordingLXDClient`/`_PingLXDClient` fakes in `test_scheduler.py`),
+  using real `threading` to prove a second call for the same container
+  is rejected while the first is genuinely in flight, that a different
+  container is unaffected, and that the lock releases once the first
+  call finishes (429 tests total, up from 428). Not fixed by this: the
+  underlying `dir`-backend behavior itself — every backup on a `dir`-pool
+  host, scheduled or manual, still means a real full-rootfs copy with the
+  world frozen (and hence unplayable) for its duration; migrating that
+  host's storage pool to something with native snapshot support (ZFS or
+  btrfs) is an operational fix outside this codebase, not something
+  either change here addresses.
+
+  Redesign (2026-08-24), same day: ZFS migration was considered as the
+  fix for the `dir`-backend freeze above — it genuinely would fix it at
+  the root (COW snapshots don't need to freeze anything) — but is
+  blocked on this operator's actual host: both its disks are already
+  fully consumed by one LVM volume group backing the root filesystem, so
+  there's no free space to hand ZFS without a risky live root-filesystem
+  shrink. `tools/migrate-storage-to-zfs.sh` is written and ready for
+  whenever that becomes feasible (creates/reuses a ZFS pool, points the
+  project's default profile at it, migrates existing containers —
+  written against LXD's documented storage-pool/`move` CLI contract, not
+  exercised against a live LXD in this environment; every `lxc` call it
+  makes against instances/profiles is scoped to `--project`, never
+  touching anything outside the target project). In the meantime, the
+  tracked "time machine" backup feature was rebuilt around file-level
+  tar.gz archives (world save + `plugins/`, jars included so a restore
+  brings back the exact plugin versions running at backup time) instead
+  of LXD instance snapshots at all — sidesteps the `dir`-backend problem
+  entirely rather than working around it, since nothing in this path
+  touches LXD's storage layer.
+
+  New node-agent endpoint `GET /backup` (`node/src/folia_node/health.py`)
+  streams a `tarfile` in `"w|gz"` mode straight over the response socket
+  (mirrors the existing `_stream_log` handler's raw-`wfile` approach) —
+  no LXD exec/websocket capability exists anywhere in this codebase (only
+  single-file GET/PUT and non-recursive directory listing), so this was
+  the only way to get a directory tree off a container without adding
+  one. mgmt's new `world_backups.py` does a streaming `httpx` GET against
+  it and writes straight to **mgmt's own disk**
+  (`Settings.world_backups_dir`, `world-backups/<world_name>/<label>.tar.gz`)
+  — deliberately not the world's LXD host or container, so an operator
+  can point a plain rsync job at that directory from a separate backup
+  host as a full disaster-recovery story for losing the mgmt node
+  itself, no code involved on either side. Validates the downloaded
+  stream actually opens as a tar before treating it as a good backup
+  (a truncated/corrupt download must not look like a success), and uses
+  a generous, separate timeout (`Settings.world_backup_fetch_timeout_seconds`,
+  600s) for the fetch — not repeating the exact class of bug just fixed
+  for LXD's own operation-wait poll above.
+
+  Restore reuses `LXDClient.restart_container` — the same call
+  `recover_crashed_worlds` already relies on — rather than adding any new
+  JVM-pause/resume capability to the node agent (investigated and
+  confirmed to be substantial new plumbing: nothing today connects the
+  health server's HTTP thread to the JVM supervision loop at all). mgmt
+  pushes the tarball to `{NODE_WORLD_DIR}/.pending-restore.tar.gz` while
+  the container is still running (the same, already-proven-safe
+  `push_file`-against-a-running-container pattern every other push in
+  this codebase already uses), then restarts the container; the node
+  agent's freshly-restarted `main()` extracts the marker over `world/`/
+  `plugins/` before any other staging, using `filter="data"`
+  (Python 3.12+) to reject a path-traversal entry in a corrupt/tampered
+  archive, same defense-in-depth this codebase already applies to other
+  mgmt-supplied paths (plugin_upload.py/plugin_files.py). Restoring a
+  world onto a *different* host than it was backed up on needed no
+  special-casing at all: `WorldBackup` joins to a world by name, not by
+  the host it was taken on, so placing a same-named world on a healthy
+  host and then restoring just works, with manual re-placement as the
+  only "massaging" required.
+
+  The older LXD-instance-snapshot mechanism (`LXDClient.
+  snapshot_container`/`restore_snapshot`, the ad-hoc `POST
+  /{name}/snapshot`/`POST /{name}/restore/{snapshot_name}` endpoints) was
+  **kept**, not deleted — useful once a host's storage pool actually has
+  native snapshot support — but is now off by default
+  (`Settings.lxd_snapshot_backups_enabled`, `False`) and, independent of
+  that flag, `LXDClient` itself unconditionally refuses to snapshot or
+  restore a "dir"-backed instance (new `get_storage_driver_for_instance`:
+  reads an instance's `expanded_devices.root.pool`, then that pool's
+  `driver`) — a hard safety net so this exact incident can't recur even
+  if the flag is re-enabled on a host still using `dir`. Existing
+  `WorldBackup` rows from before this redesign reference LXD snapshot
+  names the new restore path can't do anything with; `db.py` gained
+  `_purge_legacy_lxd_snapshot_backups`, a one-off startup cleanup (same
+  pattern as the existing `_purge_soft_deleted_worlds`) that drops them,
+  targeted by `size_bytes IS NULL` (a column that didn't exist before
+  this change, so every pre-existing row has it unset while every new
+  file-based backup always sets it) rather than a separate one-time
+  marker — their underlying LXD snapshots are left orphaned on-disk
+  rather than best-effort-deleted through the very snapshot API this
+  redesign exists to stop depending on for routine backups.
+
+  Real pytest coverage: new `mgmt/tests/test_world_backups.py` (fetch/
+  store/validate against a real local `http.server` standing in for a
+  node agent — success, non-200, a truncated/corrupt stream rejected
+  rather than stored, connection refused), new node coverage in
+  `test_health.py` (`/backup`'s tar contents, gracefully skipping a
+  missing `world/`/`plugins/`) and new `test_agent.py`
+  (`_apply_pending_restore` — extracts and replaces existing dirs, a
+  missing marker is a no-op, a corrupt marker is skipped without
+  crashing the agent, a path-traversal entry is rejected). Updated
+  `test_scheduler.py`'s backup tests (fakes `world_backups.
+  fetch_and_store_backup` instead of `LXDClient.snapshot_container` —
+  this session's mid-flight-disable/hard-deleted-world race-guard
+  regression tests needed no logic changes, just a different fake
+  underneath, since that logic was always generic to "this call can be
+  slow, world state can change underneath it") and `test_worlds.py`
+  (manual-backup/restore endpoints for the new flow, plus the ad-hoc
+  endpoints' new disabled-by-default 403). New `test_lxd_client.py`
+  coverage for `get_storage_driver_for_instance` and the "dir" refusal
+  (439 mgmt tests total, up from 429; node 54, up from 48). Dropped: the
+  old `test_prune_expired_backups_retries_on_snapshot_delete_failure` —
+  that retry-on-failure behavior doesn't exist in the new design
+  (`world_backups.delete_backup_file` is best-effort/never-raises by
+  design, matching the "greatly simplify" goal — a failed local file
+  delete is a much lower-stakes, much rarer failure mode than the LXD API
+  call it replaced).
+
+  Not verified against live infrastructure: a real `folia-nexa-node`'s
+  `/backup` streaming and restore-extraction path against a real running
+  Folia server (no live cluster available in this environment, same
+  caveat as every other manifest-driven or file-API-driven flow in this
+  list) and `get_storage_driver_for_instance` itself (written against
+  LXD's documented `GET /1.0/instances/{name}` and `GET
+  /1.0/storage-pools/{name}` contract, same as everything else in
+  `LXDClient` except `snapshot_container`).
+
+  Code review on the PR that shipped this redesign (2026-08-24, GitHub
+  PR #16) found and closed five gaps, all covered by new tests:
+  `GET /backup` (`node/src/folia_node/health.py`) had no authentication
+  at all despite streaming `plugins/` verbatim — including secret-bearing
+  config files like LuckPerms' `config.yml` — to anything that could
+  reach a world container's health port, bypassing the exact protection
+  mgmt's own plugin-file browser was built to enforce
+  (`plugin_files.py`'s `MANAGED_PLUGIN_IDS`); fixed with a new shared
+  secret (`Settings.get_node_agent_shared_secret`, delivered over devlxd
+  config the same way `velocity_forwarding_secret` already is, checked
+  via constant-time comparison in a new `_backup_auth_ok`) — a world
+  whose container hasn't been restarted since mgmt started setting the
+  key fails closed (401), not open. `_wait_operation`/`_finish`
+  (`lxd_client.py`) previously applied `LONG_OPERATION_TIMEOUT` (600s) to
+  every async LXD call, not just snapshot/restore — since `reconcile()`
+  runs synchronously, a single merely-slow-not-dead host on, say,
+  `restart_container` could stall the *entire* reconcile tick for up to
+  10 minutes; now DEFAULT_TIMEOUT (15s) is the default and the long
+  timeout is opted into explicitly only where the "real, potentially
+  large rootfs copy" reasoning actually applies (`snapshot_container`/
+  `restore_snapshot`). `restore_backup`'s (`routers/worlds.py`) pending-
+  restore marker could be left armed on a world's disk if `push_file`
+  succeeded but the following `restart_container` failed — silently
+  applied on some later *unrelated* restart with no operator awareness;
+  fixed with a new `LXDClient.delete_file` (the read/list side already
+  had a counterpart, push never did) that best-effort-removes the marker
+  if the restart fails. `_apply_pending_restore`
+  (`node/src/folia_node/agent.py`) used to `shutil.rmtree` the existing
+  `world`/`plugins` dirs *before* `tf.extractall` ran, inside the same
+  try/except meant to catch a corrupt archive — but `tarfile.open()` only
+  validates the first block, so a member later in the stream failing
+  mid-extract could leave a world with neither the old save nor a
+  complete new one; fixed by extracting into a scratch directory first
+  (`tempfile.TemporaryDirectory(dir=world_dir)`, same filesystem) and
+  only deleting/replacing the real dirs once the whole archive is known
+  good. `fetch_and_store_backup` (`world_backups.py`) only caught
+  `httpx.HTTPError`, so a local `OSError` (disk full, an unwritable
+  `world_backups_dir`) escaped past `run_scheduled_backups`' narrow
+  per-world `except BackupTransferError` and aborted its *entire*
+  reconcile step, skipping every other backups-enabled world that tick
+  with none of the `last_backup_error` visibility this feature was built
+  around; fixed by catching `OSError` alongside `httpx.HTTPError` (and
+  moving the `mkdir` call inside the same `try`, since "unwritable
+  backups dir" was the finding's own example and that call was outside
+  it). That fix's own regression test then caught a second bug one layer
+  deeper: the except block's cleanup (`path.unlink(missing_ok=True)`) can
+  itself raise `IsADirectoryError`/`NotADirectoryError` in exactly the
+  kind of situation that got it there (e.g. `path.parent` already
+  existing as a plain file) — `missing_ok` only suppresses
+  `FileNotFoundError` — which would have escaped unhandled from the
+  *cleanup* path instead, the identical bug just relocated; fixed by
+  reusing `delete_backup_file`'s existing best-effort/never-raises
+  pattern instead of a bare `unlink` call. New/updated coverage:
+  `test_health.py` (`/backup` 401s with no header, wrong secret, or no
+  secret configured yet), `test_agent.py` (a truncated second tar member
+  leaves pre-existing world/plugins data untouched), `test_lxd_client.py`
+  (the `_finish`/`_wait_operation` timeout default), `test_worlds.py`
+  (restore cleans up the marker on restart failure, and survives the
+  cleanup itself also failing), `test_world_backups.py` (a local write
+  failure and an unwritable backups dir both raise `BackupTransferError`
+  cleanly rather than an unhandled `OSError`) (443 mgmt tests total, up
+  from 439; node 58, up from 54).
+
+  A second re-review of the same PR (2026-08-24) found the fixes above
+  had applied their own lessons to the *backup* path but not carried
+  them over to the newer *restore* path, plus two gaps in the restore
+  path itself, all now closed: `restore_backup` (routers/worlds.py) had
+  no per-container lock at all, unlike `snapshot_container`'s — a
+  double-clicked dashboard Restore button, or two admins restoring the
+  same world concurrently, could race two pushes of the same
+  `.pending-restore.tar.gz` marker and two `restart_container` calls
+  against the same container; fixed with a new `LXDClient.restore_guard`
+  (a context manager mirroring `snapshot_container`'s lock) wrapping the
+  whole push+restart sequence, raising a new `RestoreInProgressError`
+  (mapped to 409, not the 502 a real backend failure gets) if a restore
+  of that exact world is already in flight, plus a matching
+  button-disable guard on the dashboard's Restore button (`index.html`'s
+  `restoreWorldBackup`, mirroring `manualWorldBackup`'s own). Both
+  `push_file` (pushing the tarball) and `restart_container` (the restart
+  that follows) still used `DEFAULT_TIMEOUT` (15s) — the same class of
+  bug `LONG_OPERATION_TIMEOUT`/`RESTART_WAIT_TIMEOUT` exist to prevent
+  for snapshot/restore, just never carried over to this newer path: a
+  multi-GB backup upload, or a legitimately-slow-but-succeeding restart
+  (Paper/Folia's graceful shutdown can use the full 30s LXD itself
+  allows), could misreport as a failed restore purely from mgmt's own
+  client-side wait timing out first. `push_file` now accepts an optional
+  `timeout` override (used here with `LONG_OPERATION_TIMEOUT`) and
+  `restart_container` accepts one too (used here with the new
+  `RESTART_WAIT_TIMEOUT`, 45s — wider than `DEFAULT_TIMEOUT`, narrower
+  than `LONG_OPERATION_TIMEOUT`, and only opted into by this one caller
+  outside a batched reconcile tick). `restore_backup` also used to load
+  the entire backup tarball into memory (`backup_path.read_bytes()`)
+  before the request even started; `push_file`'s `content` parameter now
+  also accepts a bytes iterator, and a new `world_backups.
+  iter_backup_file` streams the file off disk in fixed-size chunks
+  instead.
+
+  Beyond the backup/restore-path parity gaps: `sync_world_config`
+  (`node/src/folia_node/agent.py`) used to run unconditionally right
+  after `_apply_pending_restore`, re-downloading any restored plugin
+  whose catalog `download_url` had changed since the backup was taken —
+  silently undoing the restore for that plugin on the very boot that was
+  supposed to bring it back, contradicting this feature's own "brings
+  back the exact plugin versions running at backup time" goal.
+  `_apply_pending_restore` now returns whether it actually applied a
+  restore this boot, and `main()` skips that one boot's
+  `sync_world_config` call when it did — the next restart (crash-loop or
+  operator-triggered) syncs normally. Separately, the same function's
+  `shutil.rmtree(..., ignore_errors=True)` could leave a directory
+  partially in place (one file the agent process can't delete), and the
+  following `shutil.move` into that *existing* directory would nest the
+  restored tree inside it (`plugins/plugins/*.jar`) instead of replacing
+  it, rather than raising anything that would surface the problem — now
+  detected and treated the same as a corrupt archive (raises, caught by
+  the existing handler, world starts as-is). `prune_expired_backups`
+  (scheduler.py) used to delete a `WorldBackup` row unconditionally even
+  when the paired `delete_backup_file` call silently failed (it's
+  best-effort/never-raises) — orphaning the tarball forever, since no
+  DB row means no future prune pass can ever find it again;
+  `delete_backup_file` now returns whether the file is actually gone, and
+  the row is only dropped when it is. `_refuse_dir_backend`
+  (lxd_client.py) blocklisted the literal driver string `"dir"` instead
+  of allowlisting drivers actually confirmed safe — an lvm pool without
+  thin provisioning, or any future/renamed LXD driver string, would sail
+  through unrefused if `lxd_snapshot_backups_enabled` were ever turned
+  back on, on a backend never actually diagnosed against the freeze
+  incident this check exists to prevent; now gated by a new
+  `ALLOWED_SNAPSHOT_DRIVERS = {"zfs", "btrfs"}` allowlist instead.
+  `restore_backup` only ever confirmed the tarball was pushed and the
+  container told to restart — the actual tar extraction happens
+  afterward, inside the restart, where a corrupt/truncated archive was
+  previously visible nowhere but the node agent's own local log;
+  `AgentState` (node's health.py) now carries `last_restore_at`/
+  `last_restore_error`, set by `_apply_pending_restore` and exposed over
+  the existing `GET /metrics`, and a new `World.last_restore_confirmed_at`/
+  `last_restore_error` pair (mirroring `last_backup_*`) is populated by
+  `finalize_provisioning`'s new `_record_restore_outcome` — a best-effort
+  poll of that same `/metrics` right as a world comes back up from
+  provisioning — and surfaced in the dashboard as a new failure banner
+  next to the existing backups one. Finally, `_purge_legacy_lxd_snapshot_backups`
+  (db.py) targeted `size_bytes IS NULL` alone with no real one-time
+  marker, on the reasoning that only pre-redesign rows would ever be
+  NULL — overloading a genuinely nullable column as an implicit "is this
+  legacy" flag, which would silently delete any *future* legitimate
+  NULL-size row (e.g. a hypothetical streaming-backup-in-progress row) on
+  every subsequent mgmt restart; now gated by a real one-time migration
+  marker (a new generic `schema_migration` table, `_migration_applied`/
+  `_mark_migration_applied`) so the DELETE only ever runs once, ever.
+  Covered by new tests across `test_lxd_client.py` (the allowlist
+  rejecting a non-"dir" driver too, `restore_guard`'s own concurrent-call
+  rejection mirroring `snapshot_container`'s), `test_worlds.py` (409 on
+  an in-flight restore), `test_agent.py` (skip-sync-after-restore via the
+  return value, the nested-directory case), `test_scheduler.py`
+  (prune keeping the row on a failed delete), `test_world_backups.py`
+  (`iter_backup_file`'s chunking, `delete_backup_file`'s return value),
+  `test_db.py` (the migration marker actually preventing a second,
+  future NULL-size row from being swept up), and a new
+  `test_record_restore_outcome.py` (`_record_restore_outcome` against a
+  real local HTTP server, mirroring `test_default_health_check.py`'s own
+  pattern) (458 mgmt tests total, up from 443; node 59, up from 58). Not
+  verified against live infrastructure, same caveat as the rest of this
+  feature: a real node agent's `/metrics` restore fields actually being
+  polled by a real `finalize_provisioning` against a live LXD-launched
+  container.
+
 Written against documented API contracts but **not** exercised against
 live infrastructure:
 
-- Every `LXDClient` method (mTLS bootstrap, instance CRUD, file push,
-  backup export/import for migration) — a real LXD daemon exists in the
-  environment this was developed in (used for the snap builds above),
-  but nothing set up a `folia` project on it and pointed `LXDClient` at
-  it for real — that's the next-most-valuable thing to verify if you're
-  picking this project up.
+- Every `LXDClient` method except `snapshot_container` (mTLS bootstrap,
+  instance CRUD, file push, backup export/import for migration,
+  `restore_snapshot`, `delete_snapshot`) — a real LXD daemon exists in
+  the environment this was developed in (used for the snap builds
+  above), but nothing set up a `folia` project on it and pointed
+  `LXDClient` at it for real, until a live operator's cluster hit
+  `snapshot_container` for real (2026-08-24, see the World backups entry
+  above) — which confirmed the call's own request/response handling
+  against real LXD, and also caught a real bug: `folia-host-join.sh`'s
+  `restricted=true` project never set `restricted.snapshots=allow`, so
+  LXD rejected every snapshot attempt on any host joined with it, fixed
+  in that same entry. `restore_snapshot`/`delete_snapshot` share the
+  same request shape but haven't themselves been exercised live yet —
+  that's the next-most-valuable thing to verify if you're picking this
+  project up.
 - The Discord OAuth2 flow and Mojang UUID resolution — no registered
   Discord application was available to test the OAuth2 authorize/
   callback round trip against in this environment (the bot's gateway

@@ -27,6 +27,15 @@ def epoch_seconds(dt: datetime) -> int:
     return int((dt - datetime(1970, 1, 1)).total_seconds())
 
 
+def from_epoch_seconds(ts: float) -> datetime:
+    """The inverse of epoch_seconds — a real Unix epoch value (e.g.
+    node/src/folia_node/health.py's AgentState.last_restore_at, taken
+    with time.time()) to a naive-but-UTC-valued datetime matching
+    utcnow()'s own convention, so it compares/stores consistently
+    alongside every other timestamp column in this module."""
+    return datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None)
+
+
 class HostStatus(str, enum.Enum):
     online = "online"
     offline = "offline"
@@ -144,26 +153,54 @@ class World(SQLModel, table=True):
     last_backup_attempt_at: Optional[datetime] = None
     last_backup_error: Optional[str] = None
 
+    # Set by scheduler.finalize_provisioning, best-effort, whenever it
+    # observes a restore outcome reported by this world's own node agent
+    # (AgentState.last_restore_error/last_restore_at,
+    # node/src/folia_node/agent.py's _apply_pending_restore) after a
+    # restart it's polling for an address on. POST
+    # /{name}/backups/{id}/restore only confirms the tarball was pushed
+    # and the container told to restart — the actual tar extraction
+    # happens afterward, inside the freshly-restarted container, where a
+    # corrupt/truncated archive was previously only ever logged locally
+    # with nothing surfaced back to mgmt or the dashboard. None means no
+    # restore has been confirmed yet (either none was attempted, or the
+    # agent hasn't reported in this reconcile pass) — purely diagnostic,
+    # same scope as last_backup_error above.
+    last_restore_confirmed_at: Optional[datetime] = None
+    last_restore_error: Optional[str] = None
+
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
 
 class WorldBackup(SQLModel, table=True):
-    """One tracked backup — an LXD instance snapshot (LXDClient.
-    snapshot_container) plus the metadata (when, what kind) mgmt needs to
-    list and restore from in the dashboard's "time machine" backups UI.
+    """One tracked backup — a tar.gz of the world save + plugins/
+    (world_backups.py, fetched from folia-nexa-node's own /backup
+    endpoint over plain HTTP, stored on mgmt's own disk under
+    Settings.world_backups_dir) plus the metadata (when, what kind) mgmt
+    needs to list and restore from in the dashboard's "time machine"
+    backups UI.
+
+    `snapshot_name` predates the file-based redesign and is kept as-is
+    rather than renamed (e.g. to "label") even though it's no longer an
+    LXD snapshot name — it's now the backup's filename stem instead. This
+    project's DB story (db.py's _add_missing_columns) only auto-handles
+    adding nullable columns to an already-live DB, not renames, so
+    reusing the field avoids requiring manual DB surgery on a running
+    deployment.
 
     Distinct from the older ad-hoc POST /worlds/{name}/snapshot: that
-    endpoint creates a raw LXD snapshot mgmt never records anywhere, so
-    there was previously no way to list what snapshots exist for a world
-    at all. scheduler.run_scheduled_backups writes kind="scheduled" rows
-    hourly for every backups_enabled running world; POST
-    /worlds/{name}/backups/manual writes kind="manual" rows on demand, for
-    an operator who wants a snapshot right now (e.g. right before a risky
-    plugin upgrade) rather than waiting for the next hourly window — both
-    kinds share the same list/restore/retention handling.
-    scheduler.prune_expired_backups deletes both the row and the
-    underlying LXD snapshot once older than BACKUP_RETENTION (a week).
+    endpoint (still LXD-instance-snapshot-based, off by default — see
+    Settings.lxd_snapshot_backups_enabled) creates a raw LXD snapshot
+    mgmt never records anywhere, so there was previously no way to list
+    what snapshots exist for a world at all. scheduler.run_scheduled_backups
+    writes kind="scheduled" rows hourly for every backups_enabled running
+    world; POST /worlds/{name}/backups/manual writes kind="manual" rows
+    on demand, for an operator who wants a backup right now (e.g. right
+    before a risky plugin upgrade) rather than waiting for the next
+    hourly window — both kinds share the same list/restore/retention
+    handling. scheduler.prune_expired_backups deletes both the row and
+    the underlying tarball once older than BACKUP_RETENTION (a week).
     """
 
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -171,6 +208,7 @@ class WorldBackup(SQLModel, table=True):
     snapshot_name: str
     kind: str = "scheduled"  # "scheduled" (hourly, auto-pruned after a week) or "manual"
     created_at: datetime = Field(default_factory=utcnow, index=True)
+    size_bytes: Optional[int] = None
 
 
 class WorldPluginConfigFile(SQLModel, table=True):

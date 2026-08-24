@@ -14,13 +14,18 @@ than fabricating game-level numbers.
 from __future__ import annotations
 
 import collections
+import hmac
 import json
 import logging
 import queue
+import tarfile
 import threading
 import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+from folia_node.staging import LEVEL_NAME
 
 DEFAULT_PORT = 8123
 
@@ -108,6 +113,30 @@ class AgentState:
     lock: threading.Lock = field(default_factory=threading.Lock)
     console_log: LogBroadcaster = field(default_factory=LogBroadcaster)
     agent_log: LogBroadcaster = field(default_factory=LogBroadcaster)
+    # Set by agent.py's main() right after construction — the default
+    # here just mirrors main()'s own WORLD_DIR env-var fallback so a bare
+    # AgentState() (e.g. in tests) still has a sane value.
+    world_dir: Path = field(default_factory=lambda: Path("/tmp/folia-world"))
+    # Set by agent.py's main() from the devlxd world assignment
+    # (DevLXDClient.get_world_assignment's node_agent_shared_secret) —
+    # required to authenticate GET /backup, since that endpoint streams
+    # plugins/ verbatim, secrets (e.g. LuckPerms' config.yml) included.
+    # None means this container hasn't picked up the config key yet (an
+    # old world not yet restarted since mgmt started setting it) — /backup
+    # fails closed rather than serving unauthenticated in that case.
+    backup_shared_secret: str | None = None
+    # Set by agent.py's _apply_pending_restore, this boot only — a
+    # pending-restore marker actually extracted successfully (last_restore_at
+    # set, last_restore_error None) or found corrupt/unreadable
+    # (last_restore_error set to the exception text). Both stay None if no
+    # marker was present this boot (the normal case), so mgmt's
+    # finalize_provisioning (mgmt/src/folia_mgmt/scheduler.py) can tell
+    # "no restore happened" apart from "a restore happened and here's how
+    # it went" via GET /metrics — otherwise a corrupt archive silently
+    # no-ops with nothing but a local agent log line to show for it (see
+    # CLAUDE.md's World backups entry).
+    last_restore_at: float | None = None
+    last_restore_error: str | None = None
 
     def snapshot(self) -> dict:
         with self.lock:
@@ -118,6 +147,8 @@ class AgentState:
                 "uptime_seconds": round(time.time() - self.started_at, 1),
                 "last_exit_code": self.last_exit_code,
                 "log_tail": list(self.log_tail[-20:]),
+                "last_restore_at": self.last_restore_at,
+                "last_restore_error": self.last_restore_error,
             }
 
 
@@ -156,12 +187,67 @@ def _make_handler(state: AgentState) -> type[BaseHTTPRequestHandler]:
             finally:
                 broadcaster.unsubscribe(q)
 
+        def _backup_auth_ok(self) -> bool:
+            """Constant-time comparison against state.backup_shared_secret
+            — None (config key not picked up yet, e.g. an existing world
+            not restarted since mgmt started sending it) always fails
+            closed rather than falling back to no auth."""
+            expected = state.backup_shared_secret
+            if not expected:
+                return False
+            got = self.headers.get("Authorization", "")
+            prefix = "Bearer "
+            if not got.startswith(prefix):
+                return False
+            return hmac.compare_digest(got[len(prefix):], expected)
+
+        def _stream_backup_archive(self) -> None:
+            """Streams a tar.gz of the world save + plugins/ (jars
+            included, not just plugin data, so a restore brings back the
+            exact plugin versions that were running at backup time)
+            straight over the response socket via tarfile's streaming
+            write mode ("w|gz", for non-seekable output) — no temp file
+            needed on this container's own disk, and no dependency on
+            the LXD host's storage pool at all (see CLAUDE.md's World
+            backups entry for why that matters). Mirrors _stream_log's
+            raw-wfile approach since neither knows the response length up
+            front. Either directory (e.g. a world that hasn't generated
+            a save yet) is skipped, not an error, if it doesn't exist.
+
+            Requires Authorization: Bearer <state.backup_shared_secret> —
+            unlike every other endpoint here, this one streams secrets
+            (plugin config files like LuckPerms' config.yml) back out, so
+            unlike /healthz, /metrics, /logs/*, it can't be left open to
+            anything that can reach this container's health port. See
+            AgentState.backup_shared_secret / _backup_auth_ok above."""
+            if not self._backup_auth_ok():
+                self.send_response(401)
+                self.send_header("Content-Type", "text/plain; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(b"missing or invalid Authorization header\n")
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "application/gzip")
+            self.send_header("Cache-Control", "no-cache")
+            self.end_headers()
+            try:
+                with tarfile.open(fileobj=self.wfile, mode="w|gz") as tf:
+                    for name in (LEVEL_NAME, "plugins"):
+                        path = state.world_dir / name
+                        if path.exists():
+                            tf.add(path, arcname=name)
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # client disconnected mid-stream
+
         def do_GET(self) -> None:  # noqa: N802 - stdlib method name
             if self.path == "/logs/console/stream":
                 self._stream_log(state.console_log)
                 return
             if self.path == "/logs/agent/stream":
                 self._stream_log(state.agent_log)
+                return
+            if self.path == "/backup":
+                self._stream_backup_archive()
                 return
             snapshot = state.snapshot()
             if self.path == "/healthz":

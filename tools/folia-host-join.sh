@@ -160,8 +160,27 @@ else
     -c "limits.memory=${MEMORY_GB}GB" \
     -c "limits.containers=${MAX_CONTAINERS}" \
     -c "restricted=true" \
-    -c "restricted.containers.nesting=block"
+    -c "restricted.containers.nesting=block" \
+    -c "restricted.snapshots=allow"
   log "Project '$PROJECT' created"
+fi
+
+# --- Step 3a: ensure the project allows snapshot creation -------------------
+#
+# A restricted=true project defaults several restricted.* keys to "block"
+# unless explicitly overridden, and restricted.snapshots is one of them —
+# set at creation time just above for a brand new project, but a host
+# joined before this fix existed never got it. Left blocked, every one of
+# mgmt's own backup calls (LXDClient.snapshot_container/restore_snapshot,
+# used by both the hourly scheduled backups and the older ad-hoc POST
+# /{name}/snapshot) fails with "Project '$PROJECT' doesn't allow for
+# snapshot creation" — confirmed for real against a live, already-joined
+# cluster (2026-08-24). Runs unconditionally, project-created-just-now or
+# reused-from-before, same as Step 3b below.
+CURRENT_SNAPSHOTS_SETTING="$(lxc project get "$PROJECT" restricted.snapshots 2>/dev/null || true)"
+if [[ "$CURRENT_SNAPSHOTS_SETTING" != "allow" ]]; then
+  log "Project '$PROJECT' doesn't allow snapshot creation yet — enabling (restricted.snapshots=allow)"
+  lxc project set "$PROJECT" restricted.snapshots=allow
 fi
 
 # --- Step 3b: ensure the project's own default profile is actually usable ---

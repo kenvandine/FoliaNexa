@@ -100,11 +100,73 @@ def _purge_soft_deleted_worlds(engine) -> None:
             )
 
 
+_SCHEMA_MIGRATION_TABLE = "schema_migration"
+
+
+def _migration_applied(conn, name: str) -> bool:
+    """Tiny generic idempotency marker for one-time data migrations that
+    can't be expressed as "delete rows matching some real, permanent
+    column state" — not a real migration framework (no ordering, no
+    rollback, see _add_missing_columns' own docstring for this module's
+    scope), just enough to record "this one-off cleanup already ran"
+    without overloading an unrelated column's semantics as a marker.
+    See _purge_legacy_lxd_snapshot_backups for why that mattered here."""
+    conn.execute(text(f'CREATE TABLE IF NOT EXISTS "{_SCHEMA_MIGRATION_TABLE}" (name TEXT PRIMARY KEY)'))
+    row = conn.execute(text(f'SELECT 1 FROM "{_SCHEMA_MIGRATION_TABLE}" WHERE name = :name'), {"name": name}).first()
+    return row is not None
+
+
+def _mark_migration_applied(conn, name: str) -> None:
+    conn.execute(text(f'INSERT OR IGNORE INTO "{_SCHEMA_MIGRATION_TABLE}" (name) VALUES (:name)'), {"name": name})
+
+
+def _purge_legacy_lxd_snapshot_backups(engine) -> None:
+    """One-time cleanup for WorldBackup rows created before the
+    file-level backup redesign — they reference LXD snapshot names the
+    new restore path (world_backups.py) can't do anything with, since
+    there's no corresponding tarball on disk for them.
+
+    Originally targeted by `size_bytes IS NULL` alone (that column didn't
+    exist before this change, so every pre-existing row had it NULL,
+    backfilled by _add_missing_columns above) on the reasoning that every
+    backup created by the new fetch_and_store_backup always sets it to a
+    real byte count, making the DELETE naturally a no-op after the first
+    run. That overloads a column that's genuinely nullable in the schema
+    (WorldBackup.size_bytes: Optional[int]) as an implicit "is this a
+    legacy row" flag — a future code path that ever constructs a
+    WorldBackup row before its size is known (e.g. a streaming-backup-
+    in-progress row) would get silently deleted by this on the very next
+    mgmt restart, indistinguishable from a genuine pre-redesign row. Now
+    gated by a real one-time migration marker (_migration_applied) in
+    addition to the size_bytes filter, so this DELETE only ever runs
+    once, ever — not "once per NULL-size row that happens to exist."
+    The underlying LXD snapshots these rows pointed at are left orphaned
+    on their host's storage pool rather than best-effort-deleted through
+    the very snapshot API this change exists to stop depending on for
+    routine backups."""
+    MIGRATION_NAME = "purge_legacy_lxd_snapshot_backups"
+    inspector = inspect(engine)
+    if not inspector.has_table("worldbackup"):
+        return
+    with engine.begin() as conn:
+        if _migration_applied(conn, MIGRATION_NAME):
+            return
+        result = conn.execute(text("DELETE FROM worldbackup WHERE size_bytes IS NULL"))
+        if result.rowcount:
+            logger.info(
+                "purged %d legacy LXD-snapshot-based world backup row(s) — "
+                "no longer restorable via the file-level backup path",
+                result.rowcount,
+            )
+        _mark_migration_applied(conn, MIGRATION_NAME)
+
+
 def init_db(settings: Settings | None = None) -> None:
     engine = get_engine(settings)
     SQLModel.metadata.create_all(engine)
     _add_missing_columns(engine)
     _purge_soft_deleted_worlds(engine)
+    _purge_legacy_lxd_snapshot_backups(engine)
 
 
 def get_session() -> Generator[Session, None, None]:
