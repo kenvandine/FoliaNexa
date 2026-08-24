@@ -818,6 +818,220 @@ def test_run_scheduled_backups_tolerates_snapshot_failure_and_continues():
     names_backed_up = {row.world_name for row in session.exec(select(WorldBackup)).all()}
     assert names_backed_up == {"world-ok"}
 
+    broken = session.exec(select(World).where(World.name == "world-broken")).one()
+    assert broken.last_backup_error == "simulated snapshot failure for world-broken"
+    assert broken.last_backup_attempt_at is not None
+
+    ok = session.exec(select(World).where(World.name == "world-ok")).one()
+    assert ok.last_backup_error is None
+    assert ok.last_backup_attempt_at is not None
+
+
+def test_run_scheduled_backups_clears_a_previously_recorded_error_on_success():
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+            backups_enabled=True, last_backup_error="stale failure from a previous tick",
+        )
+    )
+    session.commit()
+
+    lxd = _RecordingLXDClient()
+    run_scheduled_backups(session, lxd)
+
+    world = session.exec(select(World).where(World.name == "world-a")).one()
+    assert world.last_backup_error is None
+
+
+def test_run_scheduled_backups_does_not_reset_a_backup_disabled_mid_flight():
+    """Regression test: an operator's PUT .../backups-config can disable
+    backups (and clear a stale error) in a separate session while this
+    world's snapshot_container call is still in flight — since it was
+    already loaded here with backups_enabled=True. A failure that
+    surfaces after that point must not stamp last_backup_error back onto
+    a world whose backups were just turned off, since a disabled world
+    is never revisited by this loop to clear it again."""
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+            backups_enabled=True,
+        )
+    )
+    session.commit()
+
+    other_session = Session(session.bind)
+
+    class _DisablingLXDClient(_RecordingLXDClient):
+        def snapshot_container(self, host, name, snapshot_name):
+            # Simulates a concurrent operator PUT .../backups-config
+            # {enabled: false} committing, in its own session, while this
+            # call is in flight.
+            world = other_session.exec(select(World).where(World.name == name)).one()
+            world.backups_enabled = False
+            world.last_backup_error = None
+            world.last_backup_attempt_at = None
+            other_session.add(world)
+            other_session.commit()
+            return super().snapshot_container(host, name, snapshot_name)
+
+    lxd = _DisablingLXDClient()
+    lxd.fail_snapshot_for.add("world-a")
+
+    run_scheduled_backups(session, lxd)
+
+    world = session.exec(select(World).where(World.name == "world-a")).one()
+    assert world.backups_enabled is False
+    assert world.last_backup_error is None
+    assert world.last_backup_attempt_at is None
+
+
+def test_run_scheduled_backups_still_records_a_snapshot_that_succeeds_despite_being_disabled_mid_flight():
+    """Regression test: the snapshot_container call itself can *succeed*
+    in the same race the test above covers for failure. A snapshot that
+    succeeds is really sitting on the host's storage pool regardless of
+    whether backups_enabled flipped to False while the call was in
+    flight — it must still get a WorldBackup row, or it becomes an
+    orphaned, untracked, never-pruned snapshot that the dashboard can
+    never show or restore from."""
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+            backups_enabled=True,
+        )
+    )
+    session.commit()
+
+    other_session = Session(session.bind)
+
+    class _DisablingLXDClient(_RecordingLXDClient):
+        def snapshot_container(self, host, name, snapshot_name):
+            # Simulates a concurrent operator PUT .../backups-config
+            # {enabled: false} committing, in its own session, while this
+            # call is in flight -- but unlike the test above, the
+            # snapshot itself still succeeds.
+            world = other_session.exec(select(World).where(World.name == name)).one()
+            world.backups_enabled = False
+            other_session.add(world)
+            other_session.commit()
+            return super().snapshot_container(host, name, snapshot_name)
+
+    lxd = _DisablingLXDClient()
+
+    run_scheduled_backups(session, lxd)
+
+    world = session.exec(select(World).where(World.name == "world-a")).one()
+    assert world.backups_enabled is False
+    # The world itself is untouched (disabled mid-flight, never revisited)...
+    assert world.last_backup_attempt_at is None
+    assert world.last_backup_error is None
+    # ...but the snapshot that actually landed on the host is still tracked.
+    backups = session.exec(select(WorldBackup).where(WorldBackup.world_name == "world-a")).all()
+    assert len(backups) == 1
+    assert backups[0].kind == "scheduled"
+
+
+def test_run_scheduled_backups_tolerates_world_hard_deleted_mid_flight():
+    """Regression test: a world can be hard-deleted (DELETE /worlds/{name}
+    -> teardown_world, once its container is actually gone) by a
+    concurrent request while this world's own snapshot_container call is
+    still in flight. backups_still_enabled() must not blindly
+    session.refresh() a row that's no longer there — that raises
+    ObjectDeletedError, which (uncaught) would abort the whole
+    reconcile-tick session and roll back every other world's
+    already-committed backup progress from the same pass."""
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+            backups_enabled=True,
+        )
+    )
+    session.commit()
+
+    other_session = Session(session.bind)
+
+    class _DeletingLXDClient(_RecordingLXDClient):
+        def snapshot_container(self, host, name, snapshot_name):
+            # Simulates a concurrent DELETE /worlds/world-a -> teardown_world
+            # hard-deleting the row while this call is in flight, and the
+            # snapshot attempt itself failing.
+            world = other_session.exec(select(World).where(World.name == name)).one()
+            other_session.delete(world)
+            other_session.commit()
+            raise LXDError(f"simulated snapshot failure for {name}")
+
+    lxd = _DeletingLXDClient()
+
+    run_scheduled_backups(session, lxd)  # must not raise
+
+    assert session.exec(select(World).where(World.name == "world-a")).first() is None
+
+
+def test_run_scheduled_backups_commits_per_world_so_a_later_worlds_call_cant_clobber_an_earlier_disable():
+    """Regression test: the loop used to batch every world's
+    last_backup_attempt_at/last_backup_error write into a single commit
+    at the very end. That left a wide window — the time spent on every
+    *other* world's own (potentially slow) LXD call — during which an
+    operator's PUT .../backups-config disable-and-clear for an
+    already-processed world could land, commit, and then get silently
+    overwritten once the batched commit finally flushed that world's
+    now-stale in-memory attempt_at/error back over it. Committing
+    per-world closes that window."""
+    session = _session()
+    session.add(Host(name="node-a", address="1.2.3.4:8443", capacity_cpu_cores=8, capacity_memory_gb=16, status=HostStatus.online))
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+            backups_enabled=True,
+        )
+    )
+    session.add(
+        World(
+            name="world-b", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-b",
+            backups_enabled=True,
+        )
+    )
+    session.commit()
+
+    other_session = Session(session.bind)
+
+    class _RaceyLXDClient(_RecordingLXDClient):
+        def snapshot_container(self, host, name, snapshot_name):
+            if name == "world-b":
+                # Simulates an operator's PUT .../backups-config disabling
+                # and clearing world-a's error, landing while this loop is
+                # still busy processing the later world-b.
+                world_a = other_session.exec(select(World).where(World.name == "world-a")).one()
+                world_a.backups_enabled = False
+                world_a.last_backup_error = None
+                world_a.last_backup_attempt_at = None
+                other_session.add(world_a)
+                other_session.commit()
+            return super().snapshot_container(host, name, snapshot_name)
+
+    lxd = _RaceyLXDClient()
+    lxd.fail_snapshot_for.add("world-a")
+
+    run_scheduled_backups(session, lxd)
+
+    world_a = session.exec(select(World).where(World.name == "world-a")).one()
+    assert world_a.backups_enabled is False
+    assert world_a.last_backup_error is None
+    assert world_a.last_backup_attempt_at is None
+
 
 def test_prune_expired_backups_deletes_snapshot_and_row_older_than_a_week():
     session = _session()

@@ -134,6 +134,16 @@ class World(SQLModel, table=True):
     # container launch time.
     backups_enabled: bool = True
 
+    # Set by scheduler.run_scheduled_backups on every attempt (success
+    # clears last_backup_error back to None; a raised LXDError records its
+    # message instead) — without this, a scheduled backup that starts
+    # failing every hour (bad host, full storage pool, whatever) does so
+    # silently forever: prune_expired_backups' log line is the only trace,
+    # and the dashboard's backups list just quietly never grows. Purely
+    # diagnostic — nothing reads this to change scheduling behavior.
+    last_backup_attempt_at: Optional[datetime] = None
+    last_backup_error: Optional[str] = None
+
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)
 
@@ -147,7 +157,11 @@ class WorldBackup(SQLModel, table=True):
     endpoint creates a raw LXD snapshot mgmt never records anywhere, so
     there was previously no way to list what snapshots exist for a world
     at all. scheduler.run_scheduled_backups writes kind="scheduled" rows
-    hourly for every backups_enabled running world;
+    hourly for every backups_enabled running world; POST
+    /worlds/{name}/backups/manual writes kind="manual" rows on demand, for
+    an operator who wants a snapshot right now (e.g. right before a risky
+    plugin upgrade) rather than waiting for the next hourly window — both
+    kinds share the same list/restore/retention handling.
     scheduler.prune_expired_backups deletes both the row and the
     underlying LXD snapshot once older than BACKUP_RETENTION (a week).
     """
@@ -155,7 +169,7 @@ class WorldBackup(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     world_name: str = Field(index=True)
     snapshot_name: str
-    kind: str = "scheduled"  # "scheduled" (hourly, auto-pruned after a week)
+    kind: str = "scheduled"  # "scheduled" (hourly, auto-pruned after a week) or "manual"
     created_at: datetime = Field(default_factory=utcnow, index=True)
 
 

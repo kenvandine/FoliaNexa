@@ -23,6 +23,8 @@ from folia_mgmt.models import (
     Host,
     HostStatus,
     MinecraftVersionConfig,
+    User,
+    UserRole,
     World,
     WorldBackup,
     WorldPhase,
@@ -77,9 +79,18 @@ class WorldResponse(BaseModel):
     whitelist_enabled: bool
     ops: list[str]
     backups_enabled: bool
+    last_backup_attempt_at: datetime | None
+    last_backup_error: str | None
 
 
-def _to_response(world: World) -> WorldResponse:
+def _to_response(world: World, *, redact_backup_error: bool) -> WorldResponse:
+    """`redact_backup_error` drops `last_backup_error` for viewer-role
+    callers — it carries raw `LXDError` text (see scheduler.py's
+    run_scheduled_backups), which is internal backend detail nobody
+    below operator has otherwise been able to see through this API.
+    No default: every call site must state its caller's role explicitly,
+    so a future endpoint that opens this response to viewer-role callers
+    can't forget to redact simply by not passing the keyword."""
     return WorldResponse(
         name=world.name,
         type=world.type.value,
@@ -98,6 +109,8 @@ def _to_response(world: World) -> WorldResponse:
         whitelist_enabled=world.whitelist_enabled,
         ops=world.ops,
         backups_enabled=world.backups_enabled,
+        last_backup_attempt_at=world.last_backup_attempt_at,
+        last_backup_error=None if redact_backup_error else world.last_backup_error,
     )
 
 
@@ -275,12 +288,16 @@ def create_world(
 
     _place_best_effort(session, lxd_client, world, settings)
     session.refresh(world)
-    return _to_response(world)
+    return _to_response(world, redact_backup_error=False)
 
 
-@router.get("", response_model=list[WorldResponse], dependencies=[Depends(require_viewer)])
-def list_worlds(session: Session = Depends(get_session)) -> list[WorldResponse]:
-    return [_to_response(w) for w in session.exec(select(World)).all()]
+@router.get("", response_model=list[WorldResponse])
+def list_worlds(
+    session: Session = Depends(get_session),
+    user: User = Depends(require_viewer),
+) -> list[WorldResponse]:
+    redact = user.role == UserRole.viewer
+    return [_to_response(w, redact_backup_error=redact) for w in session.exec(select(World)).all()]
 
 
 class UpdateWorldRequest(BaseModel):
@@ -341,7 +358,7 @@ def update_world(
                     name,
                 )
 
-    return _to_response(world)
+    return _to_response(world, redact_backup_error=False)
 
 
 @router.post("/{name}/restart", dependencies=[Depends(require_operator)])
@@ -608,7 +625,7 @@ def delete_world(
     session.add(world)
     session.commit()
     session.refresh(world)
-    draining_snapshot = _to_response(world)
+    draining_snapshot = _to_response(world, redact_backup_error=False)
 
     _teardown_best_effort(session, lxd_client, world)
 
@@ -623,7 +640,7 @@ def delete_world(
     if still_present is None:
         return draining_snapshot.model_copy(update={"phase": WorldPhase.deleted.value})
     session.refresh(still_present)
-    return _to_response(still_present)
+    return _to_response(still_present, redact_backup_error=False)
 
 
 def _host_and_world(session: Session, name: str) -> tuple[World, Host]:
@@ -636,6 +653,13 @@ def _host_and_world(session: Session, name: str) -> tuple[World, Host]:
     return world, host
 
 
+def _snapshot_or_502(lxd_client: LXDClient, host: Host, world: World, snapshot_name: str) -> None:
+    try:
+        lxd_client.snapshot_container(host, world.container_name, snapshot_name)
+    except LXDError as exc:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+
+
 @router.post("/{name}/snapshot", dependencies=[Depends(require_operator)])
 def snapshot_world(
     name: str,
@@ -645,10 +669,7 @@ def snapshot_world(
 ) -> dict[str, str]:
     world, host = _host_and_world(session, name)
     label = snapshot_name or f"manual-{epoch_seconds(utcnow())}"
-    try:
-        lxd_client.snapshot_container(host, world.container_name, label)
-    except LXDError as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    _snapshot_or_502(lxd_client, host, world, label)
     return {"snapshot": label}
 
 
@@ -706,13 +727,54 @@ def put_backup_config(
     default — World.backups_enabled). Disabling only stops *future*
     scheduled backups; it doesn't delete backups already taken, and those
     still expire on their normal week-long schedule via
-    prune_expired_backups."""
+    prune_expired_backups.
+
+    Disabling also clears last_backup_error/last_backup_attempt_at:
+    run_scheduled_backups only ever visits backups_enabled worlds, so
+    without this a failure banner from before the operator disabled
+    backups would otherwise be stuck on the dashboard forever, never
+    reaching the success path that normally clears it."""
     world = _get_world_or_404(session, name)
     world.backups_enabled = body.enabled
+    if not body.enabled:
+        world.last_backup_error = None
+        world.last_backup_attempt_at = None
     world.updated_at = utcnow()
     session.add(world)
     session.commit()
     return {"backups_enabled": world.backups_enabled}
+
+
+@router.post("/{name}/backups/manual", response_model=BackupResponse, dependencies=[Depends(require_operator)])
+def create_manual_backup(
+    name: str,
+    session: Session = Depends(get_session),
+    lxd_client: LXDClient = Depends(get_lxd_client),
+) -> BackupResponse:
+    """Takes a backup right now, independent of the hourly schedule (e.g.
+    right before a risky plugin upgrade) — operator-gated like the older
+    ad-hoc POST /{name}/snapshot, but tracked as a WorldBackup row (kind=
+    "manual") so it shows up in, and can be restored from, the same
+    dashboard list as scheduled backups, and expires on the same
+    BACKUP_RETENTION schedule as prune_expired_backups. Works regardless
+    of World.backups_enabled — that flag only gates the automatic hourly
+    schedule, not an operator's own explicit request.
+
+    The label is manual-backup-<epoch>-<random>, not plain manual-<epoch>
+    — that format is already used by the older ad-hoc POST /{name}/snapshot
+    (which LXD would reject as a duplicate name if both fired in the same
+    second), and the random suffix also protects against two calls to
+    this endpoint itself landing in the same second (e.g. a double-clicked
+    "Back up now" button)."""
+    world, host = _host_and_world(session, name)
+    now = utcnow()
+    label = f"manual-backup-{epoch_seconds(now)}-{secrets.token_hex(3)}"
+    _snapshot_or_502(lxd_client, host, world, label)
+    backup = WorldBackup(world_name=name, snapshot_name=label, kind="manual", created_at=now)
+    session.add(backup)
+    session.commit()
+    session.refresh(backup)
+    return BackupResponse(id=backup.id, snapshot_name=backup.snapshot_name, kind=backup.kind, created_at=backup.created_at)
 
 
 @router.post("/{name}/backups/{backup_id}/restore", dependencies=[Depends(require_admin)])
@@ -792,7 +854,7 @@ def migrate_world(
             source_host.name,
         )
 
-    return _to_response(world)
+    return _to_response(world, redact_backup_error=False)
 
 
 class AccessUpdateRequest(BaseModel):

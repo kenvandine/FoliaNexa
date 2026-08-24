@@ -295,6 +295,10 @@
             <input type="checkbox" id="details-backups-enabled" onchange="toggleWorldBackups(this.checked)">
             Automatic hourly backups enabled
           </label>
+          <div class="inline" style="margin-bottom:0.5rem">
+            <button class="btn ghost" onclick="manualWorldBackup()">Back up now</button>
+          </div>
+          <div id="details-backup-failure" class="error" style="margin-bottom:0.5rem"></div>
           <table>
             <thead><tr><th>Taken</th><th>Kind</th><th></th></tr></thead>
             <tbody id="details-backups-body"></tbody>
@@ -779,6 +783,10 @@ async function loadWorlds() {
     `;
     }).join('') || '<tr><td colspan="8" class="hint">No worlds declared yet.</td></tr>';
     renderBroadcastTargets(worlds);
+    if (state.detailsWorld) {
+      const openWorld = worlds.find(w => w.name === state.detailsWorld);
+      if (openWorld) renderBackupFailure(openWorld);
+    }
   } catch (e) {
     errorEl.textContent = e.message;
   }
@@ -902,6 +910,7 @@ function openWorldDetails(name) {
   renderWorldOps(world.ops);
   document.getElementById('details-backups-enabled').checked = world.backups_enabled;
   document.getElementById('world-backups-error').textContent = '';
+  renderBackupFailure(world);
   loadWorldBackups(name);
   switchLogTab('console');
 }
@@ -955,15 +964,41 @@ async function removeWorldOp(op) {
   await _putWorldOps(name, current.filter(o => o !== op));
 }
 
-async function loadWorldBackups(name) {
+function renderBackupFailure(world) {
+  const el = document.getElementById('details-backup-failure');
+  el.textContent = world.last_backup_error
+    ? 'Last automatic backup attempt (' + new Date(world.last_backup_attempt_at + 'Z').toLocaleString() + ') failed: ' + world.last_backup_error
+    : '';
+}
+
+// Shared by every action on the Backups section: clears #world-backups-error,
+// runs `action`, and on failure sets that error text (plus an optional
+// caller-supplied cleanup, e.g. reverting an optimistically-toggled checkbox).
+async function withBackupsError(action, onError) {
   const errorEl = document.getElementById('world-backups-error');
   errorEl.textContent = '';
   try {
-    const backups = await api('/worlds/' + encodeURIComponent(name) + '/backups');
-    renderWorldBackups(name, backups);
+    return await action();
   } catch (e) {
     errorEl.textContent = e.message;
+    if (onError) onError(e);
   }
+}
+
+async function manualWorldBackup() {
+  const name = state.detailsWorld;
+  if (!name) return;
+  await withBackupsError(async () => {
+    await api('/worlds/' + encodeURIComponent(name) + '/backups/manual', { method: 'POST' });
+    await loadWorldBackups(name);
+  });
+}
+
+async function loadWorldBackups(name) {
+  await withBackupsError(async () => {
+    const backups = await api('/worlds/' + encodeURIComponent(name) + '/backups');
+    renderWorldBackups(name, backups);
+  });
 }
 
 function renderWorldBackups(name, backups) {
@@ -983,20 +1018,27 @@ function renderWorldBackups(name, backups) {
 async function toggleWorldBackups(enabled) {
   const name = state.detailsWorld;
   if (!name) return;
-  const errorEl = document.getElementById('world-backups-error');
-  errorEl.textContent = '';
-  try {
+  await withBackupsError(async () => {
     const result = await api('/worlds/' + encodeURIComponent(name) + '/backups-config', {
       method: 'PUT',
       body: JSON.stringify({ enabled }),
     });
     const world = state.worlds.find(w => w.name === name);
-    if (world) world.backups_enabled = result.backups_enabled;
+    if (world) {
+      world.backups_enabled = result.backups_enabled;
+      if (!result.backups_enabled) {
+        // Mirrors put_backup_config's own clear-on-disable server-side —
+        // otherwise a stale failure banner stays on screen until the
+        // next poll tick's loadWorlds() happens to re-render it.
+        world.last_backup_error = null;
+        world.last_backup_attempt_at = null;
+      }
+      renderBackupFailure(world);
+    }
     document.getElementById('details-backups-enabled').checked = result.backups_enabled;
-  } catch (e) {
+  }, () => {
     document.getElementById('details-backups-enabled').checked = !enabled; // revert on failure
-    errorEl.textContent = e.message;
-  }
+  });
 }
 
 async function restoreWorldBackup(name, backupId) {
