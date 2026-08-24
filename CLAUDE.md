@@ -19,6 +19,7 @@ host.
 | `db/` | `folia-nexa-db` — self-contained MariaDB snap for LuckPerms' shared backend | Bash, bundled MariaDB |
 | `tools/build-snap.sh` | Wraps `snapcraft` for any of the six components below so the built snap's version string carries the exact commit (`+git<hash>`, `-dirty` if the tree isn't clean) it was built from — the recommended way to invoke `snapcraft` for all of them, see "Building a snap with a traceable version" below | Bash |
 | `tools/folia-host-join.sh` | Automates trusting an LXD host into the cluster | Bash |
+| `tools/migrate-storage-to-zfs.sh` | Creates a ZFS-backed LXD storage pool and migrates every container in a project onto it — fixes world backups' root cause (LXD's `dir` driver freezes the whole container during a snapshot; ZFS's copy-on-write doesn't) at the storage layer instead of in mgmt's own code. See its own header comment and CLAUDE.md's World backups entry below for the incident history | Bash |
 | `tools/folia-nexa-spawn.sh` | Local dev tool: spins up a single-machine Folia server with a plugin built from local source loaded, for fast plugin iteration — no cluster/mgmt/proxy involved. See `docs/plugin-dev/01-environment-setup.md` §1.8 | Bash |
 | `configs/worlds/*.sh` | Starter world declarations (CLI wrappers) | Bash |
 | `mgmt/src/folia_mgmt/catalog.yaml` | Curated plugin catalog (PLAN.md §14A) — mgmt generates per-world manifests from this + a world's `plugins` list, no hand-authored manifest files | YAML |
