@@ -934,15 +934,47 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   "412 tests" count in the "Running the test suites" section above
   (426 at the time, 428 after these two new regression tests).
 
+  First real-LXD confirmation (2026-08-24), from a live operator report:
+  `snapshot_container` failed on an already-joined host with `Project
+  "folia" doesn't allow for snapshot creation` (a 500 from LXD's own
+  API, surfaced correctly through `last_backup_error` — the visibility
+  fix earlier in this section doing exactly what it was built for). Root
+  cause: LXD's `restricted=true` projects default several `restricted.*`
+  keys to `block` unless explicitly overridden, and `restricted.snapshots`
+  is one of them — `folia-host-join.sh`'s `lxc project create` (PLAN.md
+  §3) only ever set `restricted.containers.nesting=block`, never touching
+  `restricted.snapshots`, so every project this script has ever created
+  silently blocked the one capability this whole backups feature depends
+  on. Fixed by adding `restricted.snapshots=allow` to that `lxc project
+  create` call (PLAN.md's matching snippet updated to match) *and* a new
+  unconditional step right after it (mirroring the existing "Step 3b:
+  ensure the project's own default profile is actually usable" pattern)
+  that sets it via `lxc project set` for a project that already existed
+  before this fix — so re-running `folia-host-join.sh` against an
+  already-joined host repairs it without needing a full rejoin. This is
+  the first `LXDClient` method to get any real-LXD confirmation at all
+  (see the `LXDClient` entry below) — and it confirmed the call's own
+  request/response handling is correct; the only problem was the
+  project-level permission it was never given.
+
 Written against documented API contracts but **not** exercised against
 live infrastructure:
 
-- Every `LXDClient` method (mTLS bootstrap, instance CRUD, file push,
-  backup export/import for migration) — a real LXD daemon exists in the
-  environment this was developed in (used for the snap builds above),
-  but nothing set up a `folia` project on it and pointed `LXDClient` at
-  it for real — that's the next-most-valuable thing to verify if you're
-  picking this project up.
+- Every `LXDClient` method except `snapshot_container` (mTLS bootstrap,
+  instance CRUD, file push, backup export/import for migration,
+  `restore_snapshot`, `delete_snapshot`) — a real LXD daemon exists in
+  the environment this was developed in (used for the snap builds
+  above), but nothing set up a `folia` project on it and pointed
+  `LXDClient` at it for real, until a live operator's cluster hit
+  `snapshot_container` for real (2026-08-24, see the World backups entry
+  above) — which confirmed the call's own request/response handling
+  against real LXD, and also caught a real bug: `folia-host-join.sh`'s
+  `restricted=true` project never set `restricted.snapshots=allow`, so
+  LXD rejected every snapshot attempt on any host joined with it, fixed
+  in that same entry. `restore_snapshot`/`delete_snapshot` share the
+  same request shape but haven't themselves been exercised live yet —
+  that's the next-most-valuable thing to verify if you're picking this
+  project up.
 - The Discord OAuth2 flow and Mojang UUID resolution — no registered
   Discord application was available to test the OAuth2 authorize/
   callback round trip against in this environment (the bot's gateway

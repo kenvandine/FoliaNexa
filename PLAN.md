@@ -122,7 +122,8 @@ lxc config set core.https_address ":8443"
 # Create an isolated, quota-capped project for folia workloads
 lxc project create folia \
   -c limits.cpu=6 -c limits.memory=16GB -c limits.containers=20 \
-  -c restricted=true -c restricted.containers.nesting=block
+  -c restricted=true -c restricted.containers.nesting=block \
+  -c restricted.snapshots=allow
 
 # Generate a one-time trust token for folia-nexa-mgmt to consume
 lxc config trust add --name folia-nexa-mgmt --restricted --projects folia
