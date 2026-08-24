@@ -79,7 +79,7 @@ is the exception, per the above.
 ## Running the test suites
 
 ```bash
-# mgmt (Python) — 428 tests
+# mgmt (Python) — 429 tests
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
@@ -956,6 +956,52 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   (see the `LXDClient` entry below) — and it confirmed the call's own
   request/response handling is correct; the only problem was the
   project-level permission it was never given.
+
+  Second real-LXD incident, same day (2026-08-24), right after the fix
+  above unblocked snapshot creation: a manual backup left a world's
+  container wedged in `FREEZING` — confirmed via `lxc operation list`
+  showing three separate "Snapshotting instance" tasks queued against
+  the *same* container within about a minute of each other, none
+  cancelable, plus a "Restarting instance" task queued behind all three;
+  `ps aux | grep rsync` and disk usage on the host confirmed no actual
+  copy activity, i.e. genuinely wedged, not just slow. Root cause: this
+  host's LXD storage pool uses the `dir` driver, which has no native
+  copy-on-write snapshot support — LXD instead freezes the container and
+  rsync-copies its entire rootfs, which for a real Minecraft world save
+  can take far longer than `LXDClient`'s flat `DEFAULT_TIMEOUT` (15s,
+  applied uniformly to every call including the operation-`/wait` poll).
+  The first snapshot attempt was still genuinely running server-side
+  when mgmt's own HTTP client gave up waiting and reported it as a
+  failure; the operator (reasonably) retried, and nothing anywhere
+  stopped that retry from firing a second real `POST .../snapshots`
+  at LXD for the same container while the first was still in flight —
+  three of those piling up is what wedged the freeze. Two-part fix, both
+  in `lxd_client.py`: (1) a new `LONG_OPERATION_TIMEOUT` (600s) applied
+  only to the operation-`/wait` poll (a per-request `httpx` timeout
+  override, not a change to the client's default — fast calls still fail
+  fast on a genuinely dead host), so mgmt no longer gives up early and
+  misreports an in-progress snapshot as failed; (2) `snapshot_container`
+  now holds a process-local per-`(host, container)` lock and rejects a
+  second concurrent call for the same container immediately, before ever
+  reaching the network — closing the actual race regardless of *why* a
+  second call might be attempted (retry, double-click, or scheduled and
+  manual backups landing at the same time), not just the client-timeout
+  trigger that happened to cause it this time. The dashboard's "Back up
+  now" button is also now disabled for the duration of its own request,
+  as cheap first-line insurance against the same double-click. Covered
+  by a new `mgmt/tests/test_lxd_client.py` (`LXDClient`'s first-ever
+  test file — every other method is still only exercised through the
+  `_RecordingLXDClient`/`_PingLXDClient` fakes in `test_scheduler.py`),
+  using real `threading` to prove a second call for the same container
+  is rejected while the first is genuinely in flight, that a different
+  container is unaffected, and that the lock releases once the first
+  call finishes (429 tests total, up from 428). Not fixed by this: the
+  underlying `dir`-backend behavior itself — every backup on a `dir`-pool
+  host, scheduled or manual, still means a real full-rootfs copy with the
+  world frozen (and hence unplayable) for its duration; migrating that
+  host's storage pool to something with native snapshot support (ZFS or
+  btrfs) is an operational fix outside this codebase, not something
+  either change here addresses.
 
 Written against documented API contracts but **not** exercised against
 live infrastructure:

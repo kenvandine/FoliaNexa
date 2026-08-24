@@ -296,7 +296,7 @@
             Automatic hourly backups enabled
           </label>
           <div class="inline" style="margin-bottom:0.5rem">
-            <button class="btn ghost" onclick="manualWorldBackup()">Back up now</button>
+            <button class="btn ghost" id="details-manual-backup-btn" onclick="manualWorldBackup()">Back up now</button>
           </div>
           <div id="details-backup-failure" class="error" style="margin-bottom:0.5rem"></div>
           <table>
@@ -988,10 +988,23 @@ async function withBackupsError(action, onError) {
 async function manualWorldBackup() {
   const name = state.detailsWorld;
   if (!name) return;
-  await withBackupsError(async () => {
-    await api('/worlds/' + encodeURIComponent(name) + '/backups/manual', { method: 'POST' });
-    await loadWorldBackups(name);
-  });
+  const btn = document.getElementById('details-manual-backup-btn');
+  // A snapshot can legitimately take a while (see LXDClient's
+  // LONG_OPERATION_TIMEOUT) — disabling the button for the duration
+  // stops an operator from re-clicking mid-request and firing a second,
+  // overlapping snapshot for the same world. The backend now also
+  // rejects an overlapping request outright (LXDClient.snapshot_container's
+  // per-container lock), but this avoids even attempting the retry that
+  // would hit that rejection.
+  btn.disabled = true;
+  try {
+    await withBackupsError(async () => {
+      await api('/worlds/' + encodeURIComponent(name) + '/backups/manual', { method: 'POST' });
+      await loadWorldBackups(name);
+    });
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 async function loadWorldBackups(name) {

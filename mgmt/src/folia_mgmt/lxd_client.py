@@ -6,11 +6,14 @@ with the peer's leaf certificate pinned by fingerprint at enrollment time
 (TOFU) rather than verified against a CA, since LXD hosts use self-signed
 certs by default.
 
-NOTE: this has been written against the documented LXD REST API contract
+NOTE: this was written against the documented LXD REST API contract
 (trust-token bootstrap via POST /1.0/certificates, instance CRUD under
-/1.0/instances, async operations under /1.0/operations) but has not been
-exercised against a live LXD daemon in this environment. Treat the exact
-request/response shapes as a first draft to validate against a real host.
+/1.0/instances, async operations under /1.0/operations) and, apart from
+snapshot_container (confirmed live 2026-08-24 — see LONG_OPERATION_TIMEOUT
+and its per-container lock below, plus CLAUDE.md's World backups entry),
+has not been exercised against a live LXD daemon in this environment.
+Treat the exact request/response shapes of every other method as a first
+draft to validate against a real host.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import socket
 import ssl
+import threading
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
@@ -32,6 +36,23 @@ DEFAULT_TIMEOUT = 15.0
 # host on every reconcile tick (scheduler.check_host_health), so a single
 # dead host must not stall the whole tick for the full 15s.
 PING_TIMEOUT = 5.0
+# Deliberately much longer than DEFAULT_TIMEOUT, and applied only to the
+# operation-wait poll in _wait_operation: a snapshot/restore on a storage
+# pool with no native COW support (LXD's "dir" driver) is a real,
+# potentially large rootfs copy rather than an instant atomic operation,
+# and DEFAULT_TIMEOUT is sized for ordinary fast CRUD calls. Confirmed
+# live (2026-08-24): a manual world backup on a dir-backend host
+# genuinely took longer than 15s, so this GET timed out client-side while
+# the snapshot was still legitimately running on LXD's side; mgmt
+# reported that as a failure, the operator retried, and three separate
+# snapshot operations ended up queued against the very same container —
+# which wedged it in FREEZING (LXD's dir driver has to freeze the
+# container for the duration of the copy, and doesn't tolerate that
+# happening more than once concurrently for the same instance). The
+# per-container lock in snapshot_container below is the other half of
+# this fix — it stops mgmt from ever issuing that second concurrent
+# request in the first place, regardless of how long the first one takes.
+LONG_OPERATION_TIMEOUT = 600.0
 
 
 class LXDError(RuntimeError):
@@ -83,6 +104,11 @@ class LXDClient:
         self._client_cert = client_cert
         self._client_key = client_key
         self._timeout = timeout
+        # Guards against two overlapping snapshot_container calls for the
+        # same (host, container) — see LONG_OPERATION_TIMEOUT's comment
+        # above for the live incident this closes the other half of.
+        self._snapshot_lock = threading.Lock()
+        self._snapshots_in_flight: set[tuple[str, str]] = set()
 
     # -- trust bootstrap -----------------------------------------------------
 
@@ -139,7 +165,7 @@ class LXDClient:
         op_url = op_body.get("operation")
         if not op_url:
             return op_body
-        resp = client.get(f"{op_url}/wait")
+        resp = client.get(f"{op_url}/wait", timeout=LONG_OPERATION_TIMEOUT)
         resp.raise_for_status()
         result = resp.json()
         metadata = result.get("metadata") or {}
@@ -355,13 +381,33 @@ class LXDClient:
             return resp.content
 
     def snapshot_container(self, host: Host, name: str, snapshot_name: str) -> None:
-        with self._client_for(host) as client:
-            resp = client.post(
-                f"/1.0/instances/{name}/snapshots",
-                params={"project": host.project},
-                json={"name": snapshot_name},
-            )
-            self._finish(client, resp, ok_codes=(200, 202), error=f"snapshot of '{name}' failed")
+        """Raises LXDError immediately, without ever reaching the network,
+        if a snapshot of this exact (host, container) is already in
+        flight — both the hourly scheduler and the manual-backup endpoint
+        call this, and nothing upstream of here serializes them against
+        each other. See LONG_OPERATION_TIMEOUT's comment above for why
+        that matters: on a storage backend with no native snapshot
+        support (LXD's "dir" driver), a snapshot freezes the container
+        for the duration of a real rootfs copy, and LXD doesn't tolerate
+        a second concurrent snapshot request for the same instance while
+        that's in progress — confirmed live, it wedges the container in
+        FREEZING rather than queueing cleanly."""
+        key = (host.name, name)
+        with self._snapshot_lock:
+            if key in self._snapshots_in_flight:
+                raise LXDError(f"a snapshot of '{name}' on '{host.name}' is already in progress")
+            self._snapshots_in_flight.add(key)
+        try:
+            with self._client_for(host) as client:
+                resp = client.post(
+                    f"/1.0/instances/{name}/snapshots",
+                    params={"project": host.project},
+                    json={"name": snapshot_name},
+                )
+                self._finish(client, resp, ok_codes=(200, 202), error=f"snapshot of '{name}' failed")
+        finally:
+            with self._snapshot_lock:
+                self._snapshots_in_flight.discard(key)
 
     def restore_snapshot(self, host: Host, name: str, snapshot_name: str) -> None:
         with self._client_for(host) as client:
