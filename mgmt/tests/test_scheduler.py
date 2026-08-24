@@ -1075,6 +1075,34 @@ def test_prune_expired_backups_keeps_backups_within_retention(tmp_path):
     assert len(session.exec(select(WorldBackup)).all()) == 1
 
 
+def test_prune_expired_backups_keeps_the_row_when_the_file_delete_fails(tmp_path, monkeypatch):
+    # delete_backup_file is best-effort/never-raises — a transient
+    # permission or read-only-disk error just logs a warning and returns
+    # False. Deleting the WorldBackup row anyway would orphan the
+    # tarball forever: no DB row means no future prune pass can ever
+    # find it again to retry, unlike every other failure in this loop.
+    session = _session()
+    session.add(
+        World(
+            name="world-a", type=WorldType.overworld, cpu_cores=1, memory_gb=1,
+            phase=WorldPhase.running, host_name="node-a", container_name="world-a",
+        )
+    )
+    session.add(
+        WorldBackup(
+            world_name="world-a", snapshot_name="auto-ancient", kind="scheduled",
+            created_at=utcnow() - (BACKUP_RETENTION + timedelta(hours=1)),
+        )
+    )
+    session.commit()
+
+    monkeypatch.setattr(world_backups, "delete_backup_file", lambda settings, world_name, label: False)
+
+    prune_expired_backups(session, Settings(state_dir=tmp_path))
+
+    assert len(session.exec(select(WorldBackup)).all()) == 1
+
+
 def test_prune_expired_backups_drops_row_when_world_no_longer_exists(tmp_path):
     # A world can be deleted entirely while its old backup rows are still
     # pending expiry — nothing left to reach for a local file delete

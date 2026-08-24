@@ -20,6 +20,7 @@ from __future__ import annotations
 import logging
 import tarfile
 from pathlib import Path
+from typing import Iterator
 
 import httpx
 
@@ -102,12 +103,29 @@ def fetch_and_store_backup(settings: Settings, world: World, label: str) -> int:
     return path.stat().st_size
 
 
-def delete_backup_file(settings: Settings, world_name: str, label: str) -> None:
+def delete_backup_file(settings: Settings, world_name: str, label: str) -> bool:
     """Best-effort removal — mirrors plugin_upload.delete_uploaded_jar's
     never-raises pattern, since a failed cleanup shouldn't block whatever
-    triggered it (pruning, a world/backup row being deleted)."""
+    triggered it (pruning, a world/backup row being deleted). Returns
+    whether the file is actually gone (removed here, or already absent)
+    so a caller like prune_expired_backups can tell a real failure apart
+    from success instead of assuming the file is gone just because this
+    didn't raise — most callers still don't need to check it."""
     path = backup_file_path(settings, world_name, label)
     try:
         path.unlink(missing_ok=True)
+        return True
     except OSError:
         logger.warning("failed to remove stale world backup file %s", path, exc_info=True)
+        return False
+
+
+def iter_backup_file(path: Path, chunk_size: int = 1 << 20) -> Iterator[bytes]:
+    """Reads a backup tarball off disk in fixed-size chunks rather than
+    loading it whole into memory — used to stream a restore's tarball to
+    LXDClient.push_file instead of the caller having to hold a
+    potentially multi-GB bytes object (world save + plugins/, jars
+    included) in RAM before the request even starts."""
+    with path.open("rb") as f:
+        while chunk := f.read(chunk_size):
+            yield chunk

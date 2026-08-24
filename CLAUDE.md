@@ -80,11 +80,11 @@ is the exception, per the above.
 ## Running the test suites
 
 ```bash
-# mgmt (Python) — 443 tests
+# mgmt (Python) — 458 tests
 cd mgmt && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
-# node (Python) — 58 tests
+# node (Python) — 59 tests
 cd node && python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 .venv/bin/pytest -q
 
@@ -1182,6 +1182,108 @@ hit with curl/the CLI, real discord.py client/command-tree construction):
   failure and an unwritable backups dir both raise `BackupTransferError`
   cleanly rather than an unhandled `OSError`) (443 mgmt tests total, up
   from 439; node 58, up from 54).
+
+  A second re-review of the same PR (2026-08-24) found the fixes above
+  had applied their own lessons to the *backup* path but not carried
+  them over to the newer *restore* path, plus two gaps in the restore
+  path itself, all now closed: `restore_backup` (routers/worlds.py) had
+  no per-container lock at all, unlike `snapshot_container`'s — a
+  double-clicked dashboard Restore button, or two admins restoring the
+  same world concurrently, could race two pushes of the same
+  `.pending-restore.tar.gz` marker and two `restart_container` calls
+  against the same container; fixed with a new `LXDClient.restore_guard`
+  (a context manager mirroring `snapshot_container`'s lock) wrapping the
+  whole push+restart sequence, raising a new `RestoreInProgressError`
+  (mapped to 409, not the 502 a real backend failure gets) if a restore
+  of that exact world is already in flight, plus a matching
+  button-disable guard on the dashboard's Restore button (`index.html`'s
+  `restoreWorldBackup`, mirroring `manualWorldBackup`'s own). Both
+  `push_file` (pushing the tarball) and `restart_container` (the restart
+  that follows) still used `DEFAULT_TIMEOUT` (15s) — the same class of
+  bug `LONG_OPERATION_TIMEOUT`/`RESTART_WAIT_TIMEOUT` exist to prevent
+  for snapshot/restore, just never carried over to this newer path: a
+  multi-GB backup upload, or a legitimately-slow-but-succeeding restart
+  (Paper/Folia's graceful shutdown can use the full 30s LXD itself
+  allows), could misreport as a failed restore purely from mgmt's own
+  client-side wait timing out first. `push_file` now accepts an optional
+  `timeout` override (used here with `LONG_OPERATION_TIMEOUT`) and
+  `restart_container` accepts one too (used here with the new
+  `RESTART_WAIT_TIMEOUT`, 45s — wider than `DEFAULT_TIMEOUT`, narrower
+  than `LONG_OPERATION_TIMEOUT`, and only opted into by this one caller
+  outside a batched reconcile tick). `restore_backup` also used to load
+  the entire backup tarball into memory (`backup_path.read_bytes()`)
+  before the request even started; `push_file`'s `content` parameter now
+  also accepts a bytes iterator, and a new `world_backups.
+  iter_backup_file` streams the file off disk in fixed-size chunks
+  instead.
+
+  Beyond the backup/restore-path parity gaps: `sync_world_config`
+  (`node/src/folia_node/agent.py`) used to run unconditionally right
+  after `_apply_pending_restore`, re-downloading any restored plugin
+  whose catalog `download_url` had changed since the backup was taken —
+  silently undoing the restore for that plugin on the very boot that was
+  supposed to bring it back, contradicting this feature's own "brings
+  back the exact plugin versions running at backup time" goal.
+  `_apply_pending_restore` now returns whether it actually applied a
+  restore this boot, and `main()` skips that one boot's
+  `sync_world_config` call when it did — the next restart (crash-loop or
+  operator-triggered) syncs normally. Separately, the same function's
+  `shutil.rmtree(..., ignore_errors=True)` could leave a directory
+  partially in place (one file the agent process can't delete), and the
+  following `shutil.move` into that *existing* directory would nest the
+  restored tree inside it (`plugins/plugins/*.jar`) instead of replacing
+  it, rather than raising anything that would surface the problem — now
+  detected and treated the same as a corrupt archive (raises, caught by
+  the existing handler, world starts as-is). `prune_expired_backups`
+  (scheduler.py) used to delete a `WorldBackup` row unconditionally even
+  when the paired `delete_backup_file` call silently failed (it's
+  best-effort/never-raises) — orphaning the tarball forever, since no
+  DB row means no future prune pass can ever find it again;
+  `delete_backup_file` now returns whether the file is actually gone, and
+  the row is only dropped when it is. `_refuse_dir_backend`
+  (lxd_client.py) blocklisted the literal driver string `"dir"` instead
+  of allowlisting drivers actually confirmed safe — an lvm pool without
+  thin provisioning, or any future/renamed LXD driver string, would sail
+  through unrefused if `lxd_snapshot_backups_enabled` were ever turned
+  back on, on a backend never actually diagnosed against the freeze
+  incident this check exists to prevent; now gated by a new
+  `ALLOWED_SNAPSHOT_DRIVERS = {"zfs", "btrfs"}` allowlist instead.
+  `restore_backup` only ever confirmed the tarball was pushed and the
+  container told to restart — the actual tar extraction happens
+  afterward, inside the restart, where a corrupt/truncated archive was
+  previously visible nowhere but the node agent's own local log;
+  `AgentState` (node's health.py) now carries `last_restore_at`/
+  `last_restore_error`, set by `_apply_pending_restore` and exposed over
+  the existing `GET /metrics`, and a new `World.last_restore_confirmed_at`/
+  `last_restore_error` pair (mirroring `last_backup_*`) is populated by
+  `finalize_provisioning`'s new `_record_restore_outcome` — a best-effort
+  poll of that same `/metrics` right as a world comes back up from
+  provisioning — and surfaced in the dashboard as a new failure banner
+  next to the existing backups one. Finally, `_purge_legacy_lxd_snapshot_backups`
+  (db.py) targeted `size_bytes IS NULL` alone with no real one-time
+  marker, on the reasoning that only pre-redesign rows would ever be
+  NULL — overloading a genuinely nullable column as an implicit "is this
+  legacy" flag, which would silently delete any *future* legitimate
+  NULL-size row (e.g. a hypothetical streaming-backup-in-progress row) on
+  every subsequent mgmt restart; now gated by a real one-time migration
+  marker (a new generic `schema_migration` table, `_migration_applied`/
+  `_mark_migration_applied`) so the DELETE only ever runs once, ever.
+  Covered by new tests across `test_lxd_client.py` (the allowlist
+  rejecting a non-"dir" driver too, `restore_guard`'s own concurrent-call
+  rejection mirroring `snapshot_container`'s), `test_worlds.py` (409 on
+  an in-flight restore), `test_agent.py` (skip-sync-after-restore via the
+  return value, the nested-directory case), `test_scheduler.py`
+  (prune keeping the row on a failed delete), `test_world_backups.py`
+  (`iter_backup_file`'s chunking, `delete_backup_file`'s return value),
+  `test_db.py` (the migration marker actually preventing a second,
+  future NULL-size row from being swept up), and a new
+  `test_record_restore_outcome.py` (`_record_restore_outcome` against a
+  real local HTTP server, mirroring `test_default_health_check.py`'s own
+  pattern) (458 mgmt tests total, up from 443; node 59, up from 58). Not
+  verified against live infrastructure, same caveat as the rest of this
+  feature: a real node agent's `/metrics` restore fields actually being
+  polled by a real `finalize_provisioning` against a live LXD-launched
+  container.
 
 Written against documented API contracts but **not** exercised against
 live infrastructure:

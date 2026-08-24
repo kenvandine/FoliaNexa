@@ -535,6 +535,37 @@ def test_restore_backup_requires_admin(client, admin_token, operator_token, fake
     assert any(path.endswith(".pending-restore.tar.gz") for path in pushed_paths)
 
 
+def test_restore_backup_409s_when_a_restore_is_already_in_flight(
+    client, admin_token, operator_token, fake_lxd, trigger_reconcile
+):
+    # lxd_client.restore_guard rejects a second concurrent restore of the
+    # same world before ever touching the network — a double-clicked
+    # dashboard Restore button, or two admins restoring the same world at
+    # once, must not race two pushes of the same marker file and two
+    # restart_container calls against the same container.
+    _enroll_host(client, admin_token)
+    client.post(
+        "/api/v1/worlds",
+        json={"name": "world-overworld", "type": "overworld", "cpu_cores": 4, "memory_gb": 8},
+        headers=auth_header(operator_token),
+    )
+    trigger_reconcile()
+    backup_id = client.get(
+        "/api/v1/worlds/world-overworld/backups", headers=auth_header(operator_token)
+    ).json()[0]["id"]
+
+    fake_lxd._restores_in_flight.add(("node-a", "world-overworld"))
+
+    resp = client.post(
+        f"/api/v1/worlds/world-overworld/backups/{backup_id}/restore",
+        headers=auth_header(admin_token),
+    )
+    assert resp.status_code == 409
+    # Rejected before ever reaching push_file — no marker armed.
+    marker_path = f"{NODE_WORLD_DIR}/.pending-restore.tar.gz"
+    assert ("node-a", "world-overworld", marker_path) not in fake_lxd.pushed_files
+
+
 def test_restore_backup_cleans_up_pending_marker_when_restart_fails(
     client, admin_token, operator_token, fake_lxd, trigger_reconcile
 ):

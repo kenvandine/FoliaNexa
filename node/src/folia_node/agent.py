@@ -36,7 +36,7 @@ CRASH_RESTART_DELAY_SECONDS = 5
 PENDING_RESTORE_MARKER = ".pending-restore.tar.gz"
 
 
-def _apply_pending_restore(world_dir: Path) -> None:
+def _apply_pending_restore(world_dir: Path, state: AgentState) -> bool:
     """If a restore was requested, extract the tarball over WORLD_DIR now
     — replacing the old world save + plugins/ entirely — before any of
     the staging below runs (already idempotent/reconciling, so it layers
@@ -59,10 +59,29 @@ def _apply_pending_restore(world_dir: Path) -> None:
     the delete before that point (the original approach) could leave a
     world with neither the old save nor a complete new one; this way a
     failure here always leaves world_dir untouched, matching the
-    "world starts as-is" guarantee this function documents above."""
+    "world starts as-is" guarantee this function documents above.
+
+    Returns whether a restore was actually applied this boot — main()
+    uses this to skip that same boot's sync_world_config call (see its
+    own call site), since re-syncing against mgmt's *current* plugin/
+    datapack manifest right after a restore would immediately
+    re-download anything whose catalog URL has moved on since the
+    backup was taken, silently undoing the very thing a restore is
+    supposed to guarantee ("brings back the exact plugin versions
+    running at backup time", see this module's PENDING_RESTORE_MARKER
+    comment).
+
+    Also records the outcome on `state` (last_restore_at/
+    last_restore_error) so mgmt's finalize_provisioning
+    (mgmt/src/folia_mgmt/scheduler.py) can poll GET /metrics and surface
+    a corrupt/failed restore back to the operator — restore_backup
+    (mgmt's routers/worlds.py) only ever confirms the tarball was pushed
+    and the container told to restart; without this, the actual
+    extraction outcome here was previously visible nowhere but this
+    process's own local log."""
     marker = world_dir / PENDING_RESTORE_MARKER
     if not marker.exists():
-        return
+        return False
     logger.info("pending restore found (%s) — extracting over %s before staging", marker, world_dir)
     try:
         with tempfile.TemporaryDirectory(dir=world_dir) as scratch:
@@ -70,13 +89,31 @@ def _apply_pending_restore(world_dir: Path) -> None:
             with tarfile.open(marker, mode="r:gz") as tf:
                 tf.extractall(path=scratch_dir, filter="data")
             for name in (LEVEL_NAME, "plugins"):
-                shutil.rmtree(world_dir / name, ignore_errors=True)
+                target = world_dir / name
+                shutil.rmtree(target, ignore_errors=True)
+                if target.exists():
+                    # ignore_errors=True above can still leave a
+                    # directory partially in place (e.g. one file this
+                    # process can't delete) — shutil.move into an
+                    # *existing* destination directory nests the
+                    # extracted tree inside it instead of replacing it
+                    # (plugins/plugins/*.jar) rather than raising
+                    # anything that would surface the problem. Raise
+                    # here instead, so this is treated the same as a
+                    # corrupt archive by the except clause below.
+                    raise OSError(f"could not fully remove stale directory {target} before restore")
                 extracted = scratch_dir / name
                 if extracted.exists():
-                    shutil.move(str(extracted), str(world_dir / name))
+                    shutil.move(str(extracted), str(target))
         logger.info("restore applied successfully")
-    except (tarfile.TarError, OSError, EOFError):
+        state.last_restore_at = time.time()
+        state.last_restore_error = None
+        return True
+    except (tarfile.TarError, OSError, EOFError) as exc:
         logger.exception("pending restore at %s is corrupt/unreadable — skipping, world starts as-is", marker)
+        state.last_restore_at = time.time()
+        state.last_restore_error = str(exc)
+        return False
     finally:
         marker.unlink(missing_ok=True)
 
@@ -110,13 +147,24 @@ def main() -> None:
     start_health_server(state, port=health_port)
     logger.info("health server up on :%d for world '%s'", health_port, assignment.world_name)
 
-    _apply_pending_restore(world_dir)
+    restored = _apply_pending_restore(world_dir, state)
 
     jar_path = ensure_staged(world_dir, assignment)
-    # Unlike ensure_staged, always runs — picks up any plugins/datapacks/
-    # server.properties edit made via PATCH /worlds/{name} since this
-    # world's container last started (PLAN.md §9).
-    sync_world_config(world_dir, assignment)
+    if restored:
+        # Deliberately skipped this one boot — see
+        # _apply_pending_restore's own docstring for why: reconciling
+        # against mgmt's *current* plugin/datapack manifest right after
+        # a restore would immediately re-download anything whose catalog
+        # URL has moved on since the backup was taken, undoing the
+        # restore for that plugin on the very boot that was supposed to
+        # bring it back. The next restart (crash-loop or operator-
+        # triggered) syncs normally.
+        logger.info("skipping this boot's plugin/datapack/server-properties sync — a restore was just applied")
+    else:
+        # Unlike ensure_staged, always runs — picks up any plugins/datapacks/
+        # server.properties edit made via PATCH /worlds/{name} since this
+        # world's container last started (PLAN.md §9).
+        sync_world_config(world_dir, assignment)
 
     # A world's container is restarted/stopped via a graceful LXD action
     # (force=false — see LXDClient.restart_container's own comment) that

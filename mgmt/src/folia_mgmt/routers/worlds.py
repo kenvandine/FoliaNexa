@@ -18,7 +18,7 @@ from folia_mgmt.config import Settings
 from folia_mgmt.datapack_catalog import load_catalog as load_datapack_catalog
 from folia_mgmt.db import get_session
 from folia_mgmt.deps import get_lxd_client, get_uuid_resolver, settings_dependency
-from folia_mgmt.lxd_client import LXDClient, LXDError
+from folia_mgmt.lxd_client import LONG_OPERATION_TIMEOUT, RESTART_WAIT_TIMEOUT, LXDClient, LXDError, RestoreInProgressError
 from folia_mgmt.models import (
     Host,
     HostStatus,
@@ -82,12 +82,15 @@ class WorldResponse(BaseModel):
     backups_enabled: bool
     last_backup_attempt_at: datetime | None
     last_backup_error: str | None
+    last_restore_confirmed_at: datetime | None
+    last_restore_error: str | None
 
 
 def _to_response(world: World, *, redact_backup_error: bool) -> WorldResponse:
-    """`redact_backup_error` drops `last_backup_error` for viewer-role
-    callers — it carries raw `LXDError` text (see scheduler.py's
-    run_scheduled_backups), which is internal backend detail nobody
+    """`redact_backup_error` drops `last_backup_error`/`last_restore_error`
+    for viewer-role callers — both carry raw `LXDError`/agent-side
+    exception text (see scheduler.py's run_scheduled_backups and
+    _record_restore_outcome), which is internal backend detail nobody
     below operator has otherwise been able to see through this API.
     No default: every call site must state its caller's role explicitly,
     so a future endpoint that opens this response to viewer-role callers
@@ -112,6 +115,8 @@ def _to_response(world: World, *, redact_backup_error: bool) -> WorldResponse:
         backups_enabled=world.backups_enabled,
         last_backup_attempt_at=world.last_backup_attempt_at,
         last_backup_error=None if redact_backup_error else world.last_backup_error,
+        last_restore_confirmed_at=world.last_restore_confirmed_at,
+        last_restore_error=None if redact_backup_error else world.last_restore_error,
     )
 
 
@@ -136,7 +141,7 @@ def _place_best_effort(session: Session, lxd_client: LXDClient, world: World, se
         # still does rather than sitting in 'provisioning' until the next
         # periodic tick.
         if world.phase == WorldPhase.provisioning:
-            finalize_provisioning(session, lxd_client, world)
+            finalize_provisioning(session, lxd_client, world, settings)
     except Exception:
         logger.exception("immediate placement of '%s' failed; periodic loop will retry", world.name)
 
@@ -441,6 +446,7 @@ def start_world(
     name: str,
     session: Session = Depends(get_session),
     lxd_client: LXDClient = Depends(get_lxd_client),
+    settings: Settings = Depends(settings_dependency),
 ) -> dict[str, str]:
     """Starts a previously-stopped world's container back up. Also makes
     one immediate finalize_provisioning attempt for this world (same
@@ -461,7 +467,7 @@ def start_world(
     session.add(world)
     session.commit()
     try:
-        finalize_provisioning(session, lxd_client, world)
+        finalize_provisioning(session, lxd_client, world, settings)
     except Exception:
         logger.exception("immediate finalize after starting '%s' failed; periodic loop will retry", name)
     return {"started": world.container_name}
@@ -850,7 +856,21 @@ def restore_backup(
     endpoint only ever looks at wherever `world.host_name`/`container_name`
     currently point, not the host the backup was originally taken on —
     place a same-named world on a healthy host first (or migrate an
-    existing one there), then call this."""
+    existing one there), then call this.
+
+    The whole push+restart sequence runs under lxd_client.restore_guard,
+    which 409s immediately (before touching the network) if a restore of
+    this exact world is already in flight — a double-clicked dashboard
+    Restore button, or two admins restoring the same world at once,
+    would otherwise race two pushes of the same marker file and two
+    restart_container calls against the same container. The tarball
+    itself is streamed off disk (world_backups.iter_backup_file) rather
+    than loaded fully into mgmt's memory first, and both the push and
+    the restart get a widened client-side wait — see LONG_OPERATION_TIMEOUT/
+    RESTART_WAIT_TIMEOUT's own comments in lxd_client.py — since a
+    multi-GB world+plugins tarball, and the restart that follows it, can
+    legitimately take longer than the 15s default this class otherwise
+    uses everywhere else."""
     world, host = _host_and_world(session, name)
     backup = session.get(WorldBackup, backup_id)
     if backup is None or backup.world_name != name:
@@ -863,35 +883,50 @@ def restore_backup(
             f"backup '{backup_id}' for world '{name}' has no tarball on this mgmt host's disk "
             f"(expected {backup_path})",
         )
-    tar_bytes = backup_path.read_bytes()
     marker_path = f"{NODE_WORLD_DIR}/.pending-restore.tar.gz"
 
     try:
-        lxd_client.push_file(host, world.container_name, marker_path, tar_bytes)
-    except LXDError as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+        with lxd_client.restore_guard(host, world.container_name):
+            try:
+                lxd_client.push_file(
+                    host,
+                    world.container_name,
+                    marker_path,
+                    world_backups.iter_backup_file(backup_path),
+                    timeout=LONG_OPERATION_TIMEOUT,
+                )
+            except LXDError as exc:
+                raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
 
-    try:
-        lxd_client.restart_container(host, world.container_name)
-    except LXDError as exc:
-        # The marker is now armed but the restart that was supposed to
-        # consume it (node/src/folia_node/agent.py's
-        # _apply_pending_restore, on the next process start) never
-        # happened — left as-is, it would silently fire on some later
-        # unrelated restart with no operator awareness. Best-effort
-        # remove it so this restore attempt fails cleanly instead.
-        try:
-            lxd_client.delete_file(host, world.container_name, marker_path)
-        except LXDError:
-            logger.exception(
-                "restore of world '%s' failed to restart AND failed to clean up its pending-restore "
-                "marker at %s — it may still be applied on a later unrelated restart",
-                name,
-                marker_path,
-            )
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+            try:
+                lxd_client.restart_container(host, world.container_name, timeout=RESTART_WAIT_TIMEOUT)
+            except LXDError as exc:
+                # The marker is now armed but the restart that was supposed to
+                # consume it (node/src/folia_node/agent.py's
+                # _apply_pending_restore, on the next process start) never
+                # happened — left as-is, it would silently fire on some later
+                # unrelated restart with no operator awareness. Best-effort
+                # remove it so this restore attempt fails cleanly instead.
+                try:
+                    lxd_client.delete_file(host, world.container_name, marker_path)
+                except LXDError:
+                    logger.exception(
+                        "restore of world '%s' failed to restart AND failed to clean up its pending-restore "
+                        "marker at %s — it may still be applied on a later unrelated restart",
+                        name,
+                        marker_path,
+                    )
+                raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+    except RestoreInProgressError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
 
     world.phase = WorldPhase.provisioning
+    # Cleared here, not left showing whatever the *previous* restore's
+    # outcome was — finalize_provisioning's _record_restore_outcome sets
+    # the real value for *this* attempt once the container's back up and
+    # the node agent reports in.
+    world.last_restore_error = None
+    world.last_restore_confirmed_at = None
     session.add(world)
     session.commit()
     return {"restoring": backup.snapshot_name, "created_at": backup.created_at.isoformat()}

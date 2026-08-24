@@ -3,8 +3,8 @@ from __future__ import annotations
 from sqlalchemy import create_engine, inspect, text
 from sqlmodel import Session, select
 
-from folia_mgmt.db import _add_missing_columns, _purge_soft_deleted_worlds
-from folia_mgmt.models import AccessRequest, PlayerStat, World, WorldType
+from folia_mgmt.db import _add_missing_columns, _purge_legacy_lxd_snapshot_backups, _purge_soft_deleted_worlds
+from folia_mgmt.models import AccessRequest, PlayerStat, World, WorldBackup, WorldType
 
 
 def test_add_missing_columns_backfills_existing_rows_with_default(tmp_path):
@@ -174,3 +174,57 @@ def test_purge_soft_deleted_worlds_is_a_noop_with_nothing_to_purge(tmp_path):
 def test_purge_soft_deleted_worlds_handles_missing_table(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'empty.db'}")
     _purge_soft_deleted_worlds(engine)  # should not raise even with no tables at all
+
+
+def test_purge_legacy_lxd_snapshot_backups_removes_null_size_rows_once(tmp_path):
+    from sqlmodel import SQLModel
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'legacy.db'}")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(WorldBackup(world_name="w", snapshot_name="legacy-snap", kind="scheduled", size_bytes=None))
+        session.commit()
+
+    _purge_legacy_lxd_snapshot_backups(engine)
+
+    with Session(engine) as session:
+        assert session.exec(select(WorldBackup)).all() == []
+
+
+def test_purge_legacy_lxd_snapshot_backups_does_not_delete_a_future_null_size_row_on_a_later_startup(tmp_path):
+    # The original implementation targeted `size_bytes IS NULL` alone,
+    # with no real one-time marker — every mgmt restart would re-run the
+    # same DELETE, so any *future* legitimate NULL-size row (e.g. a
+    # streaming-backup-in-progress row that doesn't exist today, but
+    # could) would be silently deleted on the very next startup, forever,
+    # indistinguishable from a genuine pre-redesign legacy row. This
+    # confirms the fix: the DELETE only ever runs once, gated by a real
+    # migration marker, not "once per NULL-size row that happens to
+    # exist right now."
+    from sqlmodel import SQLModel
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'legacy2.db'}")
+    SQLModel.metadata.create_all(engine)
+    with Session(engine) as session:
+        session.add(WorldBackup(world_name="w", snapshot_name="legacy-snap", kind="scheduled", size_bytes=None))
+        session.commit()
+
+    _purge_legacy_lxd_snapshot_backups(engine)  # first ever run — purges the legacy row
+
+    # A brand new NULL-size row shows up after the one-time purge already
+    # ran (this session's own analogue of a future "in-progress" row) —
+    # a second call (e.g. mgmt restarting again) must leave it alone.
+    with Session(engine) as session:
+        session.add(WorldBackup(world_name="w", snapshot_name="in-progress", kind="scheduled", size_bytes=None))
+        session.commit()
+
+    _purge_legacy_lxd_snapshot_backups(engine)
+
+    with Session(engine) as session:
+        names = {b.snapshot_name for b in session.exec(select(WorldBackup)).all()}
+    assert names == {"in-progress"}
+
+
+def test_purge_legacy_lxd_snapshot_backups_handles_missing_table(tmp_path):
+    engine = create_engine(f"sqlite:///{tmp_path / 'empty2.db'}")
+    _purge_legacy_lxd_snapshot_backups(engine)  # should not raise even with no tables at all

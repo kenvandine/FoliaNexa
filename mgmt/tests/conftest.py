@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import io
 import tarfile
+import threading
+from contextlib import contextmanager
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,7 +13,7 @@ from folia_mgmt import world_backups
 from folia_mgmt.auth import hash_password
 from folia_mgmt.db import get_engine, init_db
 from folia_mgmt.deps import get_health_check, get_lxd_client, get_uuid_resolver
-from folia_mgmt.lxd_client import LXDError
+from folia_mgmt.lxd_client import LXDError, RestoreInProgressError
 from folia_mgmt.models import User, UserRole
 from folia_mgmt.scheduler import reconcile
 
@@ -60,6 +62,11 @@ class FakeLXDClient:
         # indistinguishable. Tests can seed one directly: (host_name,
         # container, absolute_path) -> "this directory exists and is empty".
         self.container_dirs: set[tuple[str, str, str]] = set()
+        # Mirrors the real LXDClient.restore_guard's per-(host,container)
+        # lock — tests can pre-populate this to simulate an overlapping
+        # restore already in flight.
+        self._restores_in_flight: set[tuple[str, str]] = set()
+        self._restore_lock = threading.Lock()
 
     def ping_host(self, host) -> bool:
         self.ping_calls.append(host.name)
@@ -91,10 +98,23 @@ class FakeLXDClient:
     def delete_container(self, host, name, *, stop_first=True):
         self.deleted.append((host.name, name))
 
-    def restart_container(self, host, name):
+    def restart_container(self, host, name, *, timeout=None):
         if name in self.fail_restart_with:
             raise self.fail_restart_with[name]
         self.restarted.append((host.name, name))
+
+    @contextmanager
+    def restore_guard(self, host, name):
+        key = (host.name, name)
+        with self._restore_lock:
+            if key in self._restores_in_flight:
+                raise RestoreInProgressError(f"a restore of '{name}' on '{host.name}' is already in progress")
+            self._restores_in_flight.add(key)
+        try:
+            yield
+        finally:
+            with self._restore_lock:
+                self._restores_in_flight.discard(key)
 
     def stop_container(self, host, name):
         self.stopped.append((host.name, name))
@@ -116,9 +136,17 @@ class FakeLXDClient:
             raise LXDError(f"simulated snapshot delete failure for {snapshot_name}")
         self.deleted_snapshots.append((host.name, name, snapshot_name))
 
-    def push_file(self, host, name, path, content, *, mode="0644"):
+    def push_file(self, host, name, path, content, *, mode="0644", timeout=None):
         if path in self.fail_push_for:
             raise LXDError(f"simulated push failure for {path}")
+        # Mirrors what a real HTTP request body would do with an
+        # iterable/generator (world_backups.iter_backup_file streams a
+        # restore's tarball off disk in chunks rather than handing over
+        # one big bytes object) — materialize it here so tests can still
+        # inspect pushed_files' values the same way regardless of which
+        # form the caller passed.
+        if not isinstance(content, (bytes, bytearray)):
+            content = b"".join(content)
         self.pushed_files[(host.name, name, path)] = content
         self.container_files[(host.name, name, path.rstrip("/"))] = content
 

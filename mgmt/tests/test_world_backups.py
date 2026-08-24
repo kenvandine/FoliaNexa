@@ -20,6 +20,7 @@ from folia_mgmt.world_backups import (
     backup_file_path,
     delete_backup_file,
     fetch_and_store_backup,
+    iter_backup_file,
 )
 
 
@@ -208,11 +209,49 @@ def test_delete_backup_file_removes_an_existing_file(tmp_path):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"data")
 
-    delete_backup_file(settings, "world-a", "auto-123")
-
+    assert delete_backup_file(settings, "world-a", "auto-123") is True
     assert not path.exists()
 
 
 def test_delete_backup_file_is_a_noop_for_a_missing_file(tmp_path):
     settings = Settings(state_dir=tmp_path)
-    delete_backup_file(settings, "world-a", "does-not-exist")  # must not raise
+    # must not raise, and a missing file counts as "already gone" —
+    # True, not False, so prune_expired_backups still drops the DB row.
+    assert delete_backup_file(settings, "world-a", "does-not-exist") is True
+
+
+def test_delete_backup_file_returns_false_on_a_real_failure(tmp_path):
+    # scheduler.prune_expired_backups only drops the WorldBackup row when
+    # this returns True — a real OSError (permission error, read-only
+    # disk) must be reported back as failure, not swallowed into a
+    # false "it's gone" the caller can't distinguish from success.
+    settings = Settings(state_dir=tmp_path)
+    path = backup_file_path(settings, "world-a", "auto-123")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # A directory where the code expects to unlink a file raises
+    # IsADirectoryError (an OSError subclass) rather than succeeding.
+    path.mkdir()
+
+    assert delete_backup_file(settings, "world-a", "auto-123") is False
+
+
+def test_iter_backup_file_yields_the_exact_bytes_in_order(tmp_path):
+    # Used by routers/worlds.py's restore_backup to stream a backup
+    # tarball to LXDClient.push_file instead of loading it fully into
+    # memory first (backup_path.read_bytes()) — small chunk_size here to
+    # actually exercise multiple chunks rather than one big read.
+    path = tmp_path / "backup.tar.gz"
+    content = bytes(range(256)) * 100  # 25,600 bytes
+    path.write_bytes(content)
+
+    chunks = list(iter_backup_file(path, chunk_size=4096))
+
+    assert len(chunks) > 1
+    assert b"".join(chunks) == content
+
+
+def test_iter_backup_file_handles_an_empty_file(tmp_path):
+    path = tmp_path / "empty.tar.gz"
+    path.write_bytes(b"")
+
+    assert list(iter_backup_file(path)) == []

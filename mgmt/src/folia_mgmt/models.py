@@ -27,6 +27,15 @@ def epoch_seconds(dt: datetime) -> int:
     return int((dt - datetime(1970, 1, 1)).total_seconds())
 
 
+def from_epoch_seconds(ts: float) -> datetime:
+    """The inverse of epoch_seconds — a real Unix epoch value (e.g.
+    node/src/folia_node/health.py's AgentState.last_restore_at, taken
+    with time.time()) to a naive-but-UTC-valued datetime matching
+    utcnow()'s own convention, so it compares/stores consistently
+    alongside every other timestamp column in this module."""
+    return datetime.fromtimestamp(ts, tz=timezone.utc).replace(tzinfo=None)
+
+
 class HostStatus(str, enum.Enum):
     online = "online"
     offline = "offline"
@@ -143,6 +152,22 @@ class World(SQLModel, table=True):
     # diagnostic — nothing reads this to change scheduling behavior.
     last_backup_attempt_at: Optional[datetime] = None
     last_backup_error: Optional[str] = None
+
+    # Set by scheduler.finalize_provisioning, best-effort, whenever it
+    # observes a restore outcome reported by this world's own node agent
+    # (AgentState.last_restore_error/last_restore_at,
+    # node/src/folia_node/agent.py's _apply_pending_restore) after a
+    # restart it's polling for an address on. POST
+    # /{name}/backups/{id}/restore only confirms the tarball was pushed
+    # and the container told to restart — the actual tar extraction
+    # happens afterward, inside the freshly-restarted container, where a
+    # corrupt/truncated archive was previously only ever logged locally
+    # with nothing surfaced back to mgmt or the dashboard. None means no
+    # restore has been confirmed yet (either none was attempted, or the
+    # agent hasn't reported in this reconcile pass) — purely diagnostic,
+    # same scope as last_backup_error above.
+    last_restore_confirmed_at: Optional[datetime] = None
+    last_restore_error: Optional[str] = None
 
     created_at: datetime = Field(default_factory=utcnow)
     updated_at: datetime = Field(default_factory=utcnow)

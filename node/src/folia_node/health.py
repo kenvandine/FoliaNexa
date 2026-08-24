@@ -125,6 +125,18 @@ class AgentState:
     # old world not yet restarted since mgmt started setting it) — /backup
     # fails closed rather than serving unauthenticated in that case.
     backup_shared_secret: str | None = None
+    # Set by agent.py's _apply_pending_restore, this boot only — a
+    # pending-restore marker actually extracted successfully (last_restore_at
+    # set, last_restore_error None) or found corrupt/unreadable
+    # (last_restore_error set to the exception text). Both stay None if no
+    # marker was present this boot (the normal case), so mgmt's
+    # finalize_provisioning (mgmt/src/folia_mgmt/scheduler.py) can tell
+    # "no restore happened" apart from "a restore happened and here's how
+    # it went" via GET /metrics — otherwise a corrupt archive silently
+    # no-ops with nothing but a local agent log line to show for it (see
+    # CLAUDE.md's World backups entry).
+    last_restore_at: float | None = None
+    last_restore_error: str | None = None
 
     def snapshot(self) -> dict:
         with self.lock:
@@ -135,6 +147,8 @@ class AgentState:
                 "uptime_seconds": round(time.time() - self.started_at, 1),
                 "last_exit_code": self.last_exit_code,
                 "log_tail": list(self.log_tail[-20:]),
+                "last_restore_at": self.last_restore_at,
+                "last_restore_error": self.last_restore_error,
             }
 
 
